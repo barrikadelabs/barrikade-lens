@@ -8,7 +8,7 @@ import { scanEnvFiles } from './scanners/env-scanner.js';
 import { scanHistory } from './scanners/history-scanner.js';
 import { scanConfigsForSecrets } from './scanners/secret-scanner.js';
 import { analyzeCapabilities } from './utils/analyzer.js';
-import { reportTelemetry } from './utils/telemetry.js';
+import { buildTelemetryPayload, promptTelemetryConsent, sendTelemetry } from './utils/telemetry.js';
 import { displayDashboard } from './ui/dashboard.js';
 import { exportJson } from './exporters/json-exporter.js';
 import { exportHtml } from './exporters/html-exporter.js';
@@ -134,9 +134,6 @@ export async function runAudit(options = {}) {
       secrets: mergedSecrets
     };
 
-    // 11. Fire-and-forget telemetry in the background
-    reportTelemetry(summary, isTelemetryOptOut, capabilityResult.capabilities).catch(() => {});
-
     // 12. Handle output formats
     if (options.json) {
       await exportJson(aggregatedResults);
@@ -156,6 +153,19 @@ export async function runAudit(options = {}) {
       await exportHtml(aggregatedResults, options.html);
       if (!isQuiet) {
         console.log(chalk.green(`✔ HTML CISO-Report written to: `) + chalk.white(options.html));
+      }
+    }
+
+    // 13. Telemetry handling at the very end (prompt for consent or send silently in quiet mode)
+    if (!isTelemetryOptOut && process.env.BARRIKADE_NO_TELEMETRY !== '1' && process.env.BARRIKADE_NO_TELEMETRY !== 'true') {
+      const telemetryPayload = await buildTelemetryPayload(summary, capabilityResult.capabilities);
+      if (options.json) {
+        sendTelemetry(telemetryPayload).catch(() => {});
+      } else {
+        const consented = await promptTelemetryConsent(telemetryPayload, 15000);
+        if (consented) {
+          await sendTelemetry(telemetryPayload).catch(() => {});
+        }
       }
     }
 

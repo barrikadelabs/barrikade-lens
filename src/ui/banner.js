@@ -18,13 +18,10 @@ export function printBanner(version = '0.1.0') {
   console.log(chalk.dim(`                          v${version}`));
   console.log(line);
   console.log(
-    chalk.white.bold('100% Local Scanning') +
-    chalk.dim(' • ') +
+    chalk.dim('  🔒 ') + 
+    chalk.white.bold('100% Local Scanning') + 
+    chalk.dim(' • ') + 
     chalk.white('No code or credentials leave this machine')
-  );
-  console.log(
-    chalk.white('Anonymous, high-level telemetry is enabled. Disable with ') +
-    orange('--no-telemetry')
   );
   console.log(line + '\n');
 }
