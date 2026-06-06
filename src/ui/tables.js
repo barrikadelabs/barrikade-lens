@@ -203,3 +203,56 @@ export function renderCapabilityTable(capabilities) {
 
   return table.toString();
 }
+
+/**
+ * Renders a structured inventory of discovered AI agents and tools.
+ * 
+ * @param {Array<{ name: string, status: 'ACTIVE' | 'INSTALLED', evidence: string[] }>} agents 
+ * @returns {string}
+ */
+export function renderAgentInventoryTable(agents) {
+  if (!agents || agents.length === 0) {
+    return chalk.dim('  No AI agents or tools discovered on this workstation.\n');
+  }
+
+  const table = new Table({
+    head: [orangeBold('Agent / Tool Name'), orangeBold('Status'), orangeBold('Supporting Evidence')],
+    chars: tableChars,
+    style: tableStyle,
+    colWidths: [28, 16, 64]
+  });
+
+  // Sort: ACTIVE first, then alphabetical
+  const sorted = [...agents].sort((a, b) => {
+    if (a.status === 'ACTIVE' && b.status !== 'ACTIVE') return -1;
+    if (a.status !== 'ACTIVE' && b.status === 'ACTIVE') return 1;
+    return a.name.localeCompare(b.name);
+  });
+
+  for (const agent of sorted) {
+    let statusStr = '';
+    if (agent.status === 'ACTIVE') {
+      statusStr = chalk.red.bold('🔴 ACTIVE');
+    } else {
+      statusStr = chalk.cyan.bold('🔵 INSTALLED');
+    }
+
+    // Extract prefix before colon for a cleaner summary list
+    const cleanEvidence = agent.evidence.map(e => {
+      const idx = e.indexOf(':');
+      return idx !== -1 ? e.substring(0, idx).trim() : e;
+    });
+    
+    // De-duplicate evidence types
+    const uniqueEvidence = Array.from(new Set(cleanEvidence)).join(', ');
+
+    table.push([
+      chalk.white.bold(agent.name),
+      statusStr,
+      chalk.white(uniqueEvidence)
+    ]);
+  }
+
+  return table.toString();
+}
+

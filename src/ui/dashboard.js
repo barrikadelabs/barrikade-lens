@@ -1,6 +1,6 @@
 import chalk from 'chalk';
 import { printBanner, orangeBold } from './banner.js';
-import { renderAgentTable, renderPortTable, renderSecretTable, renderCapabilityTable } from './tables.js';
+import { renderAgentTable, renderPortTable, renderSecretTable, renderCapabilityTable, renderAgentInventoryTable } from './tables.js';
 import { renderSummaryCard } from './summary.js';
 
 /**
@@ -23,7 +23,8 @@ function sectionHeader(title) {
  *   secrets: Array<any>,
  *   summary: any,
  *   capabilities: any,
- *   evidence: string[]
+ *   evidence: string[],
+ *   agents: any[]
  * }} results 
  */
 export function displayDashboard(results) {
@@ -34,7 +35,11 @@ export function displayDashboard(results) {
   console.log(sectionHeader('AUTONOMOUS AI CAPABILITY ANALYSIS'));
   console.log(renderCapabilityTable(results.capabilities));
 
-  // 3. Evidence collected
+  // 3. Discovered AI Agents Inventory
+  console.log(sectionHeader('DISCOVERED AI AGENTS INVENTORY'));
+  console.log(renderAgentInventoryTable(results.agents));
+
+  // 4. Evidence collected
   console.log(sectionHeader('COLLECTED AUDIT EVIDENCE'));
   if (results.evidence.length === 0) {
     console.log(chalk.dim('  No agent infrastructure or capabilities detected on this workstation.\n'));
@@ -46,7 +51,7 @@ export function displayDashboard(results) {
   }
 
   // 4. Discovered Configs and Active MCP Servers
-  console.log(sectionHeader('SHADOW AGENT & CLIENT MCP INVENTORY'));
+  console.log(sectionHeader('MCP INVENTORY'));
   console.log(renderAgentTable(results.configs));
 
   // 5. Local Inference Ports
@@ -54,7 +59,7 @@ export function displayDashboard(results) {
   console.log(renderPortTable(results.ports));
 
   // 6. Secret Scanner Findings
-  console.log(sectionHeader('PLAIN-TEXT SECRET & CISO RISK ANALYSIS'));
+  console.log(sectionHeader('PLAIN-TEXT SECRET ANALYSIS'));
   console.log(renderSecretTable(results.secrets));
 
   // 7. Final Report Card and CTA

@@ -72,6 +72,9 @@ export async function buildTelemetryPayload(summary, capabilities = null) {
     nodeVersion: process.version,
     scannerVersion: '0.1.0',
     metrics: {
+      agentsCount: summary.agentsCount || 0,
+      agentsActive: summary.agentsActive || 0,
+      agentsInstalled: summary.agentsInstalled || 0,
       configsScanned: summary.configsCount,
       mcpServersFound: summary.serversCount,
       portsScanned: summary.portsScanned,
@@ -119,7 +122,7 @@ export function promptTelemetryConsent(payload, timeoutMs = 15000) {
   return new Promise((resolve) => {
     // Section header — same pattern as dashboard.js sectionHeader()
     const headerLine = chalk.dim('─'.repeat(4));
-    console.log(`\n${orangeBold('■')} ${chalk.white.bold('ANONYMOUS TELEMETRY — DATABASE ROW PREVIEW')} ${headerLine}\n`);
+    console.log(`\n${orangeBold('■')} ${chalk.white.bold('ANONYMOUS TELEMETRY — DB PREVIEW')} ${headerLine}\n`);
     console.log(chalk.dim('  The following record is the ') + chalk.white.bold('only') + chalk.dim(' data sent. No code, paths, or credentials are included.\n'));
 
     // Vertical two-column key → value table
@@ -131,17 +134,20 @@ export function promptTelemetryConsent(payload, timeoutMs = 15000) {
     });
 
     dbTable.push(
-      [chalk.white('uniqueID'),        chalk.dim(payload.uniqueId)],
-      [chalk.white('configsScanned'),   chalk.white.bold(payload.metrics.configsScanned)],
-      [chalk.white('mcpServersFound'),  chalk.white.bold(payload.metrics.mcpServersFound)],
-      [chalk.white('portsScanned'),     chalk.white.bold(payload.metrics.portsScanned)],
-      [chalk.white('portsOpen'),        chalk.white.bold(payload.metrics.portsOpen)],
-      [chalk.white('portsExposed'),     payload.metrics.portsExposed > 0
-                                          ? orangeBold(payload.metrics.portsExposed)
-                                          : chalk.white.bold(payload.metrics.portsExposed)],
-      [chalk.white('secretsFound'),     payload.metrics.secretsFound > 0
-                                          ? orangeBold(payload.metrics.secretsFound)
-                                          : chalk.white.bold(payload.metrics.secretsFound)]
+      [chalk.white('uniqueID'), chalk.dim(payload.uniqueId)],
+      [chalk.white('agentsCount'), chalk.white.bold(payload.metrics.agentsCount)],
+      [chalk.white('agentsActive'), chalk.white.bold(payload.metrics.agentsActive)],
+      [chalk.white('agentsInstalled'), chalk.white.bold(payload.metrics.agentsInstalled)],
+      [chalk.white('configsScanned'), chalk.white.bold(payload.metrics.configsScanned)],
+      [chalk.white('mcpServersFound'), chalk.white.bold(payload.metrics.mcpServersFound)],
+      [chalk.white('portsScanned'), chalk.white.bold(payload.metrics.portsScanned)],
+      [chalk.white('portsOpen'), chalk.white.bold(payload.metrics.portsOpen)],
+      [chalk.white('portsExposed'), payload.metrics.portsExposed > 0
+        ? orangeBold(payload.metrics.portsExposed)
+        : chalk.white.bold(payload.metrics.portsExposed)],
+      [chalk.white('secretsFound'), payload.metrics.secretsFound > 0
+        ? orangeBold(payload.metrics.secretsFound)
+        : chalk.white.bold(payload.metrics.secretsFound)]
     );
 
     console.log(dbTable.toString());
@@ -193,7 +199,7 @@ export async function sendTelemetry(payload) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 1500);
 
-    const response = await fetch('https://api.barrikade.ai/telemetry', {
+    const response = await fetch('https://api.barrikade.ai/lens/telemetry', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

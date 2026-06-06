@@ -18,9 +18,8 @@ export function printBanner(version = '0.1.0') {
   console.log(chalk.dim(`                          v${version}`));
   console.log(line);
   console.log(
-    chalk.dim('  🔒 ') + 
-    chalk.white.bold('100% Local Scanning') + 
-    chalk.dim(' • ') + 
+    chalk.white.bold('100% Local Scanning') +
+    chalk.dim(' • ') +
     chalk.white('No code or credentials leave this machine')
   );
   console.log(line + '\n');

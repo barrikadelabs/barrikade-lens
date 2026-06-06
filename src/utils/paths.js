@@ -56,7 +56,62 @@ export function getScanPaths(cwd = process.cwd()) {
   // 5. Windsurf
   addPath('Windsurf', path.join(home, '.codeium', 'windsurf', 'mcp_config.json'), 'global', 'mcpServers');
 
-  // 6. VS Code Native & Settings
+  // 6. Zed Editor
+  addPath('Zed Settings (Global)', path.join(home, '.config', 'zed', 'settings.json'), 'global', 'zed');
+  addPath('Zed Settings (Project)', path.join(cwd, '.zed', 'settings.json'), 'project', 'zed');
+  if (platform === 'win32') {
+    addPath('Zed Settings (Global AppData)', path.join(appData, 'Zed', 'settings.json'), 'global', 'zed');
+  }
+
+  // 7. Roo Code (VS Code Extension)
+  if (platform === 'darwin') {
+    addPath('Roo Code (VS Code)', path.join(home, 'Library', 'Application Support', 'Code', 'User', 'globalStorage', 'rooveterinaryinc.roo-cline', 'settings', clineFilename), 'global', 'mcpServers');
+    addPath('Roo Code (VS Code Insiders)', path.join(home, 'Library', 'Application Support', 'Code - Insiders', 'User', 'globalStorage', 'rooveterinaryinc.roo-cline', 'settings', clineFilename), 'global', 'mcpServers');
+  } else if (platform === 'win32') {
+    addPath('Roo Code (VS Code)', path.join(appData, 'Code', 'User', 'globalStorage', 'rooveterinaryinc.roo-cline', 'settings', clineFilename), 'global', 'mcpServers');
+    addPath('Roo Code (VS Code Insiders)', path.join(appData, 'Code - Insiders', 'User', 'globalStorage', 'rooveterinaryinc.roo-cline', 'settings', clineFilename), 'global', 'mcpServers');
+  } else {
+    addPath('Roo Code (VS Code)', path.join(home, '.config', 'Code', 'User', 'globalStorage', 'rooveterinaryinc.roo-cline', 'settings', clineFilename), 'global', 'mcpServers');
+    addPath('Roo Code (VS Code Insiders)', path.join(home, '.config', 'Code - Insiders', 'User', 'globalStorage', 'rooveterinaryinc.roo-cline', 'settings', clineFilename), 'global', 'mcpServers');
+  }
+  addPath('Roo Code (Project)', path.join(cwd, '.roo', 'mcp.json'), 'project', 'mcpServers');
+
+  // 8. GitHub Copilot
+  addPath('GitHub Copilot (Project)', path.join(cwd, '.github', 'mcp.json'), 'project', 'mcpServers');
+  addPath('GitHub Copilot CLI (Global)', path.join(home, '.copilot', 'mcp-config.json'), 'global', 'mcpServers');
+  addPath('GitHub Copilot CLI (Project)', path.join(cwd, '.copilot', 'mcp-config.json'), 'project', 'mcpServers');
+  addPath('GitHub Copilot (JetBrains)', path.join(home, '.config', 'github-copilot', 'intellij', 'mcp.json'), 'global', 'mcpServers');
+
+  // 9. Kiro IDE
+  addPath('Kiro IDE (Global)', path.join(home, '.kiro', 'settings', 'mcp.json'), 'global', 'mcpServers');
+  addPath('Kiro IDE (Project)', path.join(cwd, '.kiro', 'settings', 'mcp.json'), 'project', 'mcpServers');
+
+  // 10. Amazon Q Developer
+  addPath('Amazon Q (Global MCP)', path.join(home, '.aws', 'amazonq', 'mcp.json'), 'global', 'mcpServers');
+  addPath('Amazon Q (Global Default)', path.join(home, '.aws', 'amazonq', 'default.json'), 'global', 'amazonq');
+  addPath('Amazon Q (Project MCP)', path.join(cwd, '.amazonq', 'mcp.json'), 'project', 'mcpServers');
+  addPath('Amazon Q (Project Default)', path.join(cwd, '.amazonq', 'default.json'), 'project', 'amazonq');
+
+  // 11. Warp Terminal
+  addPath('Warp Terminal (Global)', path.join(home, '.warp', '.mcp.json'), 'global', 'mcpServers');
+
+  // 12. Goose
+  addPath('Goose (Global config.yaml)', path.join(home, '.config', 'goose', 'config.yaml'), 'global', 'yaml');
+  if (platform === 'win32') {
+    addPath('Goose (Global AppData)', path.join(appData, 'Block', 'goose', 'config', 'config.yaml'), 'global', 'yaml');
+  } else if (platform === 'darwin') {
+    addPath('Goose (Global App Support)', path.join(home, 'Library', 'Application Support', 'Block', 'goose', 'config', 'config.yaml'), 'global', 'yaml');
+  }
+
+  // 13. Aider
+  addPath('Aider (Global)', path.join(home, '.aider.conf.yml'), 'global', 'yaml');
+  addPath('Aider (Project)', path.join(cwd, '.aider.conf.yml'), 'project', 'yaml');
+
+  // 14. JetBrains Junie
+  addPath('JetBrains Junie (Global)', path.join(home, '.junie', 'mcp', 'mcp.json'), 'global', 'mcpServers');
+  addPath('JetBrains Junie (Project)', path.join(cwd, '.junie', 'mcp', 'mcp.json'), 'project', 'mcpServers');
+
+  // 15. VS Code Native & Settings
   addPath('VS Code (Project Native MCP)', path.join(cwd, '.vscode', 'mcp.json'), 'project', 'vscodeServers');
   addPath('VS Code Settings (Project)', path.join(cwd, '.vscode', 'settings.json'), 'project', 'vscodeSettings');
   
@@ -74,51 +129,39 @@ export function getScanPaths(cwd = process.cwd()) {
     addPath('VS Code Settings (Global)', path.join(home, '.config', 'Code', 'User', 'settings.json'), 'global', 'vscodeSettings');
   }
 
-  // 7. Continue Extension
-  addPath('Continue (Global)', path.join(home, '.continue', 'config.json'), 'global', 'continue');
-  addPath('Continue (Project)', path.join(cwd, '.continue', 'config.json'), 'project', 'continue');
+  // 16. Continue Extension
+  addPath('Continue (Global JSON)', path.join(home, '.continue', 'config.json'), 'global', 'continue');
+  addPath('Continue (Project JSON)', path.join(cwd, '.continue', 'config.json'), 'project', 'continue');
+  addPath('Continue (Global YAML)', path.join(home, '.continue', 'config.yaml'), 'global', 'yaml');
+  addPath('Continue (Project YAML)', path.join(cwd, '.continue', 'config.yaml'), 'project', 'yaml');
 
-  // 8. Zed Editor Settings
-  if (platform === 'darwin') {
-    addPath('Zed Settings', path.join(home, '.config', 'zed', 'settings.json'), 'global', 'zed');
-  } else if (platform === 'win32') {
-    addPath('Zed Settings', path.join(home, '.config', 'zed', 'settings.json'), 'global', 'zed'); // Zed uses ~/.config/zed on windows too
-  } else {
-    addPath('Zed Settings', path.join(home, '.config', 'zed', 'settings.json'), 'global', 'zed');
-  }
+  // 17. Antigravity CLI & SDK (underlying folder is .gemini)
+  // Gemini CLI becomes Antigravity CLI!
+  addPath('Antigravity CLI Config (User)', path.join(home, '.gemini', 'config.json'), 'global', 'antigravityCli');
+  addPath('Antigravity CLI Settings (User)', path.join(home, '.gemini', 'settings.json'), 'global', 'antigravityCli');
+  addPath('Antigravity SDK Config (User)', path.join(home, '.gemini', 'antigravity', 'config.json'), 'global', 'antigravity');
+  addPath('Antigravity SDK Settings (User)', path.join(home, '.gemini', 'antigravity', 'settings.json'), 'global', 'antigravity');
+  addPath('Antigravity CLI Config (Project)', path.join(cwd, '.gemini', 'config.json'), 'project', 'antigravityCli');
+  addPath('Antigravity CLI Settings (Project)', path.join(cwd, '.gemini', 'settings.json'), 'project', 'antigravityCli');
+  addPath('Antigravity SDK Config (Project)', path.join(cwd, '.gemini', 'antigravity', 'config.json'), 'project', 'antigravity');
+  addPath('Antigravity SDK Settings (Project)', path.join(cwd, '.gemini', 'antigravity', 'settings.json'), 'project', 'antigravity');
 
-  // 9. Antigravity SDK
-  addPath('Antigravity (Global JSON)', path.join(home, '.antigravity.json'), 'global', 'antigravity');
-  addPath('Antigravity Settings (User)', path.join(home, '.antigravity', 'antigravity'), 'global', 'antigravity');
-  addPath('Antigravity IDE (User)', path.join(home, '.antigravity-ide', 'antigravity-ide'), 'global', 'antigravity');
-  addPath('Antigravity (Global config.json)', path.join(home, '.antigravity', 'config.json'), 'global', 'antigravity');
-  addPath('Antigravity (Global Config)', path.join(home, '.config', 'antigravity', 'config.json'), 'global', 'antigravity');
-  addPath('Antigravity Config (User)', path.join(home, '.gemini', 'antigravity', 'config.json'), 'global', 'antigravity');
-  addPath('Antigravity Settings (User AppData)', path.join(home, '.gemini', 'antigravity', 'settings.json'), 'global', 'antigravity');
-  addPath('Gemini Config (User)', path.join(home, '.gemini', 'config.json'), 'global', 'antigravity');
-  addPath('Gemini Settings (User)', path.join(home, '.gemini', 'settings.json'), 'global', 'antigravity');
-  addPath('Antigravity (Project JSON)', path.join(cwd, 'antigravity.json'), 'project', 'antigravity');
-  addPath('Antigravity (Project .JSON)', path.join(cwd, '.antigravity.json'), 'project', 'antigravity');
-  addPath('Antigravity (Project Config)', path.join(cwd, '.antigravity', 'config.json'), 'project', 'antigravity');
+  // 18. OpenCode CLI (opencode.json, opencode.jsonc)
+  addPath('OpenCode (User JSON)', path.join(home, '.opencode', 'opencode.json'), 'global', 'opencode');
+  addPath('OpenCode (User JSONC)', path.join(home, '.opencode', 'opencode.jsonc'), 'global', 'jsonc');
+  addPath('OpenCode (Project JSON)', path.join(cwd, '.opencode', 'opencode.json'), 'project', 'opencode');
+  addPath('OpenCode (Project JSONC)', path.join(cwd, '.opencode', 'opencode.jsonc'), 'project', 'jsonc');
+  addPath('OpenCode Root (Project JSON)', path.join(cwd, 'opencode.json'), 'project', 'opencode');
+  addPath('OpenCode Root (Project JSONC)', path.join(cwd, 'opencode.jsonc'), 'project', 'jsonc');
 
-  // 10. OpenCode CLI
-  addPath('OpenCode (User)', path.join(home, '.opencode.json'), 'global', 'antigravity');
-  addPath('OpenCode Config (User)', path.join(home, '.opencode', 'config.json'), 'global', 'antigravity');
-  addPath('OpenCode System Config (User)', path.join(home, '.config', 'opencode', 'config.json'), 'global', 'antigravity');
-  addPath('OpenCode (Project)', path.join(cwd, '.opencode.json'), 'project', 'antigravity');
-  addPath('OpenCode Config (Project)', path.join(cwd, '.opencode', 'config.json'), 'project', 'antigravity');
+  // 19. Codex CLI
+  addPath('Codex CLI (User TOML)', path.join(home, '.codex', 'config.toml'), 'global', 'toml');
+  addPath('Codex CLI Global State (User)', path.join(home, '.codex', '.codex-global-state.json'), 'global', 'codex');
+  addPath('Codex CLI (Project TOML)', path.join(cwd, '.codex', 'config.toml'), 'project', 'toml');
 
-  // 11. Codex CLI
-  addPath('Codex CLI (User)', path.join(home, '.codex.json'), 'global', 'antigravity');
-  addPath('Codex CLI Config (User)', path.join(home, '.codex', 'config.json'), 'global', 'antigravity');
-  addPath('Codex CLI Global State (User)', path.join(home, '.codex', '.codex-global-state.json'), 'global', 'antigravity');
-  addPath('Codex CLI (Project)', path.join(cwd, '.codex.json'), 'project', 'antigravity');
-  addPath('Codex CLI Config (Project)', path.join(cwd, '.codex', 'config.json'), 'project', 'antigravity');
-
-  // 12. OpenClaw CLI
-  addPath('OpenClaw (User)', path.join(home, '.openclaw', 'openclaw.json'), 'global', 'antigravity');
-  addPath('OpenClaw System Config (User)', path.join(home, '.config', 'openclaw', 'config.json'), 'global', 'antigravity');
-  addPath('OpenClaw (Project)', path.join(cwd, '.openclaw', 'openclaw.json'), 'project', 'antigravity');
+  // 20. OpenClaw CLI
+  addPath('OpenClaw (User)', path.join(home, '.openclaw', 'openclaw.json'), 'global', 'openclaw');
+  addPath('OpenClaw (Project)', path.join(cwd, '.openclaw', 'openclaw.json'), 'project', 'openclaw');
 
   return paths;
 }
@@ -147,10 +190,16 @@ export function getAgentStateDirs(cwd = process.cwd()) {
     { name: 'Windsurf / Codeium', path: path.join(home, '.codeium'), scope: 'global' },
     { name: 'Claude Code', path: path.join(home, '.claude'), scope: 'global' },
     { name: 'Codex CLI', path: path.join(home, '.codex'), scope: 'global' },
-    { name: 'Antigravity / Gemini', path: path.join(home, '.gemini'), scope: 'global' },
-    { name: 'Antigravity App Data', path: path.join(home, '.gemini', 'antigravity'), scope: 'global' },
+    { name: 'Antigravity CLI / SDK', path: path.join(home, '.gemini'), scope: 'global' },
     { name: 'OpenCode', path: path.join(home, '.opencode'), scope: 'global' },
+    { name: 'GitHub Copilot CLI', path: path.join(home, '.copilot'), scope: 'global' },
+    { name: 'Kiro IDE', path: path.join(home, '.kiro'), scope: 'global' },
+    { name: 'Amazon Q Developer', path: path.join(home, '.aws', 'amazonq'), scope: 'global' },
+    { name: 'Warp Terminal', path: path.join(home, '.warp'), scope: 'global' },
+    { name: 'Goose', path: path.join(home, '.config', 'goose'), scope: 'global' },
+    { name: 'JetBrains Junie', path: path.join(home, '.junie'), scope: 'global' },
     { name: 'JetBrains IDE Option Folder', path: jbBase, scope: 'global' },
+    { name: 'Qodo Gen (VS Code)', path: path.join(home, 'Library', 'Application Support', 'Code', 'User', 'globalStorage', 'qodo.qodo-gen'), scope: 'global' },
     
     // Project State Dirs
     { name: 'Cursor State', path: path.join(cwd, '.cursor'), scope: 'project' },
@@ -159,8 +208,25 @@ export function getAgentStateDirs(cwd = process.cwd()) {
     { name: 'Continue State', path: path.join(cwd, '.continue'), scope: 'project' },
     { name: 'Aider State', path: path.join(cwd, '.aider'), scope: 'project' },
     { name: 'Claude Code State', path: path.join(cwd, '.claude'), scope: 'project' },
-    { name: 'OpenCode Project', path: path.join(cwd, '.opencode'), scope: 'project' }
+    { name: 'OpenCode Project', path: path.join(cwd, '.opencode'), scope: 'project' },
+    { name: 'Kiro IDE Project', path: path.join(cwd, '.kiro'), scope: 'project' },
+    { name: 'Amazon Q Project', path: path.join(cwd, '.amazonq'), scope: 'project' },
+    { name: 'GitHub Copilot CLI Project', path: path.join(cwd, '.copilot'), scope: 'project' },
+    { name: 'JetBrains Junie Project', path: path.join(cwd, '.junie'), scope: 'project' },
+    { name: 'GitHub Config Folder', path: path.join(cwd, '.github'), scope: 'project' },
+    { name: 'Zed Project Config', path: path.join(cwd, '.zed'), scope: 'project' },
+    { name: 'Codex Project Config', path: path.join(cwd, '.codex'), scope: 'project' },
+    { name: 'Antigravity CLI/SDK Project Config', path: path.join(cwd, '.gemini'), scope: 'project' },
+    { name: 'VS Code Project Config', path: path.join(cwd, '.vscode'), scope: 'project' }
   ];
+
+  // Add Windows-specific or alternative global directories if appropriate
+  if (platform === 'win32') {
+    const appDataRoaming = process.env.APPDATA || path.join(home, 'AppData', 'Roaming');
+    dirs.push({ name: 'Qodo Gen (VS Code Windows)', path: path.join(appDataRoaming, 'Code', 'User', 'globalStorage', 'qodo.qodo-gen'), scope: 'global' });
+  } else if (platform === 'linux') {
+    dirs.push({ name: 'Qodo Gen (VS Code Linux)', path: path.join(home, '.config', 'Code', 'User', 'globalStorage', 'qodo.qodo-gen'), scope: 'global' });
+  }
 
   return dirs;
 }
@@ -176,8 +242,11 @@ export function getAgentRuleFiles(cwd = process.cwd()) {
     { name: 'AGENTS.md', path: path.join(cwd, 'AGENTS.md') },
     { name: 'CLAUDE.md', path: path.join(cwd, 'CLAUDE.md') },
     { name: 'GEMINI.md', path: path.join(cwd, 'GEMINI.md') },
+    { name: 'ANTIGRAVITY.md', path: path.join(cwd, 'ANTIGRAVITY.md') },
     { name: '.clinerules', path: path.join(cwd, '.clinerules') },
     { name: '.windsurfrules', path: path.join(cwd, '.windsurfrules') },
+    { name: '.cursorrules', path: path.join(cwd, '.cursorrules') },
+    { name: '.roomodes', path: path.join(cwd, '.roomodes') },
     { name: 'Cursor Rules Dir', path: path.join(cwd, '.cursor', 'rules') },
     { name: 'Roo Rules Dir', path: path.join(cwd, '.roo', 'rules') }
   ];

@@ -4,6 +4,170 @@ import path from 'node:path';
 import { getScanPaths, getAgentStateDirs, getAgentRuleFiles, getModelDirs } from '../utils/paths.js';
 
 /**
+ * Parses simple TOML content line by line (used for Codex CLI config.toml).
+ * Extracts mcp_servers blocks.
+ * 
+ * @param {string} tomlContent 
+ * @returns {any}
+ */
+function parseToml(tomlContent) {
+  try {
+    const lines = tomlContent.split(/\r?\n/);
+    const data = { mcpServers: {} };
+    let currentServer = null;
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith(';')) continue;
+
+      const headerMatch = trimmed.match(/^\[mcp_servers\.([^\]]+)\]/);
+      if (headerMatch) {
+        currentServer = headerMatch[1].trim();
+        data.mcpServers[currentServer] = { command: '', args: [], env: {} };
+        continue;
+      }
+
+      if (trimmed.startsWith('[') && trimmed.endsWith(']')) {
+        currentServer = null;
+        continue;
+      }
+
+      if (currentServer && data.mcpServers[currentServer]) {
+        const eqIdx = trimmed.indexOf('=');
+        if (eqIdx !== -1) {
+          const key = trimmed.slice(0, eqIdx).trim();
+          const val = trimmed.slice(eqIdx + 1).trim();
+
+          if (key === 'command') {
+            data.mcpServers[currentServer].command = val.replace(/^['"]|['"]$/g, '');
+          } else if (key === 'args') {
+            if (val.startsWith('[') && val.endsWith(']')) {
+              data.mcpServers[currentServer].args = val
+                .slice(1, -1)
+                .split(',')
+                .map(s => s.trim().replace(/^['"]|['"]$/g, ''))
+                .filter(s => s !== '');
+            }
+          } else if (key === 'env') {
+            if (val.startsWith('{') && val.endsWith('}')) {
+              const body = val.slice(1, -1);
+              const pairs = body.split(',');
+              for (const pair of pairs) {
+                const eq = pair.indexOf('=');
+                if (eq !== -1) {
+                  const k = pair.slice(0, eq).trim();
+                  const v = pair.slice(eq + 1).trim().replace(/^['"]|['"]$/g, '');
+                  data.mcpServers[currentServer].env[k] = v;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    return data;
+  } catch (err) {
+    throw new Error('Malformed TOML: ' + err.message);
+  }
+}
+
+/**
+ * Parses simple YAML content line by line (used for Goose, Aider, and Continue).
+ * Extracts mcpServers or extensions blocks.
+ * 
+ * @param {string} yamlContent 
+ * @returns {any}
+ */
+function parseYaml(yamlContent) {
+  try {
+    const lines = yamlContent.split(/\r?\n/);
+    const data = { mcpServers: {} };
+    let currentServer = null;
+    let serverIndent = -1;
+    let inMcp = false;
+    let mcpIndent = -1;
+
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) continue;
+
+      const indent = line.length - line.trimStart().length;
+
+      if (inMcp && indent <= mcpIndent && trimmed && !trimmed.startsWith('-') && !trimmed.includes(':')) {
+        inMcp = false;
+        currentServer = null;
+      }
+
+      if (!inMcp) {
+        const colonIdx = trimmed.indexOf(':');
+        if (colonIdx !== -1) {
+          const key = trimmed.slice(0, colonIdx).trim();
+          if (key === 'mcpServers' || key === 'mcp_servers' || key === 'servers' || key === 'extensions') {
+            inMcp = true;
+            mcpIndent = indent;
+          }
+        }
+        continue;
+      }
+
+      // Inside MCP block
+      if (currentServer && indent <= serverIndent && !trimmed.startsWith('-')) {
+        currentServer = null;
+      }
+
+      if (!currentServer && trimmed.endsWith(':')) {
+        currentServer = trimmed.slice(0, -1).trim();
+        serverIndent = indent;
+        data.mcpServers[currentServer] = { command: '', args: [], env: {} };
+        continue;
+      }
+
+      if (currentServer) {
+        const srv = data.mcpServers[currentServer];
+
+        if (trimmed.startsWith('-')) {
+          const val = trimmed.slice(1).trim().replace(/^['"]|['"]$/g, '');
+          if (val) {
+            srv.args.push(val);
+          }
+          continue;
+        }
+
+        const colonIdx = trimmed.indexOf(':');
+        if (colonIdx !== -1) {
+          const key = trimmed.slice(0, colonIdx).trim();
+          const val = trimmed.slice(colonIdx + 1).trim().replace(/^['"]|['"]$/g, '');
+
+          if (key === 'command' || key === 'cmd') {
+            srv.command = val;
+          } else if (key === 'args') {
+            if (val && val.startsWith('[') && val.endsWith(']')) {
+              srv.args = val
+                .slice(1, -1)
+                .split(',')
+                .map(s => s.trim().replace(/^['"]|['"]$/g, ''))
+                .filter(s => s);
+            }
+          } else if (key === 'enabled' && val === 'false') {
+            srv.disabled = true;
+          } else if (key === 'url' || key === 'serverUrl' || key === 'server_url') {
+            srv.url = val;
+          } else if (indent > serverIndent) {
+            // Check for env properties
+            if (key !== 'env') {
+              srv.env[key] = val;
+            }
+          }
+        }
+      }
+    }
+    return data;
+  } catch (err) {
+    throw new Error('Malformed YAML: ' + err.message);
+  }
+}
+
+/**
  * Sweeps the filesystem to locate JetBrains configuration files.
  */
 async function discoverJetBrainsPaths() {
@@ -47,6 +211,47 @@ async function discoverJetBrainsPaths() {
 }
 
 /**
+ * Dynamically checks for server configurations inside .continue/mcpServers/ directory.
+ * 
+ * @param {string} cwd 
+ * @returns {Promise<Array<{ tool: string, path: string, scope: 'global' | 'project', type: string }>>}
+ */
+async function discoverContinueMcpServers(cwd = process.cwd()) {
+  const home = os.homedir();
+  const dirsToCheck = [
+    { dir: path.join(home, '.continue', 'mcpServers'), scope: 'global' },
+    { dir: path.join(cwd, '.continue', 'mcpServers'), scope: 'project' }
+  ];
+  
+  const foundConfigs = [];
+  
+  for (const { dir, scope } of dirsToCheck) {
+    try {
+      const entries = await fs.readdir(dir, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isFile()) {
+          const ext = path.extname(entry.name).toLowerCase();
+          if (ext === '.json' || ext === '.yaml' || ext === '.yml' || ext === '.jsonc') {
+            const fullPath = path.join(dir, entry.name);
+            const parserType = (ext === '.yaml' || ext === '.yml') ? 'yaml' : (ext === '.jsonc' ? 'jsonc' : 'mcpServers');
+            foundConfigs.push({
+              tool: `Continue MCP Server Config (${entry.name})`,
+              path: fullPath,
+              scope,
+              type: parserType
+            });
+          }
+        }
+      }
+    } catch {
+      // Directory doesn't exist, skip
+    }
+  }
+  
+  return foundConfigs;
+}
+
+/**
  * Audits all configuration files on the workstation.
  * 
  * @param {string} [cwd=process.cwd()]
@@ -54,7 +259,8 @@ async function discoverJetBrainsPaths() {
 export async function auditConfigs(cwd = process.cwd()) {
   const resolvedPaths = getScanPaths(cwd);
   const jbPaths = await discoverJetBrainsPaths();
-  const allScanPaths = [...resolvedPaths, ...jbPaths];
+  const continuePaths = await discoverContinueMcpServers(cwd);
+  const allScanPaths = [...resolvedPaths, ...jbPaths, ...continuePaths];
 
   const results = [];
 
@@ -103,11 +309,20 @@ export async function auditConfigs(cwd = process.cwd()) {
 
         result.servers = servers;
       } else {
-        // JSON Files
+        // Parse YAML, TOML, or JSON
         let json;
         try {
-          const cleanContent = content.replace(/\/\*[\s\S]*?\*\/|([^\\:]|^)\/\/.*$/gm, '$1');
-          json = JSON.parse(cleanContent);
+          if (scanConfig.type === 'toml') {
+            json = parseToml(content);
+          } else if (scanConfig.type === 'yaml') {
+            json = parseYaml(content);
+          } else {
+            // Strip JSON/JSONC comments and trailing commas
+            const cleanContent = content
+              .replace(/\/\*[\s\S]*?\*\/|([^\\:]|^)\/\/.*$/gm, '$1')
+              .replace(/,(\s*[\]}])/g, '$1');
+            json = JSON.parse(cleanContent);
+          }
         } catch {
           result.malformed = true;
           results.push(result);
@@ -116,21 +331,29 @@ export async function auditConfigs(cwd = process.cwd()) {
 
         let mcpConfig = null;
         
-        if (scanConfig.type === 'mcpServers') {
+        if (scanConfig.type === 'toml' || scanConfig.type === 'yaml') {
+          mcpConfig = json.mcpServers;
+        } else if (scanConfig.type === 'mcpServers') {
           mcpConfig = json.mcpServers;
         } else if (scanConfig.type === 'vscodeServers') {
           mcpConfig = json.servers || json.mcpServers;
         } else if (scanConfig.type === 'vscodeSettings') {
           // VS Code settings can have mcp config in custom properties
-          mcpConfig = json['mcp.servers'] || json['mcpServers'];
+          mcpConfig = json['mcp.servers'] || json['mcpServers'] || json['augment.advanced.mcpServers'] || (json['augment.advanced'] && json['augment.advanced'].mcpServers);
         } else if (scanConfig.type === 'continue') {
-          // Continue config.json stores servers in mcpServers key (usually a list or map)
           mcpConfig = json.mcpServers;
         } else if (scanConfig.type === 'zed') {
-          // Zed settings use context_servers or mcp keys
           mcpConfig = json.context_servers || json.mcp;
-        } else if (scanConfig.type === 'antigravity') {
+        } else if (scanConfig.type === 'antigravity' || scanConfig.type === 'antigravityCli') {
           mcpConfig = json.mcp_servers || json.mcpServers || json.servers;
+        } else if (scanConfig.type === 'opencode' || scanConfig.type === 'jsonc') {
+          mcpConfig = json.mcpServers || json.mcp_servers || json.servers;
+        } else if (scanConfig.type === 'openclaw') {
+          mcpConfig = json.mcpServers || json.mcp_servers || json.servers;
+        } else if (scanConfig.type === 'codex') {
+          mcpConfig = json.mcpServers || json.mcp_servers || json.servers;
+        } else if (scanConfig.type === 'amazonq') {
+          mcpConfig = json.mcpServers || json.mcp_servers || json.servers;
         }
 
         if (mcpConfig) {
@@ -143,11 +366,11 @@ export async function auditConfigs(cwd = process.cwd()) {
               result.servers.push({
                 name,
                 type,
-                command: srv.command,
+                command: srv.command || srv.cmd,
                 args: srv.args || [],
                 envVars: envKeys,
                 url: srv.url || srv.serverUrl,
-                disabled: srv.disabled === true
+                disabled: srv.disabled === true || srv.enabled === false
               });
             });
           } else if (typeof mcpConfig === 'object') {
@@ -160,11 +383,11 @@ export async function auditConfigs(cwd = process.cwd()) {
                 result.servers.push({
                   name,
                   type,
-                  command: srv.command,
+                  command: srv.command || srv.cmd,
                   args: srv.args || [],
                   envVars: envKeys,
                   url: sseUrl,
-                  disabled: srv.disabled === true,
+                  disabled: srv.disabled === true || srv.enabled === false,
                   autoApprove: Array.isArray(srv.autoApprove) ? srv.autoApprove : undefined
                 });
               } else if (typeof srv === 'string') {

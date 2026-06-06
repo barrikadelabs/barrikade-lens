@@ -74,9 +74,10 @@ export function renderSummaryCard(summary, secrets) {
   body += chalk.white.bold('  SECURITY SCORE: ') + progressBar + '  (' + ratingStr + ')\n\n';
 
   body += chalk.white.bold('SCAN METRICS:\n');
+  body += chalk.dim('  • Discovered AI Agents:  ') + chalk.white(`${summary.agentsCount || 0} (${summary.agentsActive || 0} active, ${summary.agentsInstalled || 0} installed)`) + '\n';
   body += chalk.dim('  • Config Files Found:    ') + chalk.white(summary.configsCount) + '\n';
   body += chalk.dim('  • Active MCP Servers:    ') + chalk.white(summary.serversCount) + '\n';
-  body += chalk.dim('  • Open AI Ports scanned: ') + chalk.white(summary.portsOpen) + chalk.dim(` (${summary.portsExposed} exposed to LAN)`) + '\n';
+  body += chalk.dim('  • Open AI Ports:         ') + chalk.white(`${summary.portsOpen} open`) + chalk.dim(` (${summary.portsExposed} exposed to LAN)`) + '\n';
   body += chalk.dim('  • Exposed Secrets:       ') + chalk.white(summary.secretsCount) + '\n\n';
 
   body += chalk.white.bold('SEVERITY SPLIT:\n');

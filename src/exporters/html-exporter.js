@@ -415,6 +415,10 @@ export async function exportHtml(results, outputPath) {
           <span class="metric-val">${results.platform.toUpperCase()}</span>
         </div>
         <div class="metric-row">
+          <span class="metric-label">Discovered AI Agents</span>
+          <span class="metric-val">${summary.agentsCount || 0} (${summary.agentsActive || 0} active, ${summary.agentsInstalled || 0} installed)</span>
+        </div>
+        <div class="metric-row">
           <span class="metric-label">Config Files Found</span>
           <span class="metric-val">${summary.configsCount}</span>
         </div>
@@ -476,6 +480,45 @@ export async function exportHtml(results, outputPath) {
         </div>
         <p class="capability-desc">${capabilities.credentialExposure.detail}</p>
       </div>
+    </div>
+
+    <!-- Discovered Agents Card -->
+    <div class="card" style="margin-bottom: 30px;">
+      <h2>Discovered Shadow AI Agents Inventory</h2>
+      ${!results.agents || results.agents.length === 0 ? `
+        <div class="empty-state">No AI agents or tools discovered on this workstation.</div>
+      ` : `
+        <table>
+          <thead>
+            <tr>
+              <th>Agent / Tool Name</th>
+              <th>Status</th>
+              <th>Supporting Evidence</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${[...results.agents].sort((a, b) => {
+              if (a.status === 'ACTIVE' && b.status !== 'ACTIVE') return -1;
+              if (a.status !== 'ACTIVE' && b.status === 'ACTIVE') return 1;
+              return a.name.localeCompare(b.name);
+            }).map(agent => {
+              const statusClass = agent.status === 'ACTIVE' ? 'status-critical' : 'status-safe';
+              const cleanEvidence = agent.evidence.map(e => {
+                const idx = e.indexOf(':');
+                return idx !== -1 ? e.substring(0, idx).trim() : e;
+              });
+              const uniqueEvidence = Array.from(new Set(cleanEvidence)).join(', ');
+              return `
+                <tr>
+                  <td><strong>${agent.name}</strong></td>
+                  <td><span class="status-badge ${statusClass}">${agent.status}</span></td>
+                  <td>${uniqueEvidence}</td>
+                </tr>
+              `;
+            }).join('')}
+          </tbody>
+        </table>
+      `}
     </div>
 
     <!-- Audit Evidence collected -->

@@ -28,10 +28,9 @@ import { exportHtml } from './exporters/html-exporter.js';
 export async function runAudit(options = {}) {
   const isQuiet = options.json === true;
   const isTelemetryOptOut = options.telemetry === false;
-  
+
   let spinner;
   if (!isQuiet) {
-    console.log(chalk.hex('#FF6600')('🔍 Initializing workstation capability-based security audit...'));
     spinner = ora({
       text: 'Scanning workspace structures & active processes...',
       color: 'yellow'
@@ -106,6 +105,10 @@ export async function runAudit(options = {}) {
     const portsExposed = ports.filter(p => p.open && p.exposed).length;
     const secretsCount = mergedSecrets.length;
 
+    const agentsCount = capabilityResult.agents.length;
+    const agentsActive = capabilityResult.agents.filter(a => a.status === 'ACTIVE').length;
+    const agentsInstalled = capabilityResult.agents.filter(a => a.status === 'INSTALLED').length;
+
     const criticalCount = mergedSecrets.filter(s => s.risk === 'CRITICAL').length + portsExposed;
     const highCount = mergedSecrets.filter(s => s.risk === 'HIGH').length;
     const mediumCount = mergedSecrets.filter(s => s.risk === 'MEDIUM').length + configs.filter(c => c.exists && c.malformed).length;
@@ -119,7 +122,10 @@ export async function runAudit(options = {}) {
       secretsCount,
       criticalCount,
       highCount,
-      mediumCount
+      mediumCount,
+      agentsCount,
+      agentsActive,
+      agentsInstalled
     };
 
     const aggregatedResults = {
@@ -129,6 +135,7 @@ export async function runAudit(options = {}) {
       summary,
       capabilities: capabilityResult.capabilities,
       evidence: capabilityResult.evidence,
+      agents: capabilityResult.agents,
       configs,
       ports,
       secrets: mergedSecrets
@@ -160,11 +167,11 @@ export async function runAudit(options = {}) {
     if (!isTelemetryOptOut && process.env.BARRIKADE_NO_TELEMETRY !== '1' && process.env.BARRIKADE_NO_TELEMETRY !== 'true') {
       const telemetryPayload = await buildTelemetryPayload(summary, capabilityResult.capabilities);
       if (options.json) {
-        sendTelemetry(telemetryPayload).catch(() => {});
+        sendTelemetry(telemetryPayload).catch(() => { });
       } else {
         const consented = await promptTelemetryConsent(telemetryPayload, 15000);
         if (consented) {
-          await sendTelemetry(telemetryPayload).catch(() => {});
+          await sendTelemetry(telemetryPayload).catch(() => { });
         }
       }
     }

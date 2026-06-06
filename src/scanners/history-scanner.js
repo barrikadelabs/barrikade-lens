@@ -12,6 +12,13 @@ const AGENT_COMMANDS = [
   { term: 'lmstudio', label: 'LM Studio' },
   { term: 'crewai', label: 'CrewAI agent run' },
   { term: 'langchain', label: 'LangChain script' },
+  { term: 'antigravity', label: 'Antigravity CLI invocation' },
+  { term: 'opencode', label: 'OpenCode CLI invocation' },
+  { term: 'openclaw', label: 'OpenClaw CLI invocation' },
+  { term: 'codex', label: 'Codex CLI invocation' },
+  { term: 'goose', label: 'Goose CLI invocation' },
+  { term: 'kiro', label: 'Kiro CLI/IDE invocation' },
+  { term: 'amazonq', label: 'Amazon Q Developer CLI' },
   { term: 'npx barrikade-audit', label: 'Barrikade security scan' }
 ];
 
