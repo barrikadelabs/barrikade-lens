@@ -1,0 +1,73 @@
+# ──────────────────────────────────────────────────────────────
+# Deploy barrikade-lens-api to Cloud Run
+#
+# Triggers on:
+#   - Push to main that changes anything in api/
+#   - Manual dispatch (for ad-hoc deploys)
+#
+# Auth: Uses Workload Identity Federation (keyless).
+#   See the README section at the bottom of this file for setup.
+# ──────────────────────────────────────────────────────────────
+name: Deploy API to Cloud Run
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'api/**'
+  workflow_dispatch:
+
+env:
+  PROJECT_ID: glossy-chimera-495407-d1
+  REGION: us-central1
+  SERVICE: barrikade-lens-api
+
+jobs:
+  deploy:
+    name: Build & Deploy
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write  # Required for Workload Identity Federation
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.WIF_PROVIDER }}
+          service_account: ${{ secrets.WIF_SERVICE_ACCOUNT }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy to Cloud Run
+        working-directory: api
+        run: |
+          gcloud run deploy ${{ env.SERVICE }} \
+            --source . \
+            --region ${{ env.REGION }} \
+            --allow-unauthenticated \
+            --memory 256Mi \
+            --min-instances 0 \
+            --max-instances 3 \
+            --set-env-vars "NODE_ENV=production" \
+            --quiet
+
+      - name: Smoke test
+        run: |
+          URL=$(gcloud run services describe ${{ env.SERVICE }} \
+            --region ${{ env.REGION }} \
+            --format 'value(status.url)')
+          
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL/lens/health")
+          
+          if [ "$STATUS" != "200" ]; then
+            echo "❌ Health check failed with status $STATUS"
+            exit 1
+          fi
+          
+          echo "✅ Health check passed — $URL/lens/health returned 200"

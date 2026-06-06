@@ -57,12 +57,10 @@ export function validateTelemetryPayload(body) {
     'workspacePresenceStatus', 'credentialExposureStatus'
   ];
 
-  const validStatuses = new Set(['DETECTED', 'CLEAN', 'UNKNOWN']);
-
   for (const field of statusFields) {
     const val = body.metrics[field];
-    if (val !== undefined && (typeof val !== 'string' || !validStatuses.has(val))) {
-      errors.push(`metrics.${field}: must be one of DETECTED, CLEAN, UNKNOWN`);
+    if (val !== undefined && typeof val !== 'string') {
+      errors.push(`metrics.${field}: must be a string if provided`);
     }
   }
 
