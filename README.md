@@ -1,63 +1,60 @@
-# Barrikade Lens (Local Audit CLI)
+# Barrikade Lens
 
-`barrikade-audit` is a zero-install, privacy-first security auditor for local developer workstations. It scans your environment for active AI agent tools, exposed local inference servers, and plaintext API keys or credentials.
-
-It's designed to give developers and security engineers an instant, transparent view of their local "Shadow AI" footprint.
-
-## Quick Start
-
-You can run the audit immediately without signing up, configuring API keys, or installing anything:
+> **Instant Shadow AI discovery & security audit for developer workstations.**
+> Scans for AI agents, MCP servers, local LLMs, and plaintext secrets — in seconds.
 
 ```bash
-npx barrikade-audit
+npx barrikade-lens
 ```
 
-Within seconds, the CLI scans your workstation and displays an interactive audit dashboard directly in your terminal.
+No signup. No API keys. No configuration. Just run it.
 
 ---
 
-## What the Scanner Checks
+## What It Does
 
-### 1. Shadow Agent & MCP Configuration Auditor
-The tool scans default system paths to discover configuration files for popular AI tools and clients, identifying all configured Model Context Protocol (MCP) servers:
-* **Claude Desktop** (`claude_desktop_config.json`)
-* **Cursor IDE** (Global `~/.cursor/mcp.json` and project-level `.cursor/mcp.json`)
-* **Claude Code** (Global `~/.claude.json` and project-level `.mcp.json`)
-* **Cline** (VS Code extension configurations, including traditional and Insiders)
-* **Windsurf** (`mcp_config.json`)
-* **VS Code Native MCP** (Workspace `.vscode/mcp.json` and global configurations)
-* **Antigravity SDK** (Global and project-level config files)
+Barrikade Lens gives you (and your security team) instant visibility into the **Shadow AI footprint** on any developer machine:
 
-### 2. Local LLM Server Port Sweep
-The tool performs a fast, parallel socket connection sweep against ports commonly used by local AI inference backends:
-* **Ollama** (Port `11434`)
-* **LM Studio** (Port `1234`)
-* **Jan.ai** (Port `1337`)
-* **LocalAI / Llama.cpp** (Port `8080` / `8000`)
-* **Text Generation WebUI** (Port `7860` / `5000`)
-* **Figma Desktop MCP Server** (Port `3845`)
-* **JetBrains built-in MCP Servers** (Ports `63334`, `64342+`)
+### AI Agent Discovery
+Discovers **23+ AI tools** across your system — config files, running processes, state directories, and workspace artifacts:
 
-**Binding Exposure Verification:**
-If a server is running, the tool checks whether it is bound securely to `127.0.0.1` (loopback - accessible only to your machine) or exposed on `0.0.0.0` (all interfaces - accessible to anyone on your local area network (LAN)). Unintentionally exposed ports are flagged as **CRITICAL** risks.
+- **IDE Agents**: Cursor, GitHub Copilot, Windsurf, Cline, Roo Code, Kiro, Continue.dev, Augment Code, Qodo Gen
+- **CLI Agents**: Claude Code, Antigravity CLI, OpenCode, Codex CLI, OpenClaw, Aider, Goose
+- **Desktop AI**: Claude Desktop
+- **IDE Plugins**: JetBrains Junie, Amazon Q, Zed AI, Warp Terminal
 
-### 3. Plaintext Secrets & CISO Risk Analysis
-The CLI parses configuration contents using high-efficiency regex patterns to detect hardcoded plaintext credentials routinely stored in configuration blocks:
-* **API Keys:** OpenAI, Anthropic, HuggingFace, Google API, Slack, Stripe
-* **Access Keys:** AWS Access Key ID, AWS STS temporary credentials
-* **Tokens:** GitHub classic & fine-grained personal access tokens
-* **Connection Strings:** PostgreSQL, MongoDB
-* **Private Keys:** `-----BEGIN PRIVATE KEY-----` blocks
-* **Permission Flags:** JetBrains **Brave Mode** (executing commands without user approval) and Cline **Auto-Approve** options.
+### MCP Server Audit
+Parses all discovered configuration files to identify configured **Model Context Protocol (MCP) servers**, including their transport types, command arguments, and environment variables.
+
+### Local LLM Port Sweep
+Checks common ports for local inference servers:
+- **Ollama** (11434), **LM Studio** (1234), **Jan.ai** (1337)
+- **LocalAI / Llama.cpp** (8080 / 8000), **Text Gen WebUI** (7860 / 5000)
+- **JetBrains MCP** (63334, 64342+), **Figma MCP** (3845)
+
+Flags servers bound to `0.0.0.0` (network-exposed) as **CRITICAL** risks.
+
+### Plaintext Secrets Scanner
+Detects hardcoded credentials across configs, `.env` files, and shell history:
+- API Keys: OpenAI, Anthropic, HuggingFace, Google, Slack, Stripe
+- AWS Access Keys & STS tokens
+- GitHub PATs (classic & fine-grained)
+- Database connection strings (PostgreSQL, MongoDB)
+- Private key blocks
+
+### Risk Flags
+- JetBrains **Brave Mode** (auto-execute without approval)
+- Cline **Auto-Approve** settings
+- Exposed inference server ports
 
 ---
 
-## Options & Flags
+## Usage
 
 ```
-Usage: barrikade-audit [options]
+Usage: barrikade-lens [options]
 
-Instant Shadow AI & MCP server security scanner
+Instant Shadow AI agent discovery & security scanner
 
 Options:
   -V, --version        output the version number
@@ -71,33 +68,50 @@ Options:
 
 ### Examples
 
-**Export a shareable CISO HTML report:**
+**Run a quick scan:**
 ```bash
-npx barrikade-audit --html report.html
+npx barrikade-lens
 ```
 
-**Run in CI/CD pipeline and output raw JSON (exits with code 1 if critical issues are found):**
+**Export an HTML report for your CISO:**
 ```bash
-npx barrikade-audit --json --report build-audit.json
+npx barrikade-lens --html report.html
+```
+
+**CI/CD pipeline (exits code 1 if critical issues found):**
+```bash
+npx barrikade-lens --json --report audit.json
+```
+
+**Install globally:**
+```bash
+npm install -g barrikade-lens
+barrikade-lens
 ```
 
 ---
 
-## Privacy & Telemetry Commitment
+## Privacy & Telemetry
 
-* **Local Scanning:** The scan engine executes entirely on your machine.
-* **No Code Exposure:** Your source code, configuration files, and raw values never leave your system.
-* **Anonymized Findings:** In order to track tool effectiveness, high-level metrics are sent to `https://api.barrikade.ai/telemetry` (e.g., number of open ports, total secrets detected). All credentials and file paths are heavily redacted before telemetry generation.
-* **How to Opt Out:** You can disable telemetry at any time by appending `--no-telemetry` to your command or by setting the environment variable `BARRIKADE_NO_TELEMETRY=1`.
+- **100% local scanning.** The scan engine runs entirely on your machine.
+- **No code exposure.** Your source code, file paths, and raw credential values never leave your system.
+- **Anonymous metrics only.** High-level counts (e.g., "3 agents found, 1 exposed port") are sent to `https://api.barrikade.ai/lens/telemetry`. You see and approve the exact record before it's sent.
+- **Opt out anytime:**
+  ```bash
+  npx barrikade-lens --no-telemetry
+  # or
+  export BARRIKADE_NO_TELEMETRY=1
+  ```
 
 ---
 
 ## Fleet-Wide Governance
 
-Individual scans protect one machine. To govern Shadow AI across your entire organization, check out **Barrikade**:
-* Fleet-wide developer AI agent discovery
-* Secure credential proxying and RBAC policies for MCP servers
-* Command execution guardrails and safety policy enforcement
-* Compliance auditing for developer-installed AI extensions
+Individual scans protect one machine. To govern Shadow AI across your entire organisation:
 
-👉 Learn more and request access at [barrikade.ai](https://barrikade.ai).
+- Fleet-wide developer AI agent discovery
+- Secure credential proxying and RBAC policies for MCP servers
+- Command execution guardrails and safety policy enforcement
+- Compliance auditing for developer-installed AI extensions
+
+👉 Learn more at [barrikade.ai](https://barrikade.ai)

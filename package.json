@@ -1,10 +1,10 @@
 {
-  "name": "@barrikade/audit",
+  "name": "barrikade-lens",
   "version": "0.1.0",
-  "description": "Instant Shadow AI security audit for developer workstations. Scans MCP servers, local LLMs, and plaintext secrets.",
+  "description": "Instant Shadow AI security audit for developer workstations. Discovers AI agents, scans MCP servers, local LLMs, and plaintext secrets.",
   "type": "module",
   "bin": {
-    "barrikade-audit": "./bin/cli.js"
+    "barrikade-lens": "./bin/cli.js"
   },
   "files": [
     "bin/",
@@ -22,10 +22,23 @@
     "audit",
     "shadow-ai",
     "llm",
-    "barrikade"
+    "barrikade",
+    "ai-agent",
+    "mcp-server",
+    "devops",
+    "devsecops",
+    "cli"
   ],
   "license": "MIT",
   "author": "Barrikade <hello@barrikade.ai>",
+  "homepage": "https://barrikade.ai",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/barrikadelabs/barrikade-lens.git"
+  },
+  "bugs": {
+    "url": "https://github.com/barrikadelabs/barrikade-lens/issues"
+  },
   "dependencies": {
     "boxen": "^8.0.1",
     "chalk": "^5.3.0",

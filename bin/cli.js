@@ -15,8 +15,8 @@ process.on('uncaughtException', (error) => {
 });
 
 program
-  .name('barrikade-audit')
-  .description('Instant Shadow AI & MCP server security scanner')
+  .name('barrikade-lens')
+  .description('Instant Shadow AI agent discovery & security scanner')
   .version('0.1.0')
   .option('--json', 'Output raw JSON instead of interactive dashboard')
   .option('-r, --report <path>', 'Write JSON scan report to specified file path')
