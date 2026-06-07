@@ -187,6 +187,7 @@ export function analyzeCapabilities(findings) {
   let toolExecutionStatus = 'INACTIVE';
   let localInferenceStatus = 'INACTIVE';
   let workspacePresenceStatus = 'NOT DETECTED';
+  let browserSurfaceStatus = 'NOT DETECTED';
   let credentialExposureStatus = 'SECURE';
 
   // Helper to initialize and retrieve an agent tally entry
@@ -206,12 +207,12 @@ export function analyzeCapabilities(findings) {
   const activeServers = activeConfigs.flatMap(c => c.servers);
   
   for (const config of activeConfigs) {
-    evidence.push(`Config file discovered: ${config.tool}`);
+    evidence.push(`Config file discovered: ${config.filePath}`);
     
     // Tally agent
     const agentName = TOOL_NORMALIZER.configMap[config.tool] || config.tool;
     const agent = getOrInitAgent(agentName);
-    agent.evidence.push(`Config file: ${config.tool} (${config.scope})`);
+    agent.evidence.push(`Config file: ${config.filePath}`);
 
     // If config contains active/non-disabled servers, escalate status to ACTIVE
     if (config.servers && config.servers.length > 0 && config.servers.some(s => !s.disabled)) {
@@ -238,24 +239,23 @@ export function analyzeCapabilities(findings) {
   for (const dir of detectedStateDirs) {
     workspacePresenceStatus = 'DETECTED';
     if (toolExecutionStatus === 'INACTIVE') toolExecutionStatus = 'CAPABLE';
-    evidence.push(`Agent state directory: ${dir}`);
+    evidence.push(`Agent state directory: ${dir.path}`);
 
     // Tally agent
-    // State directory name looks like "Cursor IDE directory (Global)" -> strip prefix
-    const cleanDir = dir.split(' directory')[0];
+    const cleanDir = dir.name;
     const agentName = TOOL_NORMALIZER.stateDirMap[cleanDir] || cleanDir;
     const agent = getOrInitAgent(agentName);
-    agent.evidence.push(`Workspace state folder: ${dir}`);
+    agent.evidence.push(`Workspace state folder: ${dir.path}`);
   }
 
   for (const file of detectedRuleFiles) {
     workspacePresenceStatus = 'DETECTED';
     if (toolExecutionStatus === 'INACTIVE') toolExecutionStatus = 'CAPABLE';
-    evidence.push(`Agent workspace rule file found: ${file}`);
+    evidence.push(`Agent workspace rule file found: ${file.path}`);
 
     // Tally agent
     let agentName = 'Generic Agent Rules';
-    const lowerFile = file.toLowerCase();
+    const lowerFile = file.name.toLowerCase();
     if (lowerFile.includes('cursor')) agentName = 'Cursor';
     else if (lowerFile.includes('claude')) agentName = 'Claude Code';
     else if (lowerFile.includes('cline')) agentName = 'Cline';
@@ -264,21 +264,21 @@ export function analyzeCapabilities(findings) {
     else if (lowerFile.includes('windsurf')) agentName = 'Windsurf';
 
     const agent = getOrInitAgent(agentName);
-    agent.evidence.push(`Instruction rules file: ${file}`);
+    agent.evidence.push(`Instruction rules file: ${file.path}`);
   }
 
   for (const dir of detectedModelDirs) {
     if (localInferenceStatus === 'INACTIVE') localInferenceStatus = 'CAPABLE';
-    evidence.push(`Local model cache present: ${dir}`);
+    evidence.push(`Local model cache present: ${dir.path}`);
 
     // Tally agent
-    let agentName = dir.split(' Cache')[0];
+    let agentName = dir.name;
     if (agentName === 'LM Studio') {
       const agent = getOrInitAgent('LM Studio');
-      agent.evidence.push(`Model cache folder: ${dir}`);
+      agent.evidence.push(`Model cache folder: ${dir.path}`);
     } else if (agentName === 'Ollama') {
       const agent = getOrInitAgent('Ollama');
-      agent.evidence.push(`Model cache folder: ${dir}`);
+      agent.evidence.push(`Model cache folder: ${dir.path}`);
     }
   }
 
@@ -354,6 +354,19 @@ export function analyzeCapabilities(findings) {
     }
   }
 
+  // 8. Process Browser Extensions
+  if (findings.browserExtensions && findings.browserExtensions.length > 0) {
+    browserSurfaceStatus = 'DETECTED';
+    for (const ext of findings.browserExtensions) {
+      evidence.push(`Browser AI extension active: ${ext.name} in ${ext.browser}`);
+      
+      // Tally agent
+      const agent = getOrInitAgent(ext.name);
+      agent.evidence.push(`Active AI Browser Extension: ${ext.name} (${ext.browser})`);
+      agent.status = 'ACTIVE';
+    }
+  }
+
   // Map descriptions
   const toolExecutionDetail = toolExecutionStatus === 'ACTIVE' 
     ? 'Workstation is actively running agents or executing code via configured MCP tools.'
@@ -370,6 +383,10 @@ export function analyzeCapabilities(findings) {
   const workspacePresenceDetail = workspacePresenceStatus === 'DETECTED'
     ? 'Local directories contain custom instructions or workspace configs directing AI agents.'
     : 'No workspace-specific agent rule files or structures detected.';
+
+  const browserSurfaceDetail = browserSurfaceStatus === 'DETECTED'
+    ? 'AI browser sidebars are active; these tools can access and scrape SaaS app DOM data.'
+    : 'No active AI browser extensions or sidebars detected in local browsers.';
 
   const credentialExposureDetail = credentialExposureStatus === 'EXPOSED'
     ? 'Plaintext API keys or database URLs detected in local configuration or history files.'
@@ -400,7 +417,15 @@ export function analyzeCapabilities(findings) {
     'Warp Terminal',
     'OpenCode',
     'OpenClaw',
-    'Trae'
+    'Trae',
+    'Monica AI Sidebar',
+    'Harpa AI Automation',
+    'Merlin AI Assistant',
+    'MaxAI.me',
+    'Sider AI Sidebar',
+    'ChatGPT Writer',
+    'Sider AI (Alt)',
+    'Claude Sidebar / Extension'
   ]);
 
   const agentList = Object.values(agents).filter(a => ALLOWED_AI_AGENTS.has(a.name));
@@ -410,6 +435,7 @@ export function analyzeCapabilities(findings) {
       toolExecution: { status: toolExecutionStatus, detail: toolExecutionDetail },
       localInference: { status: localInferenceStatus, detail: localInferenceDetail },
       workspacePresence: { status: workspacePresenceStatus, detail: workspacePresenceDetail },
+      browserSurface: { status: browserSurfaceStatus, detail: browserSurfaceDetail },
       credentialExposure: { status: credentialExposureStatus, detail: credentialExposureDetail }
     },
     evidence: Array.from(new Set(evidence)),

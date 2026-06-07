@@ -1,4 +1,5 @@
 import os from 'node:os';
+import fs from 'node:fs/promises';
 import ora from 'ora';
 import chalk from 'chalk';
 import { auditConfigs, auditWorkspaceArtifacts, auditDependencies } from './scanners/config-auditor.js';
@@ -128,8 +129,18 @@ export async function runAudit(options = {}) {
       agentsInstalled
     };
 
+    let version = '0.2.2';
+    try {
+      const pkgPath = new URL('../package.json', import.meta.url);
+      const pkgContent = await fs.readFile(pkgPath, 'utf8');
+      const pkg = JSON.parse(pkgContent);
+      version = pkg.version;
+    } catch {
+      // Fallback
+    }
+
     const aggregatedResults = {
-      version: '0.1.0',
+      version,
       timestamp: new Date().toISOString(),
       platform: os.platform(),
       summary,
@@ -145,7 +156,7 @@ export async function runAudit(options = {}) {
     if (options.json) {
       await exportJson(aggregatedResults);
     } else {
-      displayDashboard(aggregatedResults);
+      await displayDashboard(aggregatedResults);
     }
 
     // Optional exports to files

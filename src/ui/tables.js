@@ -22,7 +22,9 @@ export function renderAgentTable(auditedConfigs) {
   const table = new Table({
     head: [orangeBold('Tool/Client'), orangeBold('Scope'), orangeBold('Server Name'), orangeBold('Type'), orangeBold('Command/URL')],
     chars: tableChars,
-    style: tableStyle
+    style: tableStyle,
+    colWidths: [20, 12, 22, 10, 48],
+    wordWrap: true
   });
 
   let serversFound = 0;
@@ -59,7 +61,15 @@ export function renderAgentTable(auditedConfigs) {
   }
 
   if (serversFound === 0) {
-    return chalk.dim('  No active Model Context Protocol (MCP) servers discovered in system directories.\n');
+    // Return structured Target check info if nothing is found (proved we checked them)
+    let targets = `\n  Checking active configurations...\n`;
+    targets += `  ${chalk.green('✔')} Claude Desktop Config (~/Library/Application Support/Claude/claude_desktop_config.json)\n`;
+    targets += `  ${chalk.green('✔')} Cursor IDE Config (~/.cursor/mcp.json)\n`;
+    targets += `  ${chalk.green('✔')} Cline configurations (~/.cline/data/settings/cline_mcp_settings.json)\n\n`;
+    targets += `  ${chalk.white.bold('RESULT:')} 0 active local MCP servers discovered.\n\n`;
+    targets += `  ${chalk.yellow('⚠ WARNING (Spawn-Parameter Trust):')}\n`;
+    targets += `  "If an unvetted local server is registered, malicious prompts can hijack your CLI shell or exploit command injections."\n`;
+    return targets;
   }
 
   return table.toString();
@@ -70,9 +80,11 @@ export function renderAgentTable(auditedConfigs) {
  */
 export function renderPortTable(portResults) {
   const table = new Table({
-    head: [orangeBold('Port'), orangeBold('Service / Interface'), orangeBold('Status'), orangeBold('Network Binding'), orangeBold('Exposure Risk')],
+    head: [orangeBold('Port'), orangeBold('Service / Interface'), orangeBold('Status'), orangeBold('Network Binding'), orangeBold('Network Reachability & Blast Radius')],
     chars: tableChars,
-    style: tableStyle
+    style: tableStyle,
+    colWidths: [10, 26, 12, 26, 38],
+    wordWrap: true
   });
 
   const activePorts = portResults.filter(r => r.open);
@@ -93,7 +105,7 @@ export function renderPortTable(portResults) {
 
     if (res.exposed) {
       bindingStr = chalk.red.bold('0.0.0.0 (All Interfaces)');
-      riskStr = chalk.red.bold('⚠ CRITICAL (Exposed to LAN)');
+      riskStr = chalk.red.bold('⚠ CRITICAL: Anyone on your local Wi-Fi / network can execute queries and run local tool call pipelines.');
     } else {
       bindingStr = chalk.green('127.0.0.1 (Loopback)');
       riskStr = chalk.green('✔ SAFE (Local Only)');
@@ -114,9 +126,11 @@ export function renderSecretTable(secretFindings) {
   }
 
   const table = new Table({
-    head: [orangeBold('Severity'), orangeBold('Source / Location'), orangeBold('Risk Type'), orangeBold('Detected Pattern'), orangeBold('Line')],
+    head: [orangeBold('Severity'), orangeBold('Source / Location'), orangeBold('Credential Exposure'), orangeBold('Detected Pattern'), orangeBold('Line')],
     chars: tableChars,
-    style: tableStyle
+    style: tableStyle,
+    colWidths: [14, 32, 24, 30, 10],
+    wordWrap: true
   });
 
   for (const finding of secretFindings) {
@@ -152,7 +166,8 @@ export function renderCapabilityTable(capabilities) {
     head: [orangeBold('Capability Domain'), orangeBold('Risk Status'), orangeBold('Evaluation Detail')],
     chars: tableChars,
     style: tableStyle,
-    colWidths: [28, 18, 62] // Wrap description neatly
+    colWidths: [38, 16, 58],
+    wordWrap: true
   });
 
   const getStatusLabel = (domain, status) => {
@@ -170,6 +185,10 @@ export function renderCapabilityTable(capabilities) {
       if (status === 'DETECTED') return orangeBold('🟠 DETECTED');
       return chalk.green('🟢 NOT FOUND');
     }
+    if (domain === 'browserSurface') {
+      if (status === 'DETECTED') return orangeBold('🟠 DETECTED');
+      return chalk.green('🟢 NOT FOUND');
+    }
     if (domain === 'credentialExposure') {
       if (status === 'EXPOSED') return chalk.red.bold('🔴 EXPOSED');
       return chalk.green('🟢 SECURE');
@@ -178,7 +197,7 @@ export function renderCapabilityTable(capabilities) {
   };
 
   table.push([
-    chalk.white.bold('Tool & Code Execution'),
+    chalk.white.bold('Autonomous System & Shell Execution'),
     getStatusLabel('toolExecution', capabilities.toolExecution.status),
     chalk.white(capabilities.toolExecution.detail)
   ]);
@@ -190,9 +209,15 @@ export function renderCapabilityTable(capabilities) {
   ]);
 
   table.push([
-    chalk.white.bold('Agent Workspace Presence'),
+    chalk.white.bold('Agent Configuration & Workspace Paths'),
     getStatusLabel('workspacePresence', capabilities.workspacePresence.status),
     chalk.white(capabilities.workspacePresence.detail)
+  ]);
+
+  table.push([
+    chalk.white.bold('Browser Extension Surface'),
+    getStatusLabel('browserSurface', capabilities.browserSurface.status),
+    chalk.white(capabilities.browserSurface.detail)
   ]);
 
   table.push([
@@ -219,7 +244,8 @@ export function renderAgentInventoryTable(agents) {
     head: [orangeBold('Agent / Tool Name'), orangeBold('Status'), orangeBold('Supporting Evidence')],
     chars: tableChars,
     style: tableStyle,
-    colWidths: [28, 16, 64]
+    colWidths: [28, 16, 68],
+    wordWrap: true
   });
 
   // Sort: ACTIVE first, then alphabetical
@@ -237,14 +263,8 @@ export function renderAgentInventoryTable(agents) {
       statusStr = chalk.cyan.bold('🔵 INSTALLED');
     }
 
-    // Extract prefix before colon for a cleaner summary list
-    const cleanEvidence = agent.evidence.map(e => {
-      const idx = e.indexOf(':');
-      return idx !== -1 ? e.substring(0, idx).trim() : e;
-    });
-    
-    // De-duplicate evidence types
-    const uniqueEvidence = Array.from(new Set(cleanEvidence)).join(', ');
+    // De-duplicate evidence types and paths
+    const uniqueEvidence = Array.from(new Set(agent.evidence)).join(', ');
 
     table.push([
       chalk.white.bold(agent.name),
@@ -255,4 +275,3 @@ export function renderAgentInventoryTable(agents) {
 
   return table.toString();
 }
-

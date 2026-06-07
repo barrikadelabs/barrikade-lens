@@ -1,7 +1,13 @@
 #!/usr/bin/env node
 
+import { readFile } from 'node:fs/promises';
 import { program } from 'commander';
 import { runAudit } from '../src/runner.js';
+
+const pkg = JSON.parse(
+  await readFile(new URL('../package.json', import.meta.url), 'utf8')
+);
+const version = pkg.version;
 
 // Global error handling for unhandled rejections
 process.on('unhandledRejection', (reason) => {
@@ -17,7 +23,7 @@ process.on('uncaughtException', (error) => {
 program
   .name('barrikade-lens')
   .description('Instant Shadow AI agent discovery & security scanner')
-  .version('0.1.0')
+  .version(version)
   .option('--json', 'Output raw JSON instead of interactive dashboard')
   .option('-r, --report <path>', 'Write JSON scan report to specified file path')
   .option('--html <path>', 'Generate a self-contained HTML CISO audit report')
