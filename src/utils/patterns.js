@@ -5,19 +5,19 @@ export const SECRET_PATTERNS = [
   {
     name: 'OpenAI Project Key',
     regex: /\bsk-proj-[a-zA-Z0-9]{20,}\b/g,
-    risk: 'HIGH',
+    risk: 'CRITICAL',
     remediation: 'Use environment variable interpolation or read from process environment.'
   },
   {
     name: 'OpenAI API Key',
     regex: /\bsk-[a-zA-Z0-9]{20,}\b/g,
-    risk: 'HIGH',
+    risk: 'CRITICAL',
     remediation: 'Use environment variable interpolation or read from process environment.'
   },
   {
     name: 'Anthropic API Key',
     regex: /\bsk-ant-[a-zA-Z0-9_.-]+\b/g,
-    risk: 'HIGH',
+    risk: 'CRITICAL',
     remediation: 'Move key to system environment variables and reference it.'
   },
   {
@@ -29,19 +29,19 @@ export const SECRET_PATTERNS = [
   {
     name: 'AWS Temporary Credentials Key',
     regex: /\bASIA[0-9A-Z]{16}\b/g,
-    risk: 'HIGH',
+    risk: 'CRITICAL',
     remediation: 'Remove AWS hardcoded keys. Use temporary STS session variables.'
   },
   {
     name: 'HuggingFace Token',
     regex: /\bhf_[a-zA-Z]{34}\b/g,
-    risk: 'HIGH',
+    risk: 'CRITICAL',
     remediation: 'Load via HF_TOKEN environment variable.'
   },
   {
     name: 'Google API Key',
     regex: /\bAIza[0-9A-Za-z\-_]{35}\b/g,
-    risk: 'HIGH',
+    risk: 'CRITICAL',
     remediation: 'Move to environment variables.'
   },
   {
@@ -65,7 +65,7 @@ export const SECRET_PATTERNS = [
   {
     name: 'Slack Token',
     regex: /\bxox[baprs]-[0-9a-zA-Z-]{10,48}\b/g,
-    risk: 'HIGH',
+    risk: 'CRITICAL',
     remediation: 'Store in environment variables or vault.'
   },
   {
@@ -77,7 +77,7 @@ export const SECRET_PATTERNS = [
   {
     name: 'MongoDB Database URL',
     regex: /\bmongodb(\+srv)?:\/\/[^\s"']+\b/g,
-    risk: 'HIGH',
+    risk: 'CRITICAL',
     remediation: 'Do not hardcode credentials in database connection URI.'
   },
   {
