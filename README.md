@@ -3,6 +3,8 @@
 > **Instant Shadow AI discovery & security audit for developer workstations.**
 > Scans for AI agents, MCP servers, local LLMs, and plaintext secrets — in seconds.
 
+![Barrikade Lens Demo](barrikade-lens-demo.gif)
+
 ```bash
 npx barrikade-lens
 ```
