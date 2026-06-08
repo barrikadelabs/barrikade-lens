@@ -639,7 +639,7 @@ export async function exportHtml(results, outputPath) {
                   <td>${s.type}</td>
                   <td>
                     <code style="color: var(--red);">${s.matched}</code>
-                    <div class="remediation-tip">💡 ${s.remediation}</div>
+                    <div class="remediation-tip">${s.remediation}</div>
                   </td>
                   <td>${s.line || 'N/A'}</td>
                 </tr>
@@ -652,7 +652,7 @@ export async function exportHtml(results, outputPath) {
 
     <!-- Action items -->
     <div class="recommendations">
-      <h2 style="border-left: none; padding-left: 0; color: var(--orange); margin-bottom: 15px;">🔒 Immediate Remediation Checklist</h2>
+      <h2 style="border-left: none; padding-left: 0; color: var(--orange); margin-bottom: 15px;">Immediate Remediation Checklist</h2>
       <ol>
         ${summary.portsExposed > 0 ? `
           <li><strong>Secure Local AI Binding:</strong> Edit your Ollama/LM Studio configurations to bind solely to <code>127.0.0.1</code>. This blocks lateral access from other devices on the LAN.</li>
