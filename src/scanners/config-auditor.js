@@ -435,7 +435,7 @@ export async function auditWorkspaceArtifacts(cwd = process.cwd()) {
     try {
       const stat = await fs.stat(dir.path);
       if (stat.isDirectory()) {
-        detectedStateDirs.push({ name: dir.name, path: dir.path, scope: dir.scope });
+        detectedStateDirs.push(`${dir.name} directory (${dir.scope === 'global' ? 'Global' : 'Project'})`);
       }
     } catch {
       // Doesn't exist
@@ -446,8 +446,10 @@ export async function auditWorkspaceArtifacts(cwd = process.cwd()) {
   for (const file of ruleFiles) {
     try {
       const stat = await fs.stat(file.path);
-      if (stat.isFile() || stat.isDirectory()) {
-        detectedRuleFiles.push({ name: file.name, path: file.path, isDir: stat.isDirectory() });
+      if (stat.isFile()) {
+        detectedRuleFiles.push(file.name);
+      } else if (stat.isDirectory()) {
+        detectedRuleFiles.push(`${file.name}/ (rules folder)`);
       }
     } catch {
       // Doesn't exist
@@ -459,7 +461,7 @@ export async function auditWorkspaceArtifacts(cwd = process.cwd()) {
     try {
       const stat = await fs.stat(dir.path);
       if (stat.isDirectory()) {
-        detectedModelDirs.push({ name: dir.name, path: dir.path });
+        detectedModelDirs.push(dir.name);
       }
     } catch {
       // Doesn't exist
@@ -545,63 +547,4 @@ export async function auditDependencies(cwd = process.cwd()) {
   }
 
   return Array.from(new Set(discovered));
-}
-
-/**
- * Scans for common AI browser extensions and sidebars in local browser profiles (Chrome, Brave, Arc).
- * 
- * @returns {Promise<Array<{ browser: string, name: string, id: string, path: string }>>}
- */
-export async function auditBrowserExtensions() {
-  const home = os.homedir();
-  const platform = os.platform();
-  
-  const extensionIds = {
-    'ghcolbpknhaijonghidnofeggoaafoag': 'Monica AI Sidebar',
-    'aaffdilidmcojipgfkfippocackoenpl': 'Harpa AI Automation',
-    'camppjleccjlonihdilgglamonnogidm': 'Merlin AI Assistant',
-    'mhnccdjjolichadneaocbjfojocmglhi': 'MaxAI.me',
-    'fihnjombegmojnicobbleocnkbocjfgo': 'Sider AI Sidebar',
-    'oobmeephbghjdbhhonodagkocokhdgda': 'ChatGPT Writer',
-    'difoiogiljbhcecojaccikinmennhkap': 'Sider AI (Alt)',
-    'panlhjlepmfkgmghbhjdedmjdailffgd': 'Claude Sidebar / Extension'
-  };
-
-  const basePaths = [];
-
-  if (platform === 'darwin') {
-    basePaths.push(
-      { browser: 'Chrome', path: path.join(home, 'Library', 'Application Support', 'Google', 'Chrome', 'Default', 'Extensions') },
-      { browser: 'Brave', path: path.join(home, 'Library', 'Application Support', 'BraveSoftware', 'Brave-Browser', 'Default', 'Extensions') },
-      { browser: 'Arc', path: path.join(home, 'Library', 'Application Support', 'Arc', 'User Data', 'Default', 'Extensions') }
-    );
-  } else if (platform === 'win32') {
-    const localAppData = process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local');
-    basePaths.push(
-      { browser: 'Chrome', path: path.join(localAppData, 'Google', 'Chrome', 'User Data', 'Default', 'Extensions') },
-      { browser: 'Brave', path: path.join(localAppData, 'BraveSoftware', 'Brave-Browser', 'User Data', 'Default', 'Extensions') }
-    );
-  } else {
-    basePaths.push(
-      { browser: 'Chrome', path: path.join(home, '.config', 'google-chrome', 'Default', 'Extensions') },
-      { browser: 'Brave', path: path.join(home, '.config', 'BraveSoftware', 'Brave-Browser', 'Default', 'Extensions') }
-    );
-  }
-
-  const detected = [];
-  for (const { browser, path: basePath } of basePaths) {
-    for (const [id, name] of Object.entries(extensionIds)) {
-      const extPath = path.join(basePath, id);
-      try {
-        const stats = await fs.stat(extPath);
-        if (stats.isDirectory()) {
-          detected.push({ browser, name, id, path: extPath });
-        }
-      } catch {
-        // Not found
-      }
-    }
-  }
-
-  return detected;
 }

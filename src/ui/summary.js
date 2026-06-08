@@ -1,11 +1,14 @@
 import boxen from 'boxen';
 import chalk from 'chalk';
 import { orange, orangeBold } from './banner.js';
-import { getScanPaths, getAgentStateDirs, getModelDirs } from '../utils/paths.js';
+import { termWidth } from './tables.js';
 
 /**
- * Computes a risk score from 0 to 100 based on finding counts.
- * Exposing plaintext admin credentials or network ports instantly drops the score to Critical/High risk.
+ * Computes a risk score from 0–100 based on finding counts.
+ * Recalibrated: CRITICAL findings are far more punishing.
+ *   • Each CRITICAL:  -30 pts  (was -25)
+ *   • Each HIGH:      -20 pts  (was -15)
+ *   • Each MEDIUM:    -5  pts  (unchanged)
  * 
  * @param {number} critical 
  * @param {number} high 
@@ -15,16 +18,23 @@ import { getScanPaths, getAgentStateDirs, getModelDirs } from '../utils/paths.js
 export function calculateRiskScore(critical, high, medium) {
   let score = 100;
   score -= (critical * 30);
-  score -= (high * 20);
-  score -= (medium * 8);
-  
-  if (critical > 0) {
-    score = Math.min(score, 35); // Critical Range (< 40)
-  } else if (high > 0) {
-    score = Math.min(score, 55); // High Range (< 60)
-  }
-  
+  score -= (high    * 20);
+  score -= (medium  *  5);
   return Math.max(0, score);
+}
+
+/**
+ * Maps a numeric score to a letter grade.
+ * 
+ * @param {number} score 
+ * @returns {{ grade: string, color: (s: string) => string }}
+ */
+function getGrade(score) {
+  if (score >= 90) return { grade: 'A', color: chalk.green.bold };
+  if (score >= 75) return { grade: 'B', color: chalk.green };
+  if (score >= 55) return { grade: 'C', color: chalk.yellow.bold };
+  if (score >= 35) return { grade: 'D', color: orangeBold };
+  return { grade: 'F', color: chalk.red.bold };
 }
 
 /**
@@ -36,30 +46,44 @@ export function calculateRiskScore(critical, high, medium) {
 export function getProgressBar(score) {
   const totalBlocks = 20;
   const filledBlocks = Math.round((score / 100) * totalBlocks);
-  const emptyBlocks = totalBlocks - filledBlocks;
+  const emptyBlocks  = totalBlocks - filledBlocks;
 
-  const filledStr = '█'.repeat(filledBlocks);
-  const emptyStr = '░'.repeat(emptyBlocks);
+  const bar = `[${'\u2588'.repeat(filledBlocks)}${'\u2591'.repeat(emptyBlocks)}] ${score}/100`;
 
-  const bar = `[${filledStr}${emptyStr}] ${score}/100`;
-
-  if (score >= 80) return chalk.green.bold(bar);
-  if (score >= 50) return orangeBold(bar);
+  if (score >= 75) return chalk.green.bold(bar);
+  if (score >= 35) return orangeBold(bar);
   return chalk.red.bold(bar);
 }
 
 /**
- * Maps risk score to a security grade and description label.
+ * Builds a list of OWASP LLM / MCP threat references based on findings.
  * 
- * @param {number} score 
- * @returns {{ grade: string, label: string, color: Function }}
+ * @param {{
+ *   criticalCount: number,
+ *   highCount: number,
+ *   portsExposed: number,
+ *   secretsCount: number,
+ *   agentsActive: number
+ * }} summary
+ * @returns {string[]}
  */
-export function getSecurityGrade(score) {
-  if (score >= 90) return { grade: 'A', label: 'SECURE / LOW RISK', color: chalk.green.bold };
-  if (score >= 75) return { grade: 'B', label: 'MODERATE RISK', color: orangeBold };
-  if (score >= 60) return { grade: 'C', label: 'MODERATE RISK', color: orangeBold };
-  if (score >= 40) return { grade: 'D', label: 'HIGH RISK', color: chalk.red.bold };
-  return { grade: 'F', label: 'CRITICAL EXPOSURE RISK', color: chalk.red.bold };
+function getOwaspMappings(summary) {
+  const mappings = [];
+
+  if (summary.agentsActive > 0) {
+    mappings.push('[LLM01 / MCP03] High vulnerability to Indirect Prompt Injection (Active Code Execution)');
+  }
+  if (summary.secretsCount > 0) {
+    mappings.push('[LLM07] System compromise risk via plaintext credential exposure');
+  }
+  if (summary.portsExposed > 0) {
+    mappings.push('[LLM08] Excessive Agent Permissions — local model server reachable from LAN (0.0.0.0)');
+  }
+  if (summary.serversCount > 0) {
+    mappings.push('[MCP01] Unvetted MCP server registrations — potential Tool Poisoning attack surface');
+  }
+
+  return mappings;
 }
 
 /**
@@ -83,96 +107,126 @@ export function getSecurityGrade(score) {
  * @returns {string}
  */
 export function renderSummaryCard(summary, secrets) {
-  const score = calculateRiskScore(summary.criticalCount, summary.highCount, summary.mediumCount);
-  const { grade, label, color } = getSecurityGrade(score);
+  const score       = calculateRiskScore(summary.criticalCount, summary.highCount, summary.mediumCount);
+  const progressBar = getProgressBar(score);
+  const { grade, color: gradeColor } = getGrade(score);
 
-  // Dynamic directory scan counts
-  let totalPathsScanned = 45;
-  try {
-    totalPathsScanned = getScanPaths().length + getAgentStateDirs().length + getModelDirs().length;
-  } catch {
-    // Fallback
+  let ratingStr = '';
+  if (score >= 75) {
+    ratingStr = chalk.green.bold('LOW RISK');
+  } else if (score >= 55) {
+    ratingStr = chalk.yellow.bold('ELEVATED RISK');
+  } else if (score >= 35) {
+    ratingStr = orangeBold('HIGH RISK');
+  } else {
+    ratingStr = chalk.red.bold('CRITICAL EXPOSURE RISK');
   }
 
-  // Format secrets subtitle if present
-  const secretTypes = secrets.length > 0 
-    ? ` (${Array.from(new Set(secrets.map(s => s.type))).join(', ')})`
-    : '';
-
-  // Build the text body
+  // ── Scorecard body ────────────────────────────────────────────
   let body = '';
-  body += chalk.white.bold('  SECURITY GRADE: ') + color(`[ ${grade} ]  (${label})\n\n`);
+  body += chalk.white.bold('  SECURITY GRADE: ') + gradeColor(` [ ${grade} ] `) + chalk.dim(' · ') + ratingStr + '\n';
+  body += '  ' + progressBar + '\n\n';
 
-  body += chalk.white.bold('  AIBOM METRICS:\n');
-  body += chalk.dim('    • Discovered AI Workers:     ') + chalk.white(`${summary.agentsCount || 0} (${summary.agentsActive || 0} active runtimes, ${summary.agentsInstalled || 0} offline dependencies)`) + '\n';
-  body += chalk.dim('    • Target Paths Scanned:      ') + chalk.white(totalPathsScanned) + '\n';
-  body += chalk.dim('    • Active Network Sinks:      ') + chalk.white(`${summary.portsOpen} (${summary.portsExposed} bound to 0.0.0.0 - Exposing your local LAN)`) + '\n';
-  body += chalk.dim('    • Exposed Admin Credentials: ') + chalk.white(`${summary.secretsCount}${secretTypes}`) + '\n\n';
+  body += chalk.white.bold('AIBOM METRICS:\n');
+  body += chalk.dim(`  • Discovered AI Workers:   `) + chalk.white(`${summary.agentsCount} (${summary.agentsActive} active runtimes, ${summary.agentsInstalled} offline dependencies)`) + '\n';
+  body += chalk.dim(`  • Active Network Sinks:    `) + chalk.white(`${summary.portsOpen} open`) +
+          (summary.portsExposed > 0 ? chalk.red(` (${summary.portsExposed} bound to 0.0.0.0 — LAN exposed)`) : chalk.green(' (all loopback-only)')) + '\n';
+  body += chalk.dim(`  • Exposed Admin Credentials: `) + (summary.secretsCount > 0
+    ? chalk.red.bold(`${summary.secretsCount} plaintext secret${summary.secretsCount > 1 ? 's' : ''} found`)
+    : chalk.green('None detected')) + '\n';
+  body += chalk.dim(`  • MCP Server Configs Found: `) + chalk.white(`${summary.configsCount}`) + chalk.dim(` (${summary.serversCount} servers registered)`) + '\n\n';
 
-  // Threat Profile Mapping
-  body += chalk.white.bold('  THREAT PROFILE MAPPING (OWASP LLM & MCP Top 10):\n');
-  const threats = [];
-  if (summary.serversCount > 0 || summary.agentsActive > 0) {
-    threats.push(chalk.red.bold('    • [LLM01 / MCP03] High Vulnerability to Indirect Prompt Injection (Active Code Execution)'));
+  // OWASP mappings
+  const owaspMappings = getOwaspMappings(summary);
+  if (owaspMappings.length > 0) {
+    body += chalk.white.bold('THREAT PROFILE MAPPING (OWASP LLM & MCP Top 10):\n');
+    for (const m of owaspMappings) {
+      body += chalk.red(`  • ${m}`) + '\n';
+    }
+    body += '\n';
+  }
+
+  // Severity split
+  body += chalk.white.bold('SEVERITY SPLIT:\n');
+  body += chalk.red.bold('  🔴 CRITICAL: ') + chalk.white(summary.criticalCount) + '\n';
+  body += orangeBold(    '  🟠 HIGH:     ') + chalk.white(summary.highCount)     + '\n';
+  body += chalk.yellow.bold('  🟡 MEDIUM: ') + chalk.white(summary.mediumCount)   + '\n\n';
+
+  // Recommendations
+  body += chalk.white.bold('IMMEDIATE REMEDIATION:\n');
+  const actions = [];
+  let actionNum = 1;
+
+  if (summary.portsExposed > 0) {
+    actions.push(chalk.white(`${actionNum++}. Bind your local LLM server to `) + chalk.green('127.0.0.1') +
+      chalk.white(' immediately — 0.0.0.0 exposes your inference engine to every device on your Wi-Fi.'));
   }
   if (summary.secretsCount > 0) {
-    threats.push(chalk.red.bold('    • [LLM07] System Compromise via Plaintext Credential Exposure'));
+    const criticalSecret = secrets.find(s => s.risk === 'CRITICAL');
+    const highSecret     = secrets.find(s => s.risk === 'HIGH');
+    const refSecret      = criticalSecret || highSecret;
+    const keyRef         = refSecret ? chalk.red(refSecret.matched) : chalk.red('exposed key');
+    actions.push(chalk.white(`${actionNum++}. Revoke ${keyRef} immediately and replace it with environment variable indirection`) +
+      chalk.dim(' (e.g. `${env:OPENAI_API_KEY}`).'));
   }
-  if (summary.portsExposed > 0) {
-    threats.push(chalk.red.bold('    • [MCP01] Unauthorized Local LAN Access to Model Runtime (Exposed Port)'));
-  }
-
-  if (threats.length === 0) {
-    body += chalk.green('    ✔ No active threats mapped to OWASP LLM & MCP Top 10.') + '\n\n';
-  } else {
-    body += threats.join('\n') + '\n\n';
-  }
-
-  // Remediation
-  body += chalk.white.bold('  IMMEDIATE REMEDIATION:\n');
-  const actions = [];
-  if (summary.portsExposed > 0) {
-    actions.push(chalk.white('1. Bind your local LLM server to ') + chalk.green('127.0.0.1') + chalk.white(' immediately to block unauthorized Wi-Fi access.'));
-  }
-  if (summary.secretsCount > 0 && secrets.length > 0) {
-    actions.push(chalk.white(`2. Revoke the leaked key (${chalk.red(secrets[0].matched)}) and use Credential Indirection (environment variables).`));
+  if (summary.serversCount > 0) {
+    actions.push(chalk.white(`${actionNum++}. Audit each registered MCP server for Tool Poisoning risk — unvetted servers can hijack your shell via injected tool arguments.`));
   }
 
-  // Default recommendations if clean
   if (actions.length === 0) {
-    actions.push(chalk.white('1. Continue utilizing environment variable expansion for all new MCP server configs.'));
-    actions.push(chalk.white('2. Ensure local LLM tools remain isolated behind the local loopback interface.'));
+    actions.push(chalk.white('1. Continue using environment variable expansion for all new MCP server configs.'));
+    actions.push(chalk.white('2. Ensure local LLM tools remain isolated behind the loopback interface (127.0.0.1).'));
+    actions.push(chalk.white('3. Re-run this audit whenever you install a new AI agent or coding tool.'));
   }
-  actions.push(chalk.white(`3. Establish central governance for agent tools and keys across your engineering team.`));
-  body += actions.map(a => `    ${a}`).join('\n') + '\n';
+
+  body += actions.map(a => `  ${a}`).join('\n') + '\n';
+
+  const boxWidth = Math.max(56, termWidth() - 4);
 
   const scorecardBox = boxen(body, {
+    width: boxWidth,
     padding: 1,
     margin: { top: 1, bottom: 1 },
     borderStyle: 'double',
-    borderColor: 'gray',
+    borderColor: score < 35 ? 'red' : score < 55 ? '#FF6600' : 'gray',
     title: chalk.white.bold(' AUDIT REPORT CARD '),
     titleAlignment: 'center'
   });
 
-  // Call To Action (CTA)
+  // ── CTA ───────────────────────────────────────────────────────
+  const hasFindings = summary.criticalCount > 0 || summary.highCount > 0 || summary.agentsActive > 0;
+
   let ctaText = '';
-  ctaText += orangeBold('⚡ GOVERN YOUR FLEET\'S SHADOW AI FOOTPRINT ⚡\n\n');
+  ctaText += orangeBold('⚡ GOVERN YOUR FLEET\'S SHADOW AI FOOTPRINT\n\n');
+
+  if (hasFindings) {
+    ctaText += chalk.white(
+      `You just found ${summary.agentsActive} active, unvetted agent${summary.agentsActive !== 1 ? 's' : ''}` +
+      (summary.secretsCount > 0 ? ` and ${summary.secretsCount} exposed credential${summary.secretsCount !== 1 ? 's' : ''}` : '') +
+      ' on this workstation.\n' +
+      'How many are running across the other laptops in your engineering team?\n\n'
+    );
+  } else {
+    ctaText += chalk.white(
+      "You've secured this machine — but what about the rest of your fleet?\n" +
+      "Shadow AI spreads fast across engineering teams.\n\n"
+    );
+  }
+
   ctaText += chalk.white(
-    'You just found active, unvetted agents and exposed credentials on this workstation.\n' +
-    'How many are running across the other 500 laptops in your engineering team?\n\n' +
-    'Barrikade Enterprise connects directly to your CrowdStrike Falcon or Microsoft Defender\n' +
+    'Barrikade Enterprise connects to your CrowdStrike Falcon or Microsoft Defender\n' +
     'APIs to discover, register, and secure your entire developer AI footprint in minutes.\n' +
-    'No local laptop agent installations required.\n\n'
+    'No local laptop agent installation required.\n\n'
   );
-  ctaText += chalk.white.bold('👉 Try Barrikade Enterprise free: ') + chalk.underline.cyan('https://barrikade.ai');
+  ctaText += chalk.white.bold('👉 Secure your digital workforce: ') + chalk.underline.cyan('https://barrikade.ai');
 
   const ctaBox = boxen(ctaText, {
+    width: boxWidth,
     padding: 1,
     margin: { bottom: 1 },
     borderStyle: 'round',
     borderColor: '#FF6600',
-    title: orangeBold(' BARRIKADE LENS FOR ENTERPRISE '),
+    title: orangeBold(' BARRIKADE LENS ENTERPRISE '),
     titleAlignment: 'center'
   });
 
