@@ -184,9 +184,13 @@ export function analyzeCapabilities(findings) {
   const agents = {};
 
   // Initialize capabilities
+  /** @type {'ACTIVE' | 'CAPABLE' | 'INACTIVE'} */
   let toolExecutionStatus = 'INACTIVE';
+  /** @type {'ACTIVE' | 'CAPABLE' | 'INACTIVE'} */
   let localInferenceStatus = 'INACTIVE';
+  /** @type {'DETECTED' | 'NOT DETECTED'} */
   let workspacePresenceStatus = 'NOT DETECTED';
+  /** @type {'EXPOSED' | 'SECURE'} */
   let credentialExposureStatus = 'SECURE';
 
   // Helper to initialize and retrieve an agent tally entry

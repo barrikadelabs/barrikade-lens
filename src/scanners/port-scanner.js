@@ -90,19 +90,27 @@ async function checkExposure(port, lanIps, timeoutMs) {
 /**
  * Scans local AI ports and determines if they are exposed to the LAN.
  * @param {number} [timeoutMs=300] Connection timeout in ms
- * @returns {Promise<Array<{
+ * @typedef {{
  *   port: number,
  *   service: string,
  *   open: boolean,
  *   exposed: boolean,
  *   binding: '127.0.0.1' | '0.0.0.0' | 'offline',
  *   risk: 'CRITICAL' | 'INFO' | 'CLEAN'
- * }>>}
+ * }} PortResult
+ */
+
+/**
+ * Scans local AI ports and determines if they are exposed to the LAN.
+ * @param {number} [timeoutMs=300] Connection timeout in ms
+ * @returns {Promise<PortResult[]>}
  */
 export async function scanPorts(timeoutMs = 300) {
   const lanIps = getLocalLanIps();
 
+  
   // one promise per port entry. Each resolves to a full result object.
+  /** @type {PortResult[]} */
   const results = await Promise.all(
     DEFAULT_AI_PORTS.map(async (entry) => {
       const isOpenLocal = await testConnection('127.0.0.1', entry.port, timeoutMs);

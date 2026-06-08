@@ -67,6 +67,10 @@ export function getProgressBar(score) {
  * }} summary
  * @returns {string[]}
  */
+/**
+ * @param {any} summary Metrics summary of the scan results
+ * @returns {string[]}
+ */
 function getOwaspMappings(summary) {
   const mappings = [];
 

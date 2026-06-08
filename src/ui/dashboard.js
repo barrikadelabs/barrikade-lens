@@ -26,6 +26,7 @@ function clearScreen() {
  * Outputs the full classic unified CLI dashboard directly to stdout.
  * 
  * @param {{
+ *   version?: string,
  *   configs: Array<any>,
  *   ports: Array<any>,
  *   secrets: Array<any>,
@@ -33,7 +34,7 @@ function clearScreen() {
  *   capabilities: any,
  *   evidence: string[],
  *   agents: any[]
- * }} results 
+ * }} results
  */
 function displayClassicDashboard(results) {
   printBanner(results.version || '0.1.0');

@@ -23,6 +23,7 @@ import { SECRET_PATTERNS, redactSecret } from '../utils/patterns.js';
  * }>}
  */
 export function scanConfigsForSecrets(auditedConfigs) {
+  /** @type {Array<{ filePath: string, tool: string, type: string, matched: string, line: number | null, risk: 'CRITICAL' | 'HIGH' | 'MEDIUM', remediation: string }>} */
   const findings = [];
 
   for (const config of auditedConfigs) {

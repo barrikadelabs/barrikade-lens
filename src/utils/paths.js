@@ -2,11 +2,21 @@ import os from 'node:os';
 import path from 'node:path';
 
 /**
+ * @typedef {{
+ * tool: string,
+ * path: string,
+ * scope: 'global' | 'project',
+ * type: string
+ * }} ScanTarget
+ */
+
+
+/**
  * Resolves the configuration paths for all supported AI coding tools and clients
  * based on the current operating system and working directory.
  * 
  * @param {string} [cwd=process.cwd()] The workspace directory to check project-level files in
- * @returns {Array<{ tool: string, path: string, scope: 'global' | 'project', type: string }>}
+ * @returns {ScanTarget[]} List of configuration paths to audit
  */
 export function getScanPaths(cwd = process.cwd()) {
   const home = os.homedir();
@@ -181,6 +191,7 @@ export function getAgentStateDirs(cwd = process.cwd()) {
   else if (platform === 'win32') jbBase = path.join(process.env.APPDATA || path.join(home, 'AppData', 'Roaming'), 'JetBrains');
   else jbBase = path.join(home, '.config', 'JetBrains');
 
+  /** @type {Array<{ name: string, path: string, scope: 'global' | 'project' }>} */
   const dirs = [
     // Global State Dirs
     { name: 'Cursor IDE', path: path.join(home, '.cursor'), scope: 'global' },

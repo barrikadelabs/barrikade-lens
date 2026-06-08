@@ -169,6 +169,7 @@ function parseYaml(yamlContent) {
 
 /**
  * Sweeps the filesystem to locate JetBrains configuration files.
+ * @returns {Promise<import('../utils/paths.js').ScanTarget[]>}
  */
 async function discoverJetBrainsPaths() {
   const home = os.homedir();
@@ -183,6 +184,7 @@ async function discoverJetBrainsPaths() {
     jbBase = path.join(home, '.config', 'JetBrains');
   }
 
+  /** @type {import('../utils/paths.js').ScanTarget[]} */
   const jbPaths = [];
   try {
     const entries = await fs.readdir(jbBase, { withFileTypes: true });
@@ -214,15 +216,17 @@ async function discoverJetBrainsPaths() {
  * Dynamically checks for server configurations inside .continue/mcpServers/ directory.
  * 
  * @param {string} cwd 
- * @returns {Promise<Array<{ tool: string, path: string, scope: 'global' | 'project', type: string }>>}
+ * @returns {Promise<import('../utils/paths.js').ScanTarget[]>}
  */
 async function discoverContinueMcpServers(cwd = process.cwd()) {
   const home = os.homedir();
+  /** @type {Array<{ dir: string, scope: 'global' | 'project' }>} */
   const dirsToCheck = [
     { dir: path.join(home, '.continue', 'mcpServers'), scope: 'global' },
     { dir: path.join(cwd, '.continue', 'mcpServers'), scope: 'project' }
   ];
   
+  /** @type {import('../utils/paths.js').ScanTarget[]} */
   const foundConfigs = [];
   
   for (const { dir, scope } of dirsToCheck) {
