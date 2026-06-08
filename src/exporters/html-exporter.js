@@ -11,7 +11,7 @@ export async function exportHtml(results, outputPath) {
   const summary = results.summary;
   const score = calculateRiskScore(summary.criticalCount, summary.highCount, summary.mediumCount);
   const capabilities = results.capabilities;
-  
+
   let scoreClass = 'score-high';
   let ratingStr = 'SECURE / LOW RISK';
   if (score < 50) {
@@ -400,7 +400,7 @@ export async function exportHtml(results, outputPath) {
         <h1>BARRIKADE <span>LENS</span></h1>
         <p>Shadow AI Workstation Vulnerability Report</p>
       </div>
-      <div class="badge">🔒 100% LOCALLY AUDITED</div>
+      <div class="badge">100% LOCALLY AUDITED</div>
     </header>
 
     <div class="grid">
@@ -498,24 +498,24 @@ export async function exportHtml(results, outputPath) {
           </thead>
           <tbody>
             ${[...results.agents].sort((a, b) => {
-              if (a.status === 'ACTIVE' && b.status !== 'ACTIVE') return -1;
-              if (a.status !== 'ACTIVE' && b.status === 'ACTIVE') return 1;
-              return a.name.localeCompare(b.name);
-            }).map(agent => {
-              const statusClass = agent.status === 'ACTIVE' ? 'status-critical' : 'status-safe';
-              const cleanEvidence = agent.evidence.map(e => {
-                const idx = e.indexOf(':');
-                return idx !== -1 ? e.substring(0, idx).trim() : e;
-              });
-              const uniqueEvidence = Array.from(new Set(cleanEvidence)).join(', ');
-              return `
+    if (a.status === 'ACTIVE' && b.status !== 'ACTIVE') return -1;
+    if (a.status !== 'ACTIVE' && b.status === 'ACTIVE') return 1;
+    return a.name.localeCompare(b.name);
+  }).map(agent => {
+    const statusClass = agent.status === 'ACTIVE' ? 'status-critical' : 'status-safe';
+    const cleanEvidence = agent.evidence.map(e => {
+      const idx = e.indexOf(':');
+      return idx !== -1 ? e.substring(0, idx).trim() : e;
+    });
+    const uniqueEvidence = Array.from(new Set(cleanEvidence)).join(', ');
+    return `
                 <tr>
                   <td><strong>${agent.name}</strong></td>
                   <td><span class="status-badge ${statusClass}">${agent.status}</span></td>
                   <td>${uniqueEvidence}</td>
                 </tr>
               `;
-            }).join('')}
+  }).join('')}
           </tbody>
         </table>
       `}
@@ -551,14 +551,14 @@ export async function exportHtml(results, outputPath) {
           </thead>
           <tbody>
             ${configsFound.map(c => {
-              if (c.servers.length === 0) {
-                return `<tr>
+    if (c.servers.length === 0) {
+      return `<tr>
                   <td><strong>${c.tool}</strong></td>
                   <td>${c.scope}</td>
                   <td colspan="3" style="color: var(--text-muted); font-style: italic;">No servers configured</td>
                 </tr>`;
-              }
-              return c.servers.map(s => `
+    }
+    return c.servers.map(s => `
                 <tr>
                   <td><strong>${c.tool}</strong></td>
                   <td>${c.scope}</td>
@@ -567,7 +567,7 @@ export async function exportHtml(results, outputPath) {
                   <td><code>${s.type === 'sse' ? (s.url || '-') : `${s.command || '-'} ${(s.args || []).join(' ')}`}</code></td>
                 </tr>
               `).join('');
-            }).join('')}
+  }).join('')}
           </tbody>
         </table>
       `}
@@ -628,11 +628,11 @@ export async function exportHtml(results, outputPath) {
           </thead>
           <tbody>
             ${results.secrets.map(s => {
-              let sevClass = 'status-medium';
-              if (s.risk === 'CRITICAL') sevClass = 'status-critical';
-              else if (s.risk === 'HIGH') sevClass = 'status-high';
-              
-              return `
+    let sevClass = 'status-medium';
+    if (s.risk === 'CRITICAL') sevClass = 'status-critical';
+    else if (s.risk === 'HIGH') sevClass = 'status-high';
+
+    return `
                 <tr>
                   <td><span class="status-badge ${sevClass}">${s.risk}</span></td>
                   <td><strong>${s.tool}</strong><br><span style="font-size: 11px; color: var(--text-muted);">${s.filePath.split('/').pop()}</span></td>
@@ -644,7 +644,7 @@ export async function exportHtml(results, outputPath) {
                   <td>${s.line || 'N/A'}</td>
                 </tr>
               `;
-            }).join('')}
+  }).join('')}
           </tbody>
         </table>
       `}
