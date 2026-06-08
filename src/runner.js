@@ -129,7 +129,7 @@ export async function runAudit(options = {}) {
       agentsInstalled
     };
 
-    let version = '0.2.2';
+    let version = 'unknown';
     try {
       const pkgPath = new URL('../package.json', import.meta.url);
       const pkgContent = await fs.readFile(pkgPath, 'utf8');
@@ -176,7 +176,7 @@ export async function runAudit(options = {}) {
 
     // 13. Telemetry handling at the very end (prompt for consent or send silently in quiet mode)
     if (!isTelemetryOptOut && process.env.BARRIKADE_NO_TELEMETRY !== '1' && process.env.BARRIKADE_NO_TELEMETRY !== 'true') {
-      const telemetryPayload = await buildTelemetryPayload(summary, capabilityResult.capabilities);
+      const telemetryPayload = await buildTelemetryPayload(summary, capabilityResult.capabilities, version);
       if (options.json) {
         sendTelemetry(telemetryPayload).catch(() => { });
       } else {
