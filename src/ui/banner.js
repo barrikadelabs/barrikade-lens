@@ -10,17 +10,33 @@ export const orangeBold = chalk.hex('#FF6600').bold;
  * @param {string} version Version of the tool
  */
 export function printBanner(version = '0.1.0') {
-  const line = orange('================================================================');
+  const col = process.stdout.columns || 80;
+  const w = Math.max(50, Math.min(col, 64));
+  const line = orange('='.repeat(w));
+
+  const center = (text) => {
+    const rawText = text.replace(/\u001B\[[0-9;]*m/g, '');
+    const padLen = Math.max(0, Math.floor((w - rawText.length) / 2));
+    return ' '.repeat(padLen) + text;
+  };
 
   console.log('\n' + line);
-  console.log(chalk.white.bold('                 B A R R I K A D E   L E N S'));
-  console.log(orange('                      Shadow AI Auditor'));
-  console.log(chalk.dim(`                          v${version}`));
+  console.log(center(chalk.white.bold('B A R R I K A D E   L E N S')));
+  console.log(center(orange('Shadow AI Auditor')));
+  console.log(center(chalk.dim(`v${version}`)));
   console.log(line);
-  console.log(
-    chalk.white.bold('100% Local Scanning') +
-    chalk.dim(' • ') +
-    chalk.white('No code or credentials leave this machine')
-  );
+
+  if (col < 64) {
+    console.log(center(chalk.white.bold('100% Local Scanning')));
+    console.log(center(chalk.white('No code or credentials leave this machine')));
+  } else {
+    console.log(
+      center(
+        chalk.white.bold('100% Local Scanning') +
+        chalk.dim(' • ') +
+        chalk.white('No code or credentials leave this machine')
+      )
+    );
+  }
   console.log(line + '\n');
 }

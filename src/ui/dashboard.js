@@ -101,50 +101,44 @@ export function displayDashboard(results) {
 
     let currentStep = 0;
 
-    // Split summary card into scorecard and CTA boxes
-    const rawSummaryCard = renderSummaryCard(results.summary, results.secrets);
-    const summaryParts = rawSummaryCard.split('\n╭');
-    const scorecardBox = summaryParts[0];
-    const ctaBox = summaryParts[1] ? '╭' + summaryParts[1] : '';
-
     const steps = [
       {
-        title: 'Autonomous AI Capability Analysis',
+        title: 'Step 1 of 7 — Autonomous AI Capability Analysis',
         render: () => {
           console.log(renderCapabilityTable(results.capabilities));
         },
-        nextPrompt: 'Press [Enter] to view Discovered AI Agents'
+        nextPrompt: 'Press [Enter] to see what AI agents are installed on this machine →'
       },
       {
-        title: 'Discovered AI Agents Inventory',
+        title: 'Step 2 of 7 — Discovered AI Agents Inventory',
         render: () => {
           console.log(renderAgentInventoryTable(results.agents));
         },
-        nextPrompt: 'Press [Enter] to inspect Model Context Protocol (MCP) Configs'
+        nextPrompt: 'Press [Enter] to inspect registered MCP server configurations →'
       },
       {
-        title: 'Model Context Protocol (MCP) Servers',
+        title: 'Step 3 of 7 — MCP Server Inventory (Shadow Agent Surface)',
         render: () => {
           console.log(renderAgentTable(results.configs));
         },
-        nextPrompt: 'Press [Enter] to run Local LLM Port Sweep'
+        nextPrompt: 'Press [Enter] to sweep local LLM server ports →'
       },
       {
-        title: 'Local LLM Server Port Sweep',
+        title: 'Step 4 of 7 — Local LLM Network Exposure',
         render: () => {
           console.log(renderPortTable(results.ports));
         },
-        nextPrompt: 'Press [Enter] to audit Plain-Text Secrets'
+        nextPrompt: 'Press [Enter] to scan for exposed API keys and credentials →'
       },
       {
-        title: 'Plain-Text Secrets Scan',
+        title: 'Step 5 of 7 — Plaintext Credential Exposure Scan',
         render: () => {
           console.log(renderSecretTable(results.secrets));
         },
-        nextPrompt: 'Press [Enter] to view collected audit evidence'
+        nextPrompt: 'Press [Enter] to review raw supporting evidence →'
       },
       {
-        title: 'Collected Audit Evidence',
+        title: 'Step 6 of 7 — Raw Supporting Evidence',
         render: () => {
           if (results.evidence.length === 0) {
             console.log(chalk.dim('  No agent infrastructure or capabilities detected on this workstation.\n'));
@@ -155,39 +149,52 @@ export function displayDashboard(results) {
             console.log();
           }
         },
-        nextPrompt: 'Press [Enter] to generate Executive Audit Summary Card'
+        nextPrompt: 'Press [Enter] to generate your Audit Report Card →'
       },
       {
-        title: 'Executive Audit Summary',
+        title: 'Step 7 of 7 — Audit Report Card',
         render: () => {
-          const score = calculateRiskScore(results.summary.criticalCount, results.summary.highCount, results.summary.mediumCount);
+          const score = calculateRiskScore(
+            results.summary.criticalCount,
+            results.summary.highCount,
+            results.summary.mediumCount
+          );
           const progressBar = getProgressBar(score);
-          
+
           let ratingStr = '';
-          if (score >= 80) {
-            ratingStr = chalk.green.bold('SECURE / LOW RISK');
-          } else if (score >= 50) {
-            ratingStr = orangeBold('MODERATE RISK');
+          if (score >= 75) {
+            ratingStr = chalk.green.bold('LOW RISK');
+          } else if (score >= 55) {
+            ratingStr = chalk.yellow.bold('ELEVATED RISK');
+          } else if (score >= 35) {
+            ratingStr = orangeBold('HIGH RISK');
           } else {
-            ratingStr = chalk.red.bold('CRITICAL SECURITY RISK');
+            ratingStr = chalk.red.bold('CRITICAL EXPOSURE RISK');
           }
 
-          console.log(`  ${chalk.white.bold('SECURITY SCORE:')} ${progressBar}  (${ratingStr})`);
-          console.log(`  ${chalk.dim('Detected:')} ${chalk.white(`${results.agents.length} Agents`)} | ${chalk.white(`${results.configs.filter(c => c.exists).length} Config Files`)} | ${chalk.white(`${results.secrets.length} Secrets`)}`);
+          console.log(`\n  ${chalk.white.bold('SECURITY SCORE:')} ${progressBar}  (${ratingStr})`);
+          console.log(
+            `  ${chalk.dim('Detected:')} ` +
+            chalk.white(`${results.agents.length} AI Workers`) +
+            chalk.dim(' | ') +
+            chalk.white(`${results.configs.filter(c => c.exists).length} Config Files`) +
+            chalk.dim(' | ') +
+            chalk.white(`${results.secrets.length} Plaintext Secrets`)
+          );
+
+          // Render scorecard & CTA dynamically using the CURRENT terminal width
+          const rawSummaryCard = renderSummaryCard(results.summary, results.secrets);
+          const ctaSplitIdx  = rawSummaryCard.indexOf('\n╭');
+          const scorecardBox = ctaSplitIdx !== -1 ? rawSummaryCard.slice(0, ctaSplitIdx) : rawSummaryCard;
+          const ctaBox       = ctaSplitIdx !== -1 ? rawSummaryCard.slice(ctaSplitIdx + 1) : '';
+
           console.log(scorecardBox);
-        },
-        nextPrompt: 'Press [Enter] to view recommendations & next steps'
-      },
-      {
-        title: 'Audit Recommendations & Next Steps',
-        render: () => {
+
           if (ctaBox) {
             console.log(ctaBox);
-          } else {
-            console.log(rawSummaryCard);
           }
         },
-        nextPrompt: 'Press [Enter] to complete audit and exit'
+        nextPrompt: 'Press [Enter] to exit — Audit complete'
       }
     ];
 
@@ -195,19 +202,27 @@ export function displayDashboard(results) {
       clearScreen();
       printBanner(version);
 
-      const step = steps[currentStep];
-      console.log(`\n${orangeBold('■')} ${chalk.white.bold(step.title.toUpperCase())} ${chalk.dim('─'.repeat(4))}`);
-      console.log(chalk.dim(`  Step ${currentStep + 1} of ${steps.length} | [Enter] Next | [Backspace] Back | [Q] Quit`));
-      console.log(chalk.dim('  ' + '─'.repeat(72)) + '\n');
+      const step    = steps[currentStep];
+      const sepLen  = Math.max(40, Math.min((process.stdout.columns || 80) - 4, 90));
+      const controls = chalk.dim(`  [Enter] Next  [Backspace] Back  [Q] Quit`);
+
+      console.log(`\n${orangeBold('■')} ${chalk.white.bold(step.title)} ${chalk.dim('─'.repeat(4))}`);
+      console.log(controls);
+      console.log(chalk.dim('  ' + '─'.repeat(sepLen)) + '\n');
 
       step.render();
 
-      console.log(chalk.dim('\n  ' + '─'.repeat(72)));
+      console.log(chalk.dim('\n  ' + '─'.repeat(sepLen)));
       console.log(chalk.cyan(`  👉 ${step.nextPrompt}`));
+    }
+
+    function handleResize() {
+      render();
     }
 
     function cleanup() {
       process.stdin.removeListener('keypress', handleKeypress);
+      process.stdout.removeListener('resize', handleResize);
       if (process.stdin.isTTY) {
         process.stdin.setRawMode(false);
       }
@@ -246,6 +261,7 @@ export function displayDashboard(results) {
     }
 
     process.stdin.on('keypress', handleKeypress);
+    process.stdout.on('resize', handleResize);
 
     // Initial render
     render();
