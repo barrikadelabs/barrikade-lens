@@ -62,7 +62,7 @@ export async function getOrCreateAnonymousId() {
  * @param {any} capabilities Capability analysis results
  * @returns {Promise<any>}
  */
-export async function buildTelemetryPayload(summary, capabilities = null) {
+export async function buildTelemetryPayload(summary, capabilities = null, version = 'unknown') {
   const uniqueId = await getOrCreateAnonymousId();
   return {
     uniqueId,
@@ -70,7 +70,7 @@ export async function buildTelemetryPayload(summary, capabilities = null) {
     platform: os.platform(),
     arch: os.arch(),
     nodeVersion: process.version,
-    scannerVersion: '0.1.0',
+    scannerVersion: version,
     metrics: {
       agentsCount: summary.agentsCount || 0,
       agentsActive: summary.agentsActive || 0,
@@ -203,7 +203,7 @@ export async function sendTelemetry(payload) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'User-Agent': 'barrikade-audit-cli/0.1.0'
+        'User-Agent': `barrikade-lens/${payload.scannerVersion}`
       },
       body: JSON.stringify(payload),
       signal: controller.signal
