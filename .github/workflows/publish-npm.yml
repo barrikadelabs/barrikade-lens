@@ -4,7 +4,7 @@
 # Triggers on:
 #   - Git tag matching v* (e.g., v0.1.0, v0.2.0)
 #
-# Auth: Uses NPM_TOKEN repository secret.
+# Auth: Keyless OIDC (Trusted Publisher) OIDC authentication.
 # ──────────────────────────────────────────────────────────────
 name: Publish CLI to npm
 
