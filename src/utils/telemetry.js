@@ -62,7 +62,7 @@ export async function getOrCreateAnonymousId() {
  * @param {any} capabilities Capability analysis results
  * @returns {Promise<any>}
  */
-export async function buildTelemetryPayload(summary, capabilities = null) {
+export async function buildTelemetryPayload(summary, capabilities = null, version = 'unknown') {
   const uniqueId = await getOrCreateAnonymousId();
   return {
     uniqueId,
@@ -70,7 +70,7 @@ export async function buildTelemetryPayload(summary, capabilities = null) {
     platform: os.platform(),
     arch: os.arch(),
     nodeVersion: process.version,
-    scannerVersion: '0.1.0',
+    scannerVersion: version,
     metrics: {
       agentsCount: summary.agentsCount || 0,
       agentsActive: summary.agentsActive || 0,
@@ -103,7 +103,7 @@ export async function buildTelemetryPayload(summary, capabilities = null) {
 export function promptTelemetryConsent(payload, timeoutMs = 15000) {
   const isInteractive = process.stdout.isTTY && process.stdin.isTTY;
   if (!isInteractive) {
-    return Promise.resolve(true); // Default to true in non-interactive environments
+    return Promise.resolve(false); // Default to false in non-interactive environments
   }
 
   // Re-use the same design tokens as the rest of the dashboard
@@ -165,23 +165,23 @@ export function promptTelemetryConsent(payload, timeoutMs = 15000) {
       if (!resolved) {
         resolved = true;
         rl.close();
-        console.log(orange(`\n  ⏱  Timeout: ${timeoutSec}s expired. Defaulting to `) + chalk.green.bold('YES') + orange('. Sending telemetry...'));
-        resolve(true);
+        console.log(orange(`\n  ⏱  Timeout: ${timeoutSec}s expired. Defaulting to `) + chalk.yellow.bold('No') + orange('. Telemetry skipped.'));
+        resolve(false);
       }
     }, timeoutMs);
 
-    rl.question(orangeBold('  ➜ ') + chalk.white.bold('Send this anonymous record? ') + chalk.dim(`(Y/n · auto-sends in ${timeoutSec}s) `), (answer) => {
+    rl.question(orangeBold('  ➜ ') + chalk.white.bold('Send this anonymous record? ') + chalk.dim(`(y/N · auto-skips in ${timeoutSec}s) `), (answer) => {
       if (!resolved) {
         resolved = true;
         clearTimeout(timer);
         rl.close();
         const cleaned = answer.trim().toLowerCase();
-        if (cleaned === 'n' || cleaned === 'no') {
-          console.log(chalk.yellow('\n  ✖ Telemetry denied. Record discarded.\n'));
-          resolve(false);
-        } else {
+        if (cleaned === 'y' || cleaned === 'yes') {
           console.log(chalk.green('\n  ✔ Sending telemetry...\n'));
           resolve(true);
+        } else {
+          console.log(chalk.yellow('\n  ✖ Telemetry skipped.\n'));
+          resolve(false);
         }
       }
     });
@@ -203,7 +203,7 @@ export async function sendTelemetry(payload) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'User-Agent': 'barrikade-audit-cli/0.1.0'
+        'User-Agent': `barrikade-lens/${payload.scannerVersion}`
       },
       body: JSON.stringify(payload),
       signal: controller.signal

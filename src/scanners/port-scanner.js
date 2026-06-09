@@ -75,6 +75,19 @@ function testConnection(host, port, timeoutMs = 300) {
 }
 
 /**
+ * Given an open port, checks whether it's reachable on any LAN interface.
+ * @returns {Promise<boolean>}
+ */
+async function checkExposure(port, lanIps, timeoutMs) {
+  if (lanIps.length === 0) return false;
+  // Probe every LAN IP concurrently; exposed if ANY responds.
+  const results = await Promise.all(
+    lanIps.map(ip => testConnection(ip, port, timeoutMs))
+  );
+  return results.some(Boolean);
+}
+
+/**
  * Scans local AI ports and determines if they are exposed to the LAN.
  * @param {number} [timeoutMs=300] Connection timeout in ms
  * @returns {Promise<Array<{
@@ -88,42 +101,34 @@ function testConnection(host, port, timeoutMs = 300) {
  */
 export async function scanPorts(timeoutMs = 300) {
   const lanIps = getLocalLanIps();
-  const results = [];
 
-  for (const entry of DEFAULT_AI_PORTS) {
-    // 1. Check if the port is open locally
-    const isOpenLocal = await testConnection('127.0.0.1', entry.port, timeoutMs);
+  // one promise per port entry. Each resolves to a full result object.
+  const results = await Promise.all(
+    DEFAULT_AI_PORTS.map(async (entry) => {
+      const isOpenLocal = await testConnection('127.0.0.1', entry.port, timeoutMs);
 
-    if (isOpenLocal) {
-      // 2. The port is open! Now check if it is exposed on any LAN interfaces
-      let isExposed = false;
-      for (const lanIp of lanIps) {
-        const isOpenLan = await testConnection(lanIp, entry.port, timeoutMs);
-        if (isOpenLan) {
-          isExposed = true;
-          break;
-        }
+      if (!isOpenLocal) {
+        return {
+          port: entry.port,
+          service: entry.service,
+          open: false,
+          exposed: false,
+          binding: 'offline',
+          risk: 'CLEAN'
+        };
       }
 
-      results.push({
+      const isExposed = await checkExposure(entry.port, lanIps, timeoutMs);
+      return {
         port: entry.port,
         service: entry.service,
         open: true,
         exposed: isExposed,
         binding: isExposed ? '0.0.0.0' : '127.0.0.1',
         risk: isExposed ? 'CRITICAL' : 'INFO'
-      });
-    } else {
-      results.push({
-        port: entry.port,
-        service: entry.service,
-        open: false,
-        exposed: false,
-        binding: 'offline',
-        risk: 'CLEAN'
-      });
-    }
-  }
+      };
+    })
+  );
 
   return results;
 }
