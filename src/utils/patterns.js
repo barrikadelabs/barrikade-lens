@@ -1,6 +1,70 @@
 /**
- * @typedef {{ name: string, regex: RegExp, risk: 'CRITICAL' | 'HIGH' | 'MEDIUM', remediation: string }} SecretPattern
+ * @typedef {{
+ *   name: string,
+ *   regex: RegExp,
+ *   risk: 'CRITICAL' | 'HIGH' | 'MEDIUM',
+ *   remediation: string,
+ *   grade?: (rawMatch: string, baseRisk: 'CRITICAL' | 'HIGH' | 'MEDIUM') => ('CRITICAL' | 'HIGH' | 'MEDIUM' | null)
+ * }} SecretPattern
  */
+
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
+
+// Published, valueless defaults — public knowledge regardless of where they run.
+const DEFAULT_CREDENTIALS = new Set([
+  'postgres:postgres',
+  'root:root',
+  'admin:admin',
+  'user:password',
+  'postgres:', // empty password
+  'root:',
+]);
+
+/** @param {URL} url */
+function isDefaultCredential(url) {
+  return DEFAULT_CREDENTIALS.has(`${url.username}:${url.password}`);
+}
+
+/**
+ * @param {string} rawMatch
+ * @param {'CRITICAL' | 'HIGH' | 'MEDIUM'} baseRisk
+ * @returns {'CRITICAL' | 'HIGH' | 'MEDIUM' | null}
+ */
+function gradeDatabaseUrl(rawMatch, baseRisk) {
+  let url;
+  try {
+    url = new URL(rawMatch);
+  } catch {
+    return baseRisk; // unparseable — fail safe
+  }
+
+  const isDefaultCred = isDefaultCredential(url);
+  const isLocalHost = LOCAL_HOSTS.has(url.hostname);
+
+  // Published default creds on a local host → genuinely not a secret (Supabase, docker dev).
+  if (isLocalHost && isDefaultCred) return null;
+
+  // A REAL credential is sensitive wherever it points. Loopback only means
+  // it isn't currently network-reachable, so soften by one step — never drop.
+  if (isLocalHost && !isDefaultCred) {
+    return baseRisk === 'CRITICAL' ? 'HIGH' : baseRisk;
+  }
+
+  // Remote host (incl. docker service names like @db, @postgres) → unchanged.
+  // Note: default creds on a REMOTE host stay flagged — that's weak-credential risk.
+  return baseRisk;
+}
+/**
+ * Resolves a finding's severity, applying a pattern's grade hook if present.
+ * @param {SecretPattern} pattern
+ * @param {string} rawMatch
+ * @returns {'CRITICAL' | 'HIGH' | 'MEDIUM' | null} severity, or null to drop the finding
+ */
+export function resolveRisk(pattern, rawMatch) {
+  return typeof pattern.grade === 'function'
+    ? pattern.grade(rawMatch, pattern.risk)
+    : pattern.risk;
+}
 
 /**
  * Plaintext secrets patterns registry for detecting credentials in configurations.
@@ -86,12 +150,14 @@ export const SECRET_PATTERNS = [
     risk: 'CRITICAL',
     remediation:
       'Extract connection credentials to environment variables (e.g. PGUSER, PGPASSWORD).',
+    grade: gradeDatabaseUrl,
   },
   {
     name: 'MongoDB Database URL',
     regex: /\bmongodb(\+srv)?:\/\/[^\s"']+\b/g,
     risk: 'HIGH',
     remediation: 'Do not hardcode credentials in database connection URI.',
+    grade: gradeDatabaseUrl,
   },
   {
     name: 'Private Key Block',
@@ -118,12 +184,12 @@ export function scanStringForSecrets(value) {
     let match;
     while ((match = pattern.regex.exec(value)) !== null) {
       const rawMatch = match[0];
-      // Redact the match
-      const redacted = redactSecret(rawMatch);
+      const risk = resolveRisk(pattern, rawMatch);
+      if (risk === null) continue;
       findings.push({
         type: pattern.name,
-        matched: redacted,
-        risk: pattern.risk,
+        matched: redactSecret(rawMatch),
+        risk,
         remediation: pattern.remediation,
       });
     }
