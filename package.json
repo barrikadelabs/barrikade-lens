@@ -6,6 +6,9 @@
   "bin": {
     "barrikade-lens": "./bin/cli.js"
   },
+  "scripts": {
+    "typecheck": "tsc"
+  },
   "files": [
     "bin/",
     "src/",
@@ -47,5 +50,9 @@
     "figlet": "^1.8.0",
     "gradient-string": "^3.0.0",
     "ora": "^8.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.2",
+    "typescript": "^6.0.3"
   }
 }

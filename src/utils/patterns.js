@@ -1,5 +1,10 @@
 /**
+ * @typedef {{ name: string, regex: RegExp, risk: 'CRITICAL' | 'HIGH' | 'MEDIUM', remediation: string }} SecretPattern
+ */
+
+/**
  * Plaintext secrets patterns registry for detecting credentials in configurations.
+ * @type {SecretPattern[]}
  */
 export const SECRET_PATTERNS = [
   {

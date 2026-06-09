@@ -58,6 +58,9 @@ export async function getOrCreateAnonymousId() {
  *   criticalCount: number,
  *   highCount: number,
  *   mediumCount: number
+ *   agentsCount: number,
+ *   agentsActive: number,
+ *   agentsInstalled: number
  * }} summary Metrics summary of the scan results
  * @param {any} capabilities Capability analysis results
  * @returns {Promise<any>}
