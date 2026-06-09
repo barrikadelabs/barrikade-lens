@@ -1,6 +1,6 @@
 {
   "name": "barrikade-lens",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "description": "Instant Shadow AI security audit for developer workstations. Discovers AI agents, scans MCP servers, local LLMs, and plaintext secrets.",
   "type": "module",
   "bin": {
