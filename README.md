@@ -18,6 +18,7 @@ No signup. No API keys. No configuration. Just run it.
 Barrikade Lens gives you (and your security team) instant visibility into the **Shadow AI footprint** on any developer machine:
 
 ### AI Agent Discovery
+
 Discovers **23+ AI tools** across your system — config files, running processes, state directories, and workspace artifacts:
 
 - **IDE Agents**: Cursor, GitHub Copilot, Windsurf, Cline, Roo Code, Kiro, Continue.dev, Augment Code, Qodo Gen
@@ -26,10 +27,13 @@ Discovers **23+ AI tools** across your system — config files, running processe
 - **IDE Plugins**: JetBrains Junie, Amazon Q, Zed AI, Warp Terminal
 
 ### MCP Server Audit
+
 Parses all discovered configuration files to identify configured **Model Context Protocol (MCP) servers**, including their transport types, command arguments, and environment variables.
 
 ### Local LLM Port Sweep
+
 Checks common ports for local inference servers:
+
 - **Ollama** (11434), **LM Studio** (1234), **Jan.ai** (1337)
 - **LocalAI / Llama.cpp** (8080 / 8000), **Text Gen WebUI** (7860 / 5000)
 - **JetBrains MCP** (63334, 64342+), **Figma MCP** (3845)
@@ -37,7 +41,9 @@ Checks common ports for local inference servers:
 Flags servers bound to `0.0.0.0` (network-exposed) as **CRITICAL** risks.
 
 ### Plaintext Secrets Scanner
+
 Detects hardcoded credentials across configs, `.env` files, and shell history:
+
 - API Keys: OpenAI, Anthropic, HuggingFace, Google, Slack, Stripe
 - AWS Access Keys & STS tokens
 - GitHub PATs (classic & fine-grained)
@@ -45,6 +51,7 @@ Detects hardcoded credentials across configs, `.env` files, and shell history:
 - Private key blocks
 
 ### Risk Flags
+
 - JetBrains **Brave Mode** (auto-execute without approval)
 - Cline **Auto-Approve** settings
 - Exposed inference server ports
@@ -71,21 +78,25 @@ Options:
 ### Examples
 
 **Run a quick scan:**
+
 ```bash
 npx barrikade-lens
 ```
 
 **Export an HTML report for your CISO:**
+
 ```bash
 npx barrikade-lens --html report.html
 ```
 
 **CI/CD pipeline (exits code 1 if critical issues found):**
+
 ```bash
 npx barrikade-lens --json --report audit.json
 ```
 
 **Install globally:**
+
 ```bash
 npm install -g barrikade-lens
 barrikade-lens

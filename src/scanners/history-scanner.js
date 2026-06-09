@@ -19,14 +19,14 @@ const AGENT_COMMANDS = [
   { term: 'goose', label: 'Goose CLI invocation' },
   { term: 'kiro', label: 'Kiro CLI/IDE invocation' },
   { term: 'amazonq', label: 'Amazon Q Developer CLI' },
-  { term: 'npx barrikade-audit', label: 'Barrikade security scan' }
+  { term: 'npx barrikade-audit', label: 'Barrikade security scan' },
 ];
 
 /**
  * Reads the last N lines of a file.
- * 
- * @param {string} filePath 
- * @param {number} maxLines 
+ *
+ * @param {string} filePath
+ * @param {number} maxLines
  * @returns {Promise<string[]>}
  */
 async function readLastLines(filePath, maxLines = 500) {
@@ -42,7 +42,7 @@ async function readLastLines(filePath, maxLines = 500) {
 
 /**
  * Scans shell history files for hardcoded API keys and agent usage history.
- * 
+ *
  * @returns {Promise<{
  *   findings: Array<{
  *     filePath: string,
@@ -67,7 +67,7 @@ export async function scanHistory() {
 
     lines.forEach((lineText, idx) => {
       if (!lineText) return;
-      
+
       // Clean Zsh metadata if present (format: : 1717435133:0;cmd)
       let cleanLine = lineText;
       if (lineText.startsWith(': ')) {
@@ -87,7 +87,7 @@ export async function scanHistory() {
           matched: s.matched,
           line: idx + 1, // line within our sliced slice
           risk: s.risk,
-          remediation: `Revoke the key immediately. Clean history by editing ${fileName} or using history -c.`
+          remediation: `Revoke the key immediately. Clean history by editing ${fileName} or using history -c.`,
         });
       }
 
@@ -102,6 +102,6 @@ export async function scanHistory() {
 
   return {
     findings,
-    agentInvocations: Array.from(agentInvocations)
+    agentInvocations: Array.from(agentInvocations),
   };
 }

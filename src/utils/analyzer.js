@@ -11,7 +11,7 @@ const TOOL_NORMALIZER = {
     'Cline (VS Code)': 'Cline',
     'Cline (VS Code Insiders)': 'Cline',
     'Cline (Global)': 'Cline',
-    'Windsurf': 'Windsurf',
+    Windsurf: 'Windsurf',
     'Zed Settings (Global)': 'Zed',
     'Zed Settings (Project)': 'Zed',
     'Zed Settings (Global AppData)': 'Zed',
@@ -63,17 +63,17 @@ const TOOL_NORMALIZER = {
     'Codex CLI Global State (User)': 'OpenAI Codex CLI',
     'Codex CLI (Project TOML)': 'OpenAI Codex CLI',
     'OpenClaw (User)': 'OpenClaw',
-    'OpenClaw (Project)': 'OpenClaw'
+    'OpenClaw (Project)': 'OpenClaw',
   },
-  
+
   stateDirMap: {
     'Cursor IDE': 'Cursor',
     'Cursor State': 'Cursor',
-    'Cline': 'Cline',
+    Cline: 'Cline',
     'Cline State': 'Cline',
     'Roo Code': 'Roo Code',
     'Roo Code State': 'Roo Code',
-    'Continue': 'Continue.dev',
+    Continue: 'Continue.dev',
     'Continue State': 'Continue.dev',
     'Windsurf / Codeium': 'Windsurf',
     'Claude Code': 'Claude Code',
@@ -82,7 +82,7 @@ const TOOL_NORMALIZER = {
     'Codex Project Config': 'OpenAI Codex CLI',
     'Antigravity CLI / SDK': 'Antigravity CLI',
     'Antigravity CLI/SDK Project Config': 'Antigravity CLI',
-    'OpenCode': 'OpenCode',
+    OpenCode: 'OpenCode',
     'OpenCode Project': 'OpenCode',
     'GitHub Copilot CLI': 'GitHub Copilot CLI',
     'GitHub Copilot CLI Project': 'GitHub Copilot CLI',
@@ -91,7 +91,7 @@ const TOOL_NORMALIZER = {
     'Amazon Q Developer': 'Amazon Q Developer',
     'Amazon Q Project': 'Amazon Q Developer',
     'Warp Terminal': 'Warp Terminal',
-    'Goose': 'Goose',
+    Goose: 'Goose',
     'JetBrains Junie': 'JetBrains Junie',
     'JetBrains Junie Project': 'JetBrains Junie',
     'JetBrains IDE Option Folder': 'JetBrains AI Assistant',
@@ -100,40 +100,40 @@ const TOOL_NORMALIZER = {
     'Qodo Gen (VS Code Linux)': 'Qodo Gen',
     'GitHub Config Folder': 'GitHub Copilot',
     'Zed Project Config': 'Zed',
-    'VS Code Project Config': 'VS Code Native MCP'
+    'VS Code Project Config': 'VS Code Native MCP',
   },
 
   processMap: {
-    'cursor': 'Cursor',
-    'windsurf': 'Windsurf',
-    'cline': 'Cline',
+    cursor: 'Cursor',
+    windsurf: 'Windsurf',
+    cline: 'Cline',
     'roo-code': 'Roo Code',
-    'roo': 'Roo Code',
-    'claude': 'Claude Desktop',
+    roo: 'Roo Code',
+    claude: 'Claude Desktop',
     'claude-code': 'Claude Code',
-    'codex': 'OpenAI Codex CLI',
-    'gemini': 'Antigravity CLI',
-    'antigravity': 'Antigravity CLI',
-    'aider': 'Aider',
-    'opencode': 'OpenCode',
-    'openclaw': 'OpenClaw',
-    'kiro': 'Kiro',
-    'goose': 'Goose',
-    'warp': 'Warp Terminal',
+    codex: 'OpenAI Codex CLI',
+    gemini: 'Antigravity CLI',
+    antigravity: 'Antigravity CLI',
+    aider: 'Aider',
+    opencode: 'OpenCode',
+    openclaw: 'OpenClaw',
+    kiro: 'Kiro',
+    goose: 'Goose',
+    warp: 'Warp Terminal',
     'amazon-q': 'Amazon Q Developer',
-    'amazonq': 'Amazon Q Developer',
-    'copilot': 'GitHub Copilot',
-    'augment': 'Augment Code',
-    'junie': 'JetBrains Junie',
-    'qodo': 'Qodo Gen',
-    'continue': 'Continue.dev',
-    'zed': 'Zed',
-    'trae': 'Trae',
-    'ollama': 'Ollama',
-    'lmstudio': 'LM Studio',
+    amazonq: 'Amazon Q Developer',
+    copilot: 'GitHub Copilot',
+    augment: 'Augment Code',
+    junie: 'JetBrains Junie',
+    qodo: 'Qodo Gen',
+    continue: 'Continue.dev',
+    zed: 'Zed',
+    trae: 'Trae',
+    ollama: 'Ollama',
+    lmstudio: 'LM Studio',
     'lm-studio': 'LM Studio',
-    'jan': 'Jan.ai',
-    'anythingllm': 'AnythingLLM'
+    jan: 'Jan.ai',
+    anythingllm: 'AnythingLLM',
   },
 
   historyMap: {
@@ -151,14 +151,14 @@ const TOOL_NORMALIZER = {
     'Codex CLI invocation': 'OpenAI Codex CLI',
     'Goose CLI invocation': 'Goose',
     'Kiro CLI/IDE invocation': 'Kiro',
-    'Amazon Q Developer CLI': 'Amazon Q Developer'
-  }
+    'Amazon Q Developer CLI': 'Amazon Q Developer',
+  },
 };
 
 /**
  * Aggregates all scan outputs and maps them to high-level Autonomous AI Capabilities and evidence.
  * Also tallies the actual unique AI agents discovered on the workstation.
- * 
+ *
  * @param {{
  *   configs: Array<any>,
  *   workspace: { detectedStateDirs: string[], detectedRuleFiles: string[], detectedModelDirs: string[] },
@@ -199,26 +199,30 @@ export function analyzeCapabilities(findings) {
       agents[name] = {
         name,
         status: 'INSTALLED',
-        evidence: []
+        evidence: [],
       };
     }
     return agents[name];
   };
 
   // 1. Process Configurations & Servers
-  const activeConfigs = findings.configs.filter(c => c.exists);
-  const activeServers = activeConfigs.flatMap(c => c.servers);
-  
+  const activeConfigs = findings.configs.filter((c) => c.exists);
+  const activeServers = activeConfigs.flatMap((c) => c.servers);
+
   for (const config of activeConfigs) {
     evidence.push(`Config file discovered: ${config.tool}`);
-    
+
     // Tally agent
     const agentName = TOOL_NORMALIZER.configMap[config.tool] || config.tool;
     const agent = getOrInitAgent(agentName);
     agent.evidence.push(`Config file: ${config.tool} (${config.scope})`);
 
     // If config contains active/non-disabled servers, escalate status to ACTIVE
-    if (config.servers && config.servers.length > 0 && config.servers.some(s => !s.disabled)) {
+    if (
+      config.servers &&
+      config.servers.length > 0 &&
+      config.servers.some((s) => !s.disabled)
+    ) {
       agent.status = 'ACTIVE';
     }
   }
@@ -226,19 +230,26 @@ export function analyzeCapabilities(findings) {
   for (const server of activeServers) {
     if (!server.disabled) {
       toolExecutionStatus = 'ACTIVE';
-      evidence.push(`MCP Server configured: '${server.name}' in ${server.type.toUpperCase()} mode`);
+      evidence.push(
+        `MCP Server configured: '${server.name}' in ${server.type.toUpperCase()} mode`,
+      );
       if (server.autoApprove && server.autoApprove.length > 0) {
-        evidence.push(`Cline Auto-Approve active for server '${server.name}' (${server.autoApprove.join(', ')})`);
+        evidence.push(
+          `Cline Auto-Approve active for server '${server.name}' (${server.autoApprove.join(', ')})`,
+        );
       }
       if (server.type === 'jetbrains' && server.braveMode) {
-        evidence.push(`JetBrains Brave Mode active (executes shell commands without prompt)`);
+        evidence.push(
+          `JetBrains Brave Mode active (executes shell commands without prompt)`,
+        );
       }
     }
   }
 
   // 2. Process Workspace Artifacts
-  const { detectedStateDirs, detectedRuleFiles, detectedModelDirs } = findings.workspace;
-  
+  const { detectedStateDirs, detectedRuleFiles, detectedModelDirs } =
+    findings.workspace;
+
   for (const dir of detectedStateDirs) {
     workspacePresenceStatus = 'DETECTED';
     if (toolExecutionStatus === 'INACTIVE') toolExecutionStatus = 'CAPABLE';
@@ -264,7 +275,8 @@ export function analyzeCapabilities(findings) {
     else if (lowerFile.includes('claude')) agentName = 'Claude Code';
     else if (lowerFile.includes('cline')) agentName = 'Cline';
     else if (lowerFile.includes('roo')) agentName = 'Roo Code';
-    else if (lowerFile.includes('gemini') || lowerFile.includes('antigravity')) agentName = 'Antigravity CLI';
+    else if (lowerFile.includes('gemini') || lowerFile.includes('antigravity'))
+      agentName = 'Antigravity CLI';
     else if (lowerFile.includes('windsurf')) agentName = 'Windsurf';
 
     const agent = getOrInitAgent(agentName);
@@ -299,12 +311,16 @@ export function analyzeCapabilities(findings) {
 
   // 4. Process Running Processes
   const { aiProcesses, runtimes } = findings.processes;
-  
+
   for (const proc of aiProcesses) {
     evidence.push(`Running AI process: ${proc.label}`);
-    
+
     // Local inference vs general agent
-    if (proc.name.includes('ollama') || proc.name.includes('lmstudio') || proc.name.includes('jan')) {
+    if (
+      proc.name.includes('ollama') ||
+      proc.name.includes('lmstudio') ||
+      proc.name.includes('jan')
+    ) {
       localInferenceStatus = 'ACTIVE';
     } else {
       toolExecutionStatus = 'ACTIVE';
@@ -318,25 +334,33 @@ export function analyzeCapabilities(findings) {
   }
 
   // 5. Process Ports
-  const openPorts = findings.ports.filter(p => p.open);
+  const openPorts = findings.ports.filter((p) => p.open);
   for (const port of openPorts) {
     localInferenceStatus = 'ACTIVE';
     if (port.exposed) {
-      evidence.push(`Local AI service exposed to network: ${port.service} on port ${port.port} (0.0.0.0)`);
+      evidence.push(
+        `Local AI service exposed to network: ${port.service} on port ${port.port} (0.0.0.0)`,
+      );
     } else {
-      evidence.push(`Local AI service active: ${port.service} on port ${port.port} (127.0.0.1)`);
+      evidence.push(
+        `Local AI service active: ${port.service} on port ${port.port} (127.0.0.1)`,
+      );
     }
 
     // Tally agent
     const agent = getOrInitAgent(port.service);
-    agent.evidence.push(`Active network port: ${port.port} (${port.exposed ? 'exposed' : 'local-only'})`);
+    agent.evidence.push(
+      `Active network port: ${port.port} (${port.exposed ? 'exposed' : 'local-only'})`,
+    );
     agent.status = 'ACTIVE';
   }
 
   // 6. Process Shell History Invocations
   for (const inv of findings.history.agentInvocations) {
     if (toolExecutionStatus === 'INACTIVE') toolExecutionStatus = 'CAPABLE';
-    evidence.push(`AI agent usage history: '${inv}' command execution recorded`);
+    evidence.push(
+      `AI agent usage history: '${inv}' command execution recorded`,
+    );
 
     // Tally agent
     const agentName = TOOL_NORMALIZER.historyMap[inv] || inv;
@@ -359,25 +383,29 @@ export function analyzeCapabilities(findings) {
   }
 
   // Map descriptions
-  const toolExecutionDetail = toolExecutionStatus === 'ACTIVE' 
-    ? 'Workstation is actively running agents or executing code via configured MCP tools.'
-    : toolExecutionStatus === 'CAPABLE'
-      ? 'Agent orchestrators or frameworks are present; workstation is configured for tool use.'
-      : 'No active agent orchestrators or MCP tools configured.';
+  const toolExecutionDetail =
+    toolExecutionStatus === 'ACTIVE'
+      ? 'Workstation is actively running agents or executing code via configured MCP tools.'
+      : toolExecutionStatus === 'CAPABLE'
+        ? 'Agent orchestrators or frameworks are present; workstation is configured for tool use.'
+        : 'No active agent orchestrators or MCP tools configured.';
 
-  const localInferenceDetail = localInferenceStatus === 'ACTIVE'
-    ? 'Local LLM inference engines (Ollama, LM Studio) are currently active and running.'
-    : localInferenceStatus === 'CAPABLE'
-      ? 'Local model caches present; workstation has capability to run LLMs offline.'
-      : 'No local model directories or inference engines active.';
+  const localInferenceDetail =
+    localInferenceStatus === 'ACTIVE'
+      ? 'Local LLM inference engines (Ollama, LM Studio) are currently active and running.'
+      : localInferenceStatus === 'CAPABLE'
+        ? 'Local model caches present; workstation has capability to run LLMs offline.'
+        : 'No local model directories or inference engines active.';
 
-  const workspacePresenceDetail = workspacePresenceStatus === 'DETECTED'
-    ? 'Local directories contain custom instructions or workspace configs directing AI agents.'
-    : 'No workspace-specific agent rule files or structures detected.';
+  const workspacePresenceDetail =
+    workspacePresenceStatus === 'DETECTED'
+      ? 'Local directories contain custom instructions or workspace configs directing AI agents.'
+      : 'No workspace-specific agent rule files or structures detected.';
 
-  const credentialExposureDetail = credentialExposureStatus === 'EXPOSED'
-    ? 'Plaintext API keys or database URLs detected in local configuration or history files.'
-    : 'No plaintext credentials discovered in audited paths.';
+  const credentialExposureDetail =
+    credentialExposureStatus === 'EXPOSED'
+      ? 'Plaintext API keys or database URLs detected in local configuration or history files.'
+      : 'No plaintext credentials discovered in audited paths.';
 
   // Whitelist of valid AI agents (excludes runtimes, model servers, frameworks, and this auditor)
   const ALLOWED_AI_AGENTS = new Set([
@@ -404,19 +432,33 @@ export function analyzeCapabilities(findings) {
     'Warp Terminal',
     'OpenCode',
     'OpenClaw',
-    'Trae'
+    'Trae',
   ]);
 
-  const agentList = Object.values(agents).filter(a => ALLOWED_AI_AGENTS.has(a.name));
+  const agentList = Object.values(agents).filter((a) =>
+    ALLOWED_AI_AGENTS.has(a.name),
+  );
 
   return {
     capabilities: {
-      toolExecution: { status: toolExecutionStatus, detail: toolExecutionDetail },
-      localInference: { status: localInferenceStatus, detail: localInferenceDetail },
-      workspacePresence: { status: workspacePresenceStatus, detail: workspacePresenceDetail },
-      credentialExposure: { status: credentialExposureStatus, detail: credentialExposureDetail }
+      toolExecution: {
+        status: toolExecutionStatus,
+        detail: toolExecutionDetail,
+      },
+      localInference: {
+        status: localInferenceStatus,
+        detail: localInferenceDetail,
+      },
+      workspacePresence: {
+        status: workspacePresenceStatus,
+        detail: workspacePresenceDetail,
+      },
+      credentialExposure: {
+        status: credentialExposureStatus,
+        detail: credentialExposureDetail,
+      },
     },
     evidence: Array.from(new Set(evidence)),
-    agents: agentList
+    agents: agentList,
   };
 }

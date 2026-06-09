@@ -8,7 +8,7 @@ import Table from 'cli-table3';
 
 /**
  * Resolves the path to the local Barrikade CLI config file.
- * 
+ *
  * @returns {string}
  */
 function getBarrikadeConfigPath() {
@@ -17,7 +17,7 @@ function getBarrikadeConfigPath() {
 
 /**
  * Gets or creates a unique anonymous ID for the current machine.
- * 
+ *
  * @returns {Promise<string>}
  */
 export async function getOrCreateAnonymousId() {
@@ -37,7 +37,11 @@ export async function getOrCreateAnonymousId() {
   const uniqueId = crypto.randomUUID();
   try {
     await fs.mkdir(dirPath, { recursive: true });
-    await fs.writeFile(configPath, JSON.stringify({ uniqueId }, null, 2), 'utf8');
+    await fs.writeFile(
+      configPath,
+      JSON.stringify({ uniqueId }, null, 2),
+      'utf8',
+    );
   } catch {
     // If we can't write, just return the generated ID for this run
   }
@@ -47,7 +51,7 @@ export async function getOrCreateAnonymousId() {
 
 /**
  * Builds the high-level anonymous telemetry payload.
- * 
+ *
  * @param {{
  *   configsCount: number,
  *   serversCount: number,
@@ -65,7 +69,11 @@ export async function getOrCreateAnonymousId() {
  * @param {any} capabilities Capability analysis results
  * @returns {Promise<any>}
  */
-export async function buildTelemetryPayload(summary, capabilities = null, version = 'unknown') {
+export async function buildTelemetryPayload(
+  summary,
+  capabilities = null,
+  version = 'unknown',
+) {
   const uniqueId = await getOrCreateAnonymousId();
   return {
     uniqueId,
@@ -87,18 +95,26 @@ export async function buildTelemetryPayload(summary, capabilities = null, versio
       criticalFindings: summary.criticalCount,
       highFindings: summary.highCount,
       mediumFindings: summary.mediumCount,
-      toolExecutionStatus: capabilities ? capabilities.toolExecution.status : 'UNKNOWN',
-      localInferenceStatus: capabilities ? capabilities.localInference.status : 'UNKNOWN',
-      workspacePresenceStatus: capabilities ? capabilities.workspacePresence.status : 'UNKNOWN',
-      credentialExposureStatus: capabilities ? capabilities.credentialExposure.status : 'UNKNOWN'
-    }
+      toolExecutionStatus: capabilities
+        ? capabilities.toolExecution.status
+        : 'UNKNOWN',
+      localInferenceStatus: capabilities
+        ? capabilities.localInference.status
+        : 'UNKNOWN',
+      workspacePresenceStatus: capabilities
+        ? capabilities.workspacePresence.status
+        : 'UNKNOWN',
+      credentialExposureStatus: capabilities
+        ? capabilities.credentialExposure.status
+        : 'UNKNOWN',
+    },
   };
 }
 
 /**
  * Prompts the user with a preview of the database record and asks for consent.
  * If the user does not respond in N seconds, defaults to true.
- * 
+ *
  * @param {any} payload Telemetry payload to display
  * @param {number} [timeoutMs=15000] Timeout in milliseconds
  * @returns {Promise<boolean>}
@@ -115,42 +131,83 @@ export function promptTelemetryConsent(payload, timeoutMs = 15000) {
 
   // Double-line box chars matching every other table in the CLI
   const tableChars = {
-    'top': '═', 'top-mid': '╤', 'top-left': '╔', 'top-right': '╗',
-    'bottom': '═', 'bottom-mid': '╧', 'bottom-left': '╚', 'bottom-right': '╝',
-    'left': '║', 'left-mid': '╟', 'mid': '─', 'mid-mid': '┼',
-    'right': '║', 'right-mid': '╢', 'middle': '│'
+    top: '═',
+    'top-mid': '╤',
+    'top-left': '╔',
+    'top-right': '╗',
+    bottom: '═',
+    'bottom-mid': '╧',
+    'bottom-left': '╚',
+    'bottom-right': '╝',
+    left: '║',
+    'left-mid': '╟',
+    mid: '─',
+    'mid-mid': '┼',
+    right: '║',
+    'right-mid': '╢',
+    middle: '│',
   };
   const tableStyle = { head: [], border: ['gray'] };
 
   return new Promise((resolve) => {
     // Section header — same pattern as dashboard.js sectionHeader()
     const headerLine = chalk.dim('─'.repeat(4));
-    console.log(`\n${orangeBold('■')} ${chalk.white.bold('ANONYMOUS TELEMETRY — DB PREVIEW')} ${headerLine}\n`);
-    console.log(chalk.dim('  The following record is the ') + chalk.white.bold('only') + chalk.dim(' data sent. No code, paths, or credentials are included.\n'));
+    console.log(
+      `\n${orangeBold('■')} ${chalk.white.bold('ANONYMOUS TELEMETRY — DB PREVIEW')} ${headerLine}\n`,
+    );
+    console.log(
+      chalk.dim('  The following record is the ') +
+        chalk.white.bold('only') +
+        chalk.dim(' data sent. No code, paths, or credentials are included.\n'),
+    );
 
     // Vertical two-column key → value table
     const dbTable = new Table({
       head: [orangeBold('Column'), orangeBold('Value')],
       chars: tableChars,
       style: tableStyle,
-      colWidths: [22, 42]
+      colWidths: [22, 42],
     });
 
     dbTable.push(
       [chalk.white('uniqueID'), chalk.dim(payload.uniqueId)],
-      [chalk.white('agentsCount'), chalk.white.bold(payload.metrics.agentsCount)],
-      [chalk.white('agentsActive'), chalk.white.bold(payload.metrics.agentsActive)],
-      [chalk.white('agentsInstalled'), chalk.white.bold(payload.metrics.agentsInstalled)],
-      [chalk.white('configsScanned'), chalk.white.bold(payload.metrics.configsScanned)],
-      [chalk.white('mcpServersFound'), chalk.white.bold(payload.metrics.mcpServersFound)],
-      [chalk.white('portsScanned'), chalk.white.bold(payload.metrics.portsScanned)],
+      [
+        chalk.white('agentsCount'),
+        chalk.white.bold(payload.metrics.agentsCount),
+      ],
+      [
+        chalk.white('agentsActive'),
+        chalk.white.bold(payload.metrics.agentsActive),
+      ],
+      [
+        chalk.white('agentsInstalled'),
+        chalk.white.bold(payload.metrics.agentsInstalled),
+      ],
+      [
+        chalk.white('configsScanned'),
+        chalk.white.bold(payload.metrics.configsScanned),
+      ],
+      [
+        chalk.white('mcpServersFound'),
+        chalk.white.bold(payload.metrics.mcpServersFound),
+      ],
+      [
+        chalk.white('portsScanned'),
+        chalk.white.bold(payload.metrics.portsScanned),
+      ],
       [chalk.white('portsOpen'), chalk.white.bold(payload.metrics.portsOpen)],
-      [chalk.white('portsExposed'), payload.metrics.portsExposed > 0
-        ? orangeBold(payload.metrics.portsExposed)
-        : chalk.white.bold(payload.metrics.portsExposed)],
-      [chalk.white('secretsFound'), payload.metrics.secretsFound > 0
-        ? orangeBold(payload.metrics.secretsFound)
-        : chalk.white.bold(payload.metrics.secretsFound)]
+      [
+        chalk.white('portsExposed'),
+        payload.metrics.portsExposed > 0
+          ? orangeBold(payload.metrics.portsExposed)
+          : chalk.white.bold(payload.metrics.portsExposed),
+      ],
+      [
+        chalk.white('secretsFound'),
+        payload.metrics.secretsFound > 0
+          ? orangeBold(payload.metrics.secretsFound)
+          : chalk.white.bold(payload.metrics.secretsFound),
+      ],
     );
 
     console.log(dbTable.toString());
@@ -158,7 +215,7 @@ export function promptTelemetryConsent(payload, timeoutMs = 15000) {
 
     const rl = readline.createInterface({
       input: process.stdin,
-      output: process.stdout
+      output: process.stdout,
     });
 
     let resolved = false;
@@ -168,33 +225,42 @@ export function promptTelemetryConsent(payload, timeoutMs = 15000) {
       if (!resolved) {
         resolved = true;
         rl.close();
-        console.log(orange(`\n  ⏱  Timeout: ${timeoutSec}s expired. Defaulting to `) + chalk.yellow.bold('No') + orange('. Telemetry skipped.'));
+        console.log(
+          orange(`\n  ⏱  Timeout: ${timeoutSec}s expired. Defaulting to `) +
+            chalk.yellow.bold('No') +
+            orange('. Telemetry skipped.'),
+        );
         resolve(false);
       }
     }, timeoutMs);
 
-    rl.question(orangeBold('  ➜ ') + chalk.white.bold('Send this anonymous record? ') + chalk.dim(`(y/N · auto-skips in ${timeoutSec}s) `), (answer) => {
-      if (!resolved) {
-        resolved = true;
-        clearTimeout(timer);
-        rl.close();
-        const cleaned = answer.trim().toLowerCase();
-        if (cleaned === 'y' || cleaned === 'yes') {
-          console.log(chalk.green('\n  ✔ Sending telemetry...\n'));
-          resolve(true);
-        } else {
-          console.log(chalk.yellow('\n  ✖ Telemetry skipped.\n'));
-          resolve(false);
+    rl.question(
+      orangeBold('  ➜ ') +
+        chalk.white.bold('Send this anonymous record? ') +
+        chalk.dim(`(y/N · auto-skips in ${timeoutSec}s) `),
+      (answer) => {
+        if (!resolved) {
+          resolved = true;
+          clearTimeout(timer);
+          rl.close();
+          const cleaned = answer.trim().toLowerCase();
+          if (cleaned === 'y' || cleaned === 'yes') {
+            console.log(chalk.green('\n  ✔ Sending telemetry...\n'));
+            resolve(true);
+          } else {
+            console.log(chalk.yellow('\n  ✖ Telemetry skipped.\n'));
+            resolve(false);
+          }
         }
-      }
-    });
+      },
+    );
   });
 }
 
 /**
  * Sends telemetry payload to Barrikade servers.
- * 
- * @param {any} payload 
+ *
+ * @param {any} payload
  * @returns {Promise<boolean>}
  */
 export async function sendTelemetry(payload) {
@@ -206,10 +272,10 @@ export async function sendTelemetry(payload) {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'User-Agent': `barrikade-lens/${payload.scannerVersion}`
+        'User-Agent': `barrikade-lens/${payload.scannerVersion}`,
       },
       body: JSON.stringify(payload),
-      signal: controller.signal
+      signal: controller.signal,
     });
 
     clearTimeout(timeoutId);

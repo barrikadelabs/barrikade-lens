@@ -34,20 +34,20 @@ const AI_PROCESS_SIGNATURES = [
   { signature: 'vllm', label: 'vLLM model runtime' },
   { signature: 'anythingllm', label: 'AnythingLLM client' },
   { signature: 'trae', label: 'Trae IDE Agent' },
-  { signature: 'zed', label: 'Zed Editor AI client' }
+  { signature: 'zed', label: 'Zed Editor AI client' },
 ];
 
 const RUNTIME_SIGNATURES = [
   { signature: 'node', label: 'Node.js runtime' },
   { signature: 'python', label: 'Python runtime' },
   { signature: 'bun', label: 'Bun runtime' },
-  { signature: 'uv', label: 'uv package manager' }
+  { signature: 'uv', label: 'uv package manager' },
 ];
 
 /**
  * Runs a shell command and returns stdout.
- * 
- * @param {string} cmd 
+ *
+ * @param {string} cmd
  * @returns {Promise<string>}
  */
 function execPromise(cmd) {
@@ -60,7 +60,7 @@ function execPromise(cmd) {
 
 /**
  * Sweeps running system processes for AI agents, model servers, and runtimes.
- * 
+ *
  * @returns {Promise<{
  *   aiProcesses: Array<{ name: string, label: string }>,
  *   runtimes: Array<{ name: string, label: string }>
@@ -85,7 +85,7 @@ export async function scanProcesses() {
 
   // Match AI processes
   for (const sig of AI_PROCESS_SIGNATURES) {
-    const found = processLines.some(line => line.includes(sig.signature));
+    const found = processLines.some((line) => line.includes(sig.signature));
     if (found) {
       aiProcesses.push({ name: sig.signature, label: sig.label });
     }
@@ -93,7 +93,7 @@ export async function scanProcesses() {
 
   // Match standard runtimes
   for (const sig of RUNTIME_SIGNATURES) {
-    const found = processLines.some(line => line.includes(sig.signature));
+    const found = processLines.some((line) => line.includes(sig.signature));
     if (found) {
       runtimes.push({ name: sig.signature, label: sig.label });
     }

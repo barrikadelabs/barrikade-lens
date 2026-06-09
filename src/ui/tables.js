@@ -4,21 +4,32 @@ import { orange, orangeBold } from './banner.js';
 
 // Reusable table styling configuration
 const tableChars = {
-  'top': '═', 'top-mid': '╤', 'top-left': '╔', 'top-right': '╗',
-  'bottom': '═', 'bottom-mid': '╧', 'bottom-left': '╚', 'bottom-right': '╝',
-  'left': '║', 'left-mid': '╟', 'mid': '─', 'mid-mid': '┼',
-  'right': '║', 'right-mid': '╢', 'middle': '│'
+  top: '═',
+  'top-mid': '╤',
+  'top-left': '╔',
+  'top-right': '╗',
+  bottom: '═',
+  'bottom-mid': '╧',
+  'bottom-left': '╚',
+  'bottom-right': '╝',
+  left: '║',
+  'left-mid': '╟',
+  mid: '─',
+  'mid-mid': '┼',
+  right: '║',
+  'right-mid': '╢',
+  middle: '│',
 };
 
 const tableStyle = {
   head: [],
-  border: ['gray']
+  border: ['gray'],
 };
 
 /**
  * Returns the usable terminal width, capped to prevent overshooting.
  * Falls back to 80 columns in non-TTY environments.
- * 
+ *
  * @returns {number}
  */
 export function termWidth() {
@@ -28,7 +39,7 @@ export function termWidth() {
 /**
  * Mathematically allocates column widths so their sum is exactly the available table width.
  * This guarantees the table fits within w without spilling over.
- * 
+ *
  * @param {number} w Total terminal width
  * @param {number} overhead Borders & padding character overhead
  * @param {number[]} mins Minimum widths per column
@@ -37,8 +48,10 @@ export function termWidth() {
  */
 function allocateWidths(w, overhead, mins, weights) {
   const available = Math.max(20, w - overhead);
-  const widths = mins.map((min, i) => Math.max(min, Math.floor(available * weights[i])));
-  
+  const widths = mins.map((min, i) =>
+    Math.max(min, Math.floor(available * weights[i])),
+  );
+
   let sum = widths.reduce((a, b) => a + b, 0);
   if (sum > available) {
     let diff = sum - available;
@@ -63,7 +76,7 @@ function allocateWidths(w, overhead, mins, weights) {
     }
   } else if (sum < available) {
     // Distribute any rounding remainder to the last column
-    widths[widths.length - 1] += (available - sum);
+    widths[widths.length - 1] += available - sum;
   }
   return widths;
 }
@@ -71,22 +84,22 @@ function allocateWidths(w, overhead, mins, weights) {
 /**
  * Word-wraps a string to fit within maxWidth characters.
  * Breaks on space boundaries.
- * 
- * @param {string} text 
- * @param {number} maxWidth 
+ *
+ * @param {string} text
+ * @param {number} maxWidth
  * @returns {string}
  */
 function wrap(text, maxWidth) {
   if (!text || text.length <= maxWidth) return text;
 
-  const words  = text.split(' ');
-  const lines  = [];
-  let current  = '';
+  const words = text.split(' ');
+  const lines = [];
+  let current = '';
 
   for (const word of words) {
     // Strip ANSI codes for length measurement
     const rawCurrent = current.replace(/\u001B\[[0-9;]*m/g, '');
-    const rawWord    = word.replace(/\u001B\[[0-9;]*m/g, '');
+    const rawWord = word.replace(/\u001B\[[0-9;]*m/g, '');
 
     if (rawCurrent.length + rawWord.length + (current ? 1 : 0) <= maxWidth) {
       current = current ? `${current} ${word}` : word;
@@ -103,30 +116,34 @@ function wrap(text, maxWidth) {
 /**
  * Renders the Autonomous AI Capability Analysis table.
  * Column widths adapt to terminal width.
- * 
- * @param {any} capabilities 
+ *
+ * @param {any} capabilities
  * @returns {string}
  */
 export function renderCapabilityTable(capabilities) {
   const w = termWidth();
-  const widths = allocateWidths(w, 10, [20, 12, 16], [0.32, 0.20, 0.48]);
+  const widths = allocateWidths(w, 10, [20, 12, 16], [0.32, 0.2, 0.48]);
 
   const table = new Table({
-    head: [orangeBold('Capability Domain'), orangeBold('Risk Status'), orangeBold('Evaluation Detail')],
+    head: [
+      orangeBold('Capability Domain'),
+      orangeBold('Risk Status'),
+      orangeBold('Evaluation Detail'),
+    ],
     chars: tableChars,
     style: tableStyle,
     colWidths: widths,
-    wordWrap: true
+    wordWrap: true,
   });
 
   const getStatusLabel = (domain, status) => {
     if (domain === 'toolExecution') {
-      if (status === 'ACTIVE')  return chalk.red.bold('🔴 ACTIVE');
+      if (status === 'ACTIVE') return chalk.red.bold('🔴 ACTIVE');
       if (status === 'CAPABLE') return orangeBold('🟠 CAPABLE');
       return chalk.green('🟢 INACTIVE');
     }
     if (domain === 'localInference') {
-      if (status === 'ACTIVE')  return orangeBold('🟠 ACTIVE');
+      if (status === 'ACTIVE') return orangeBold('🟠 ACTIVE');
       if (status === 'CAPABLE') return chalk.green('🟢 CAPABLE');
       return chalk.green('🟢 INACTIVE');
     }
@@ -145,30 +162,30 @@ export function renderCapabilityTable(capabilities) {
     {
       domain: 'toolExecution',
       label: 'Autonomous System & Shell Execution',
-      cap:   capabilities.toolExecution
+      cap: capabilities.toolExecution,
     },
     {
       domain: 'localInference',
       label: 'Local Model Inference',
-      cap:   capabilities.localInference
+      cap: capabilities.localInference,
     },
     {
       domain: 'workspacePresence',
       label: 'Agent Configuration & Workspace Paths',
-      cap:   capabilities.workspacePresence
+      cap: capabilities.workspacePresence,
     },
     {
       domain: 'credentialExposure',
       label: 'Credential Security',
-      cap:   capabilities.credentialExposure
-    }
+      cap: capabilities.credentialExposure,
+    },
   ];
 
   for (const row of rows) {
     table.push([
       chalk.white.bold(row.label),
       getStatusLabel(row.domain, row.cap.status),
-      chalk.white(wrap(row.cap.detail, widths[2] - 4))
+      chalk.white(wrap(row.cap.detail, widths[2] - 4)),
     ]);
   }
 
@@ -178,24 +195,30 @@ export function renderCapabilityTable(capabilities) {
 /**
  * Renders the Discovered AI Agents Inventory table.
  * Shows actual file paths / PIDs rather than generic labels.
- * 
- * @param {Array<{ name: string, status: 'ACTIVE' | 'INSTALLED', evidence: string[] }>} agents 
+ *
+ * @param {Array<{ name: string, status: 'ACTIVE' | 'INSTALLED', evidence: string[] }>} agents
  * @returns {string}
  */
 export function renderAgentInventoryTable(agents) {
   if (!agents || agents.length === 0) {
-    return chalk.dim('  No AI agents or tools discovered on this workstation.\n');
+    return chalk.dim(
+      '  No AI agents or tools discovered on this workstation.\n',
+    );
   }
 
   const w = termWidth();
-  const widths = allocateWidths(w, 10, [20, 12, 16], [0.32, 0.20, 0.48]);
+  const widths = allocateWidths(w, 10, [20, 12, 16], [0.32, 0.2, 0.48]);
 
   const table = new Table({
-    head: [orangeBold('Agent / Tool Name'), orangeBold('Status'), orangeBold('Supporting Evidence')],
+    head: [
+      orangeBold('Agent / Tool Name'),
+      orangeBold('Status'),
+      orangeBold('Supporting Evidence'),
+    ],
     chars: tableChars,
     style: tableStyle,
     colWidths: widths,
-    wordWrap: true
+    wordWrap: true,
   });
 
   // Sort: ACTIVE first, then alphabetical
@@ -219,7 +242,7 @@ export function renderAgentInventoryTable(agents) {
     table.push([
       chalk.white.bold(agent.name),
       statusStr,
-      chalk.white(wrap(evidenceLines, widths[2] - 4))
+      chalk.white(wrap(evidenceLines, widths[2] - 4)),
     ]);
   }
 
@@ -229,13 +252,18 @@ export function renderAgentInventoryTable(agents) {
 /**
  * Renders the Shadow Agents (MCP Servers) table.
  * When nothing is found, shows the list of config paths that were checked.
- * 
- * @param {Array<any>} auditedConfigs 
+ *
+ * @param {Array<any>} auditedConfigs
  * @returns {string}
  */
 export function renderAgentTable(auditedConfigs) {
   const w = termWidth();
-  const widths = allocateWidths(w, 16, [12, 8, 12, 8, 16], [0.20, 0.10, 0.18, 0.10, 0.42]);
+  const widths = allocateWidths(
+    w,
+    16,
+    [12, 8, 12, 8, 16],
+    [0.2, 0.1, 0.18, 0.1, 0.42],
+  );
 
   const table = new Table({
     head: [
@@ -243,12 +271,12 @@ export function renderAgentTable(auditedConfigs) {
       orangeBold('Scope'),
       orangeBold('Server Name'),
       orangeBold('Type'),
-      orangeBold('Command/URL')
+      orangeBold('Command/URL'),
     ],
     chars: tableChars,
     style: tableStyle,
     colWidths: widths,
-    wordWrap: true
+    wordWrap: true,
   });
 
   let serversFound = 0;
@@ -265,51 +293,63 @@ export function renderAgentTable(auditedConfigs) {
         chalk.dim(config.scope),
         chalk.dim('—'),
         chalk.dim('—'),
-        chalk.dim('No MCP servers defined')
+        chalk.dim('No MCP servers defined'),
       ]);
     } else {
       for (const server of config.servers) {
         serversFound++;
-        const serverName   = server.disabled
+        const serverName = server.disabled
           ? chalk.dim(`${server.name} (disabled)`)
           : chalk.white(server.name);
-        const serverType   = chalk.white(server.type.toUpperCase());
-        const commandOrUrl = server.type === 'sse'
-          ? chalk.white(server.url || '—')
-          : chalk.white(server.command
-            ? wrap(`${server.command} ${(server.args || []).join(' ')}`, widths[4] - 4)
-            : '—');
+        const serverType = chalk.white(server.type.toUpperCase());
+        const commandOrUrl =
+          server.type === 'sse'
+            ? chalk.white(server.url || '—')
+            : chalk.white(
+                server.command
+                  ? wrap(
+                      `${server.command} ${(server.args || []).join(' ')}`,
+                      widths[4] - 4,
+                    )
+                  : '—',
+              );
 
         table.push([
           chalk.white(config.tool),
           chalk.dim(config.scope),
           serverName,
           serverType,
-          commandOrUrl
+          commandOrUrl,
         ]);
       }
     }
   }
 
-  const checkedCount  = checkedPaths.length;
-  const existingCount = checkedPaths.filter(c => c.exists).length;
+  const checkedCount = checkedPaths.length;
+  const existingCount = checkedPaths.filter((c) => c.exists).length;
 
   if (serversFound === 0) {
     let output = '';
-    output += chalk.dim(`  Checked ${checkedCount} known agent config location${checkedCount !== 1 ? 's' : ''} — ${existingCount} present on disk:\n\n`);
-    for (const c of checkedPaths.filter(p => p.exists)) {
+    output += chalk.dim(
+      `  Checked ${checkedCount} known agent config location${checkedCount !== 1 ? 's' : ''} — ${existingCount} present on disk:\n\n`,
+    );
+    for (const c of checkedPaths.filter((p) => p.exists)) {
       output += `  ${chalk.green('✔')} ${chalk.dim(c.tool.padEnd(32))} ${chalk.white(c.filePath)}\n`;
     }
     output += `\n  ${chalk.green('✔ RESULT:')} ${chalk.white('0 active local MCP servers discovered.')}\n`;
-    output += chalk.dim('\n  ⚠  If an unvetted server is registered, malicious prompts can hijack your shell\n');
-    output += chalk.dim('     or exploit command-injection via poisoned tool arguments (MCP "Spawn Axis").\n');
+    output += chalk.dim(
+      '\n  ⚠  If an unvetted server is registered, malicious prompts can hijack your shell\n',
+    );
+    output += chalk.dim(
+      '     or exploit command-injection via poisoned tool arguments (MCP "Spawn Axis").\n',
+    );
     return output;
   }
 
   // Append tool-poisoning warning below the table when servers exist
   const warning = chalk.dim(
     '\n  ⚠  Verify each registered server above. Unvetted MCP servers can inject\n' +
-    '     arbitrary shell commands into your agent\'s tool call pipeline.\n'
+      "     arbitrary shell commands into your agent's tool call pipeline.\n",
   );
 
   return table.toString() + warning;
@@ -318,13 +358,18 @@ export function renderAgentTable(auditedConfigs) {
 /**
  * Renders the Local LLM servers and binding exposure table.
  * Adds a sub-line explaining the blast radius of 0.0.0.0 bindings.
- * 
- * @param {Array<any>} portResults 
+ *
+ * @param {Array<any>} portResults
  * @returns {string}
  */
 export function renderPortTable(portResults) {
   const w = termWidth();
-  const widths = allocateWidths(w, 16, [6, 12, 10, 18, 14], [0.08, 0.20, 0.12, 0.32, 0.28]);
+  const widths = allocateWidths(
+    w,
+    16,
+    [6, 12, 10, 18, 14],
+    [0.08, 0.2, 0.12, 0.32, 0.28],
+  );
 
   const table = new Table({
     head: [
@@ -332,18 +377,20 @@ export function renderPortTable(portResults) {
       orangeBold('Service'),
       orangeBold('Status'),
       orangeBold('Network Reachability & Binding'),
-      orangeBold('Blast Radius')
+      orangeBold('Blast Radius'),
     ],
     chars: tableChars,
     style: tableStyle,
     colWidths: widths,
-    wordWrap: true
+    wordWrap: true,
   });
 
-  const activePorts = portResults.filter(r => r.open);
+  const activePorts = portResults.filter((r) => r.open);
 
   if (activePorts.length === 0) {
-    return chalk.green('  ✔ No local LLM or AI inference servers detected on common ports.\n');
+    return chalk.green(
+      '  ✔ No local LLM or AI inference servers detected on common ports.\n',
+    );
   }
 
   let hasExposed = false;
@@ -351,20 +398,20 @@ export function renderPortTable(portResults) {
   for (const res of portResults) {
     if (!res.open) continue;
 
-    const portStr    = orange(res.port.toString());
+    const portStr = orange(res.port.toString());
     const serviceStr = chalk.white(res.service);
-    const statusStr  = chalk.green.bold('RUNNING');
+    const statusStr = chalk.green.bold('RUNNING');
 
     let bindingStr = '';
-    let riskStr    = '';
+    let riskStr = '';
 
     if (res.exposed) {
       hasExposed = true;
       bindingStr = chalk.red.bold('0.0.0.0  (All Interfaces)');
-      riskStr    = chalk.red.bold('⚠ CRITICAL — LAN Exposed');
+      riskStr = chalk.red.bold('⚠ CRITICAL — LAN Exposed');
     } else {
       bindingStr = chalk.green('127.0.0.1  (Loopback Only)');
-      riskStr    = chalk.green('✔ SAFE — Local Only');
+      riskStr = chalk.green('✔ SAFE — Local Only');
     }
 
     table.push([portStr, serviceStr, statusStr, bindingStr, riskStr]);
@@ -373,11 +420,14 @@ export function renderPortTable(portResults) {
   let output = table.toString();
 
   if (hasExposed) {
-    output += '\n' + chalk.red.bold('  ⚠ CRITICAL:') + chalk.white(
-      ' Any device on your local Wi-Fi or corporate network can send\n' +
-      '  queries and trigger tool-call pipelines on your host system via the\n' +
-      '  exposed port. Bind immediately to 127.0.0.1 to close this attack surface.\n'
-    );
+    output +=
+      '\n' +
+      chalk.red.bold('  ⚠ CRITICAL:') +
+      chalk.white(
+        ' Any device on your local Wi-Fi or corporate network can send\n' +
+          '  queries and trigger tool-call pipelines on your host system via the\n' +
+          '  exposed port. Bind immediately to 127.0.0.1 to close this attack surface.\n',
+      );
   }
 
   return output;
@@ -386,17 +436,24 @@ export function renderPortTable(portResults) {
 /**
  * Renders the detected plaintext secrets and risk configurations table.
  * Secrets from active agents are elevated to CRITICAL.
- * 
- * @param {Array<any>} secretFindings 
+ *
+ * @param {Array<any>} secretFindings
  * @returns {string}
  */
 export function renderSecretTable(secretFindings) {
   if (secretFindings.length === 0) {
-    return chalk.green('  ✔ No plaintext API keys or database credentials found in configuration files.\n');
+    return chalk.green(
+      '  ✔ No plaintext API keys or database credentials found in configuration files.\n',
+    );
   }
 
   const w = termWidth();
-  const widths = allocateWidths(w, 16, [12, 16, 16, 12, 5], [0.16, 0.28, 0.24, 0.24, 0.08]);
+  const widths = allocateWidths(
+    w,
+    16,
+    [12, 16, 16, 12, 5],
+    [0.16, 0.28, 0.24, 0.24, 0.08],
+  );
 
   const table = new Table({
     head: [
@@ -404,12 +461,12 @@ export function renderSecretTable(secretFindings) {
       orangeBold('Source / Location'),
       orangeBold('AIBOM Exposure Type'),
       orangeBold('Detected Pattern'),
-      orangeBold('Line')
+      orangeBold('Line'),
     ],
     chars: tableChars,
     style: tableStyle,
     colWidths: widths,
-    wordWrap: true
+    wordWrap: true,
   });
 
   for (const finding of secretFindings) {
@@ -422,17 +479,21 @@ export function renderSecretTable(secretFindings) {
     }
 
     const fileBasename = finding.filePath.split('/').pop() || finding.filePath;
-    const locationStr  = chalk.white(wrap(`${finding.tool} (${fileBasename})`, widths[1] - 4));
-    const typeStr      = chalk.white(finding.type);
-    const patternStr   = chalk.red(finding.matched);
-    const lineStr      = finding.line ? chalk.white(finding.line.toString()) : chalk.dim('N/A');
+    const locationStr = chalk.white(
+      wrap(`${finding.tool} (${fileBasename})`, widths[1] - 4),
+    );
+    const typeStr = chalk.white(finding.type);
+    const patternStr = chalk.red(finding.matched);
+    const lineStr = finding.line
+      ? chalk.white(finding.line.toString())
+      : chalk.dim('N/A');
 
     table.push([severityStr, locationStr, typeStr, patternStr, lineStr]);
   }
 
   const warning = chalk.dim(
     '\n  ⚠  Hardcoded secrets used by active autonomous agents create an immediate\n' +
-    '     backdoor. Revoke and replace with environment variable indirection now.\n'
+      '     backdoor. Revoke and replace with environment variable indirection now.\n',
   );
 
   return table.toString() + warning;

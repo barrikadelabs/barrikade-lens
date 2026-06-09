@@ -16,7 +16,7 @@ telemetryRouter.post('/telemetry', async (req, res) => {
   if (!validation.ok) {
     return res.status(400).json({
       error: 'Invalid payload',
-      details: validation.errors
+      details: validation.errors,
     });
   }
 
@@ -46,7 +46,7 @@ telemetryRouter.post('/telemetry', async (req, res) => {
     tool_execution: payload.metrics?.toolExecutionStatus || 'UNKNOWN',
     local_inference: payload.metrics?.localInferenceStatus || 'UNKNOWN',
     workspace_presence: payload.metrics?.workspacePresenceStatus || 'UNKNOWN',
-    credential_exposure: payload.metrics?.credentialExposureStatus || 'UNKNOWN'
+    credential_exposure: payload.metrics?.credentialExposureStatus || 'UNKNOWN',
   };
 
   // -- Insert --

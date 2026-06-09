@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write  # Required for Workload Identity Federation
+      id-token: write # Required for Workload Identity Federation
 
     steps:
       - name: Checkout code
@@ -62,12 +62,12 @@ jobs:
           URL=$(gcloud run services describe ${{ env.SERVICE }} \
             --region ${{ env.REGION }} \
             --format 'value(status.url)')
-          
+
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" "$URL/lens/health")
-          
+
           if [ "$STATUS" != "200" ]; then
             echo "❌ Health check failed with status $STATUS"
             exit 1
           fi
-          
+
           echo "✅ Health check passed — $URL/lens/health returned 200"

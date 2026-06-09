@@ -8,8 +8,8 @@
  * The window map is pruned every 5 minutes to avoid unbounded memory growth.
  */
 
-const WINDOW_MS = 60_000;   // 1 minute
-const MAX_REQUESTS = 10;    // per window per IP
+const WINDOW_MS = 60_000; // 1 minute
+const MAX_REQUESTS = 10; // per window per IP
 const PRUNE_INTERVAL = 300_000; // 5 minutes
 
 /** @type {Map<string, { count: number, resetAt: number }>} */
@@ -53,7 +53,7 @@ export function rateLimiter(req, res, next) {
     res.set('Retry-After', String(retryAfter));
     return res.status(429).json({
       error: 'Too many requests',
-      retryAfterSeconds: retryAfter
+      retryAfterSeconds: retryAfter,
     });
   }
 

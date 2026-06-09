@@ -12,7 +12,7 @@ export const DEFAULT_AI_PORTS = [
   { port: 5000, service: 'Text Generation WebUI (API)' },
   { port: 3845, service: 'Figma Desktop MCP' },
   { port: 63334, service: 'JetBrains MCP' },
-  { port: 64342, service: 'JetBrains MCP (alt)' }
+  { port: 64342, service: 'JetBrains MCP (alt)' },
 ];
 
 /**
@@ -34,9 +34,9 @@ export function getLocalLanIps() {
 
 /**
  * Tests if a socket can connect to host:port.
- * @param {string} host 
- * @param {number} port 
- * @param {number} timeoutMs 
+ * @param {string} host
+ * @param {number} port
+ * @param {number} timeoutMs
  * @returns {Promise<boolean>}
  */
 function testConnection(host, port, timeoutMs = 300) {
@@ -82,7 +82,7 @@ async function checkExposure(port, lanIps, timeoutMs) {
   if (lanIps.length === 0) return false;
   // Probe every LAN IP concurrently; exposed if ANY responds.
   const results = await Promise.all(
-    lanIps.map(ip => testConnection(ip, port, timeoutMs))
+    lanIps.map((ip) => testConnection(ip, port, timeoutMs)),
   );
   return results.some(Boolean);
 }
@@ -108,12 +108,15 @@ async function checkExposure(port, lanIps, timeoutMs) {
 export async function scanPorts(timeoutMs = 300) {
   const lanIps = getLocalLanIps();
 
-  
   // one promise per port entry. Each resolves to a full result object.
   /** @type {PortResult[]} */
   const results = await Promise.all(
     DEFAULT_AI_PORTS.map(async (entry) => {
-      const isOpenLocal = await testConnection('127.0.0.1', entry.port, timeoutMs);
+      const isOpenLocal = await testConnection(
+        '127.0.0.1',
+        entry.port,
+        timeoutMs,
+      );
 
       if (!isOpenLocal) {
         return {
@@ -122,7 +125,7 @@ export async function scanPorts(timeoutMs = 300) {
           open: false,
           exposed: false,
           binding: 'offline',
-          risk: 'CLEAN'
+          risk: 'CLEAN',
         };
       }
 
@@ -133,9 +136,9 @@ export async function scanPorts(timeoutMs = 300) {
         open: true,
         exposed: isExposed,
         binding: isExposed ? '0.0.0.0' : '127.0.0.1',
-        risk: isExposed ? 'CRITICAL' : 'INFO'
+        risk: isExposed ? 'CRITICAL' : 'INFO',
       };
-    })
+    }),
   );
 
   return results;

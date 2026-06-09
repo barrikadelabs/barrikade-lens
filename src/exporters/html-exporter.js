@@ -3,13 +3,17 @@ import { calculateRiskScore } from '../ui/summary.js';
 
 /**
  * Exports scan results as a self-contained, beautifully-styled HTML report.
- * 
+ *
  * @param {any} results Aggregated scan results
  * @param {string} outputPath File path to write the HTML report to
  */
 export async function exportHtml(results, outputPath) {
   const summary = results.summary;
-  const score = calculateRiskScore(summary.criticalCount, summary.highCount, summary.mediumCount);
+  const score = calculateRiskScore(
+    summary.criticalCount,
+    summary.highCount,
+    summary.mediumCount,
+  );
   const capabilities = results.capabilities;
 
   let scoreClass = 'score-high';
@@ -22,8 +26,8 @@ export async function exportHtml(results, outputPath) {
     ratingStr = 'MODERATE RISK';
   }
 
-  const activePorts = results.ports.filter(p => p.open);
-  const configsFound = results.configs.filter(c => c.exists);
+  const activePorts = results.ports.filter((p) => p.open);
+  const configsFound = results.configs.filter((c) => c.exists);
 
   const getHtmlBadgeClass = (domain, status) => {
     if (domain === 'toolExecution') {
@@ -485,9 +489,12 @@ export async function exportHtml(results, outputPath) {
     <!-- Discovered Agents Card -->
     <div class="card" style="margin-bottom: 30px;">
       <h2>Discovered Shadow AI Agents Inventory</h2>
-      ${!results.agents || results.agents.length === 0 ? `
+      ${
+        !results.agents || results.agents.length === 0
+          ? `
         <div class="empty-state">No AI agents or tools discovered on this workstation.</div>
-      ` : `
+      `
+          : `
         <table>
           <thead>
             <tr>
@@ -497,48 +504,62 @@ export async function exportHtml(results, outputPath) {
             </tr>
           </thead>
           <tbody>
-            ${[...results.agents].sort((a, b) => {
-    if (a.status === 'ACTIVE' && b.status !== 'ACTIVE') return -1;
-    if (a.status !== 'ACTIVE' && b.status === 'ACTIVE') return 1;
-    return a.name.localeCompare(b.name);
-  }).map(agent => {
-    const statusClass = agent.status === 'ACTIVE' ? 'status-critical' : 'status-safe';
-    const cleanEvidence = agent.evidence.map(e => {
-      const idx = e.indexOf(':');
-      return idx !== -1 ? e.substring(0, idx).trim() : e;
-    });
-    const uniqueEvidence = Array.from(new Set(cleanEvidence)).join(', ');
-    return `
+            ${[...results.agents]
+              .sort((a, b) => {
+                if (a.status === 'ACTIVE' && b.status !== 'ACTIVE') return -1;
+                if (a.status !== 'ACTIVE' && b.status === 'ACTIVE') return 1;
+                return a.name.localeCompare(b.name);
+              })
+              .map((agent) => {
+                const statusClass =
+                  agent.status === 'ACTIVE' ? 'status-critical' : 'status-safe';
+                const cleanEvidence = agent.evidence.map((e) => {
+                  const idx = e.indexOf(':');
+                  return idx !== -1 ? e.substring(0, idx).trim() : e;
+                });
+                const uniqueEvidence = Array.from(new Set(cleanEvidence)).join(
+                  ', ',
+                );
+                return `
                 <tr>
                   <td><strong>${agent.name}</strong></td>
                   <td><span class="status-badge ${statusClass}">${agent.status}</span></td>
                   <td>${uniqueEvidence}</td>
                 </tr>
               `;
-  }).join('')}
+              })
+              .join('')}
           </tbody>
         </table>
-      `}
+      `
+      }
     </div>
 
     <!-- Audit Evidence collected -->
     <div class="card" style="margin-bottom: 30px;">
       <h2>Collected Audit Evidence</h2>
-      ${results.evidence.length === 0 ? `
+      ${
+        results.evidence.length === 0
+          ? `
         <div class="empty-state">No agent infrastructure or evidence detected on this workstation.</div>
-      ` : `
+      `
+          : `
         <ul class="evidence-list">
-          ${results.evidence.map(e => `<li>${e}</li>`).join('')}
+          ${results.evidence.map((e) => `<li>${e}</li>`).join('')}
         </ul>
-      `}
+      `
+      }
     </div>
 
     <!-- Active Configurations -->
     <div class="card" style="margin-bottom: 30px;">
       <h2>Active Agent & MCP Configurations</h2>
-      ${configsFound.length === 0 ? `
+      ${
+        configsFound.length === 0
+          ? `
         <div class="empty-state">No agent config files discovered.</div>
-      ` : `
+      `
+          : `
         <table>
           <thead>
             <tr>
@@ -550,35 +571,45 @@ export async function exportHtml(results, outputPath) {
             </tr>
           </thead>
           <tbody>
-            ${configsFound.map(c => {
-    if (c.servers.length === 0) {
-      return `<tr>
+            ${configsFound
+              .map((c) => {
+                if (c.servers.length === 0) {
+                  return `<tr>
                   <td><strong>${c.tool}</strong></td>
                   <td>${c.scope}</td>
                   <td colspan="3" style="color: var(--text-muted); font-style: italic;">No servers configured</td>
                 </tr>`;
-    }
-    return c.servers.map(s => `
+                }
+                return c.servers
+                  .map(
+                    (s) => `
                 <tr>
                   <td><strong>${c.tool}</strong></td>
                   <td>${c.scope}</td>
                   <td>${s.disabled ? `<span style="text-decoration: line-through; opacity: 0.6;">${s.name}</span>` : s.name}</td>
                   <td>${s.type.toUpperCase()}</td>
-                  <td><code>${s.type === 'sse' ? (s.url || '-') : `${s.command || '-'} ${(s.args || []).join(' ')}`}</code></td>
+                  <td><code>${s.type === 'sse' ? s.url || '-' : `${s.command || '-'} ${(s.args || []).join(' ')}`}</code></td>
                 </tr>
-              `).join('');
-  }).join('')}
+              `,
+                  )
+                  .join('');
+              })
+              .join('')}
           </tbody>
         </table>
-      `}
+      `
+      }
     </div>
 
     <!-- Port Sweep -->
     <div class="card" style="margin-bottom: 30px;">
       <h2>Local Inference Server Status</h2>
-      ${activePorts.length === 0 ? `
+      ${
+        activePorts.length === 0
+          ? `
         <div class="empty-state" style="color: var(--green);">✔ No local model inference servers active.</div>
-      ` : `
+      `
+          : `
         <table>
           <thead>
             <tr>
@@ -590,32 +621,44 @@ export async function exportHtml(results, outputPath) {
             </tr>
           </thead>
           <tbody>
-            ${activePorts.map(p => `
+            ${activePorts
+              .map(
+                (p) => `
               <tr>
                 <td><strong>${p.port}</strong></td>
                 <td>${p.service}</td>
                 <td><span class="status-badge status-safe">Running</span></td>
                 <td><code>${p.binding}</code></td>
                 <td>
-                  ${p.exposed ? `
+                  ${
+                    p.exposed
+                      ? `
                     <span class="status-badge status-critical">Critical (Exposed to LAN)</span>
-                  ` : `
+                  `
+                      : `
                     <span class="status-badge status-safe">Safe (Local only)</span>
-                  `}
+                  `
+                  }
                 </td>
               </tr>
-            `).join('')}
+            `,
+              )
+              .join('')}
           </tbody>
         </table>
-      `}
+      `
+      }
     </div>
 
     <!-- Security Findings -->
     <div class="card" style="margin-bottom: 30px;">
       <h2>Credential & Risk Findings</h2>
-      ${results.secrets.length === 0 ? `
+      ${
+        results.secrets.length === 0
+          ? `
         <div class="empty-state" style="color: var(--green);">✔ No plaintext secrets or insecure configuration flags detected.</div>
-      ` : `
+      `
+          : `
         <table>
           <thead>
             <tr>
@@ -627,12 +670,13 @@ export async function exportHtml(results, outputPath) {
             </tr>
           </thead>
           <tbody>
-            ${results.secrets.map(s => {
-    let sevClass = 'status-medium';
-    if (s.risk === 'CRITICAL') sevClass = 'status-critical';
-    else if (s.risk === 'HIGH') sevClass = 'status-high';
+            ${results.secrets
+              .map((s) => {
+                let sevClass = 'status-medium';
+                if (s.risk === 'CRITICAL') sevClass = 'status-critical';
+                else if (s.risk === 'HIGH') sevClass = 'status-high';
 
-    return `
+                return `
                 <tr>
                   <td><span class="status-badge ${sevClass}">${s.risk}</span></td>
                   <td><strong>${s.tool}</strong><br><span style="font-size: 11px; color: var(--text-muted);">${s.filePath.split('/').pop()}</span></td>
@@ -644,22 +688,32 @@ export async function exportHtml(results, outputPath) {
                   <td>${s.line || 'N/A'}</td>
                 </tr>
               `;
-  }).join('')}
+              })
+              .join('')}
           </tbody>
         </table>
-      `}
+      `
+      }
     </div>
 
     <!-- Action items -->
     <div class="recommendations">
       <h2 style="border-left: none; padding-left: 0; color: var(--orange); margin-bottom: 15px;">Immediate Remediation Checklist</h2>
       <ol>
-        ${summary.portsExposed > 0 ? `
+        ${
+          summary.portsExposed > 0
+            ? `
           <li><strong>Secure Local AI Binding:</strong> Edit your Ollama/LM Studio configurations to bind solely to <code>127.0.0.1</code>. This blocks lateral access from other devices on the LAN.</li>
-        ` : ''}
-        ${summary.secretsCount > 0 ? `
+        `
+            : ''
+        }
+        ${
+          summary.secretsCount > 0
+            ? `
           <li><strong>Vault Plaintext Secrets:</strong> Remove hardcoded credentials from <code>mcp.json</code> or other tool settings. Switch to environment variable interpolation (e.g. <code>\${env:OPENAI_API_KEY}</code>) which resolves secrets dynamically at runtime.</li>
-        ` : ''}
+        `
+            : ''
+        }
         <li><strong>Enforce Command Execution Checks:</strong> Verify that Brave Mode is disabled in IDE MCP settings, and review auto-approval configuration lists.</li>
         <li><strong>Establish Central Lifecycle Governance:</strong> Ensure team members follow structured governance practices for local agent toolchains to avoid lateral network exposure.</li>
       </ol>
