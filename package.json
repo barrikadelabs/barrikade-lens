@@ -7,7 +7,9 @@
     "barrikade-lens": "./bin/cli.js"
   },
   "scripts": {
-    "typecheck": "tsc"
+    "typecheck": "tsc",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "files": [
     "bin/",
@@ -53,6 +55,7 @@
   },
   "devDependencies": {
     "@types/node": "^25.9.2",
+    "prettier": "3.8.3",
     "typescript": "^6.0.3"
   }
 }
