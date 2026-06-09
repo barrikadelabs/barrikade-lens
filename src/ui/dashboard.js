@@ -1,13 +1,23 @@
 import readline from 'node:readline';
 import chalk from 'chalk';
 import { printBanner, orangeBold } from './banner.js';
-import { renderAgentTable, renderPortTable, renderSecretTable, renderCapabilityTable, renderAgentInventoryTable } from './tables.js';
-import { renderSummaryCard, calculateRiskScore, getProgressBar } from './summary.js';
+import {
+  renderAgentTable,
+  renderPortTable,
+  renderSecretTable,
+  renderCapabilityTable,
+  renderAgentInventoryTable,
+} from './tables.js';
+import {
+  renderSummaryCard,
+  calculateRiskScore,
+  getProgressBar,
+} from './summary.js';
 
 /**
  * Formats a section header with orange styling.
- * 
- * @param {string} title 
+ *
+ * @param {string} title
  * @returns {string}
  */
 function sectionHeader(title) {
@@ -24,7 +34,7 @@ function clearScreen() {
 
 /**
  * Outputs the full classic unified CLI dashboard directly to stdout.
- * 
+ *
  * @param {{
  *   version?: string,
  *   configs: Array<any>,
@@ -47,7 +57,11 @@ function displayClassicDashboard(results) {
 
   console.log(sectionHeader('COLLECTED AUDIT EVIDENCE'));
   if (results.evidence.length === 0) {
-    console.log(chalk.dim('  No agent infrastructure or capabilities detected on this workstation.\n'));
+    console.log(
+      chalk.dim(
+        '  No agent infrastructure or capabilities detected on this workstation.\n',
+      ),
+    );
   } else {
     for (const ev of results.evidence) {
       console.log(`  ${chalk.dim('•')} ${chalk.white(ev)}`);
@@ -69,7 +83,7 @@ function displayClassicDashboard(results) {
 
 /**
  * Outputs the interactive guided step-by-step dashboard.
- * 
+ *
  * @param {{
  *   configs: Array<any>,
  *   ports: Array<any>,
@@ -79,7 +93,7 @@ function displayClassicDashboard(results) {
  *   evidence: string[],
  *   agents: any[],
  *   version?: string
- * }} results 
+ * }} results
  * @returns {Promise<void>}
  */
 export function displayDashboard(results) {
@@ -108,41 +122,48 @@ export function displayDashboard(results) {
         render: () => {
           console.log(renderCapabilityTable(results.capabilities));
         },
-        nextPrompt: 'Press [Enter] to see what AI agents are installed on this machine →'
+        nextPrompt:
+          'Press [Enter] to see what AI agents are installed on this machine →',
       },
       {
         title: 'Step 2 of 7 — Discovered AI Agents Inventory',
         render: () => {
           console.log(renderAgentInventoryTable(results.agents));
         },
-        nextPrompt: 'Press [Enter] to inspect registered MCP server configurations →'
+        nextPrompt:
+          'Press [Enter] to inspect registered MCP server configurations →',
       },
       {
         title: 'Step 3 of 7 — MCP Server Inventory (Shadow Agent Surface)',
         render: () => {
           console.log(renderAgentTable(results.configs));
         },
-        nextPrompt: 'Press [Enter] to sweep local LLM server ports →'
+        nextPrompt: 'Press [Enter] to sweep local LLM server ports →',
       },
       {
         title: 'Step 4 of 7 — Local LLM Network Exposure',
         render: () => {
           console.log(renderPortTable(results.ports));
         },
-        nextPrompt: 'Press [Enter] to scan for exposed API keys and credentials →'
+        nextPrompt:
+          'Press [Enter] to scan for exposed API keys and credentials →',
       },
       {
         title: 'Step 5 of 7 — Plaintext Credential Exposure Scan',
         render: () => {
           console.log(renderSecretTable(results.secrets));
         },
-        nextPrompt: 'Press [Enter] to review raw supporting evidence →'
+        nextPrompt: 'Press [Enter] to review raw supporting evidence →',
       },
       {
         title: 'Step 6 of 7 — Raw Supporting Evidence',
         render: () => {
           if (results.evidence.length === 0) {
-            console.log(chalk.dim('  No agent infrastructure or capabilities detected on this workstation.\n'));
+            console.log(
+              chalk.dim(
+                '  No agent infrastructure or capabilities detected on this workstation.\n',
+              ),
+            );
           } else {
             for (const ev of results.evidence) {
               console.log(`  ${chalk.dim('•')} ${chalk.white(ev)}`);
@@ -150,7 +171,7 @@ export function displayDashboard(results) {
             console.log();
           }
         },
-        nextPrompt: 'Press [Enter] to generate your Audit Report Card →'
+        nextPrompt: 'Press [Enter] to generate your Audit Report Card →',
       },
       {
         title: 'Step 7 of 7 — Audit Report Card',
@@ -158,7 +179,7 @@ export function displayDashboard(results) {
           const score = calculateRiskScore(
             results.summary.criticalCount,
             results.summary.highCount,
-            results.summary.mediumCount
+            results.summary.mediumCount,
           );
           const progressBar = getProgressBar(score);
 
@@ -173,21 +194,32 @@ export function displayDashboard(results) {
             ratingStr = chalk.red.bold('CRITICAL EXPOSURE RISK');
           }
 
-          console.log(`\n  ${chalk.white.bold('SECURITY SCORE:')} ${progressBar}  (${ratingStr})`);
+          console.log(
+            `\n  ${chalk.white.bold('SECURITY SCORE:')} ${progressBar}  (${ratingStr})`,
+          );
           console.log(
             `  ${chalk.dim('Detected:')} ` +
-            chalk.white(`${results.agents.length} AI Workers`) +
-            chalk.dim(' | ') +
-            chalk.white(`${results.configs.filter(c => c.exists).length} Config Files`) +
-            chalk.dim(' | ') +
-            chalk.white(`${results.secrets.length} Plaintext Secrets`)
+              chalk.white(`${results.agents.length} AI Workers`) +
+              chalk.dim(' | ') +
+              chalk.white(
+                `${results.configs.filter((c) => c.exists).length} Config Files`,
+              ) +
+              chalk.dim(' | ') +
+              chalk.white(`${results.secrets.length} Plaintext Secrets`),
           );
 
           // Render scorecard & CTA dynamically using the CURRENT terminal width
-          const rawSummaryCard = renderSummaryCard(results.summary, results.secrets);
-          const ctaSplitIdx  = rawSummaryCard.indexOf('\n╭');
-          const scorecardBox = ctaSplitIdx !== -1 ? rawSummaryCard.slice(0, ctaSplitIdx) : rawSummaryCard;
-          const ctaBox       = ctaSplitIdx !== -1 ? rawSummaryCard.slice(ctaSplitIdx + 1) : '';
+          const rawSummaryCard = renderSummaryCard(
+            results.summary,
+            results.secrets,
+          );
+          const ctaSplitIdx = rawSummaryCard.indexOf('\n╭');
+          const scorecardBox =
+            ctaSplitIdx !== -1
+              ? rawSummaryCard.slice(0, ctaSplitIdx)
+              : rawSummaryCard;
+          const ctaBox =
+            ctaSplitIdx !== -1 ? rawSummaryCard.slice(ctaSplitIdx + 1) : '';
 
           console.log(scorecardBox);
 
@@ -195,19 +227,24 @@ export function displayDashboard(results) {
             console.log(ctaBox);
           }
         },
-        nextPrompt: 'Press [Enter] to exit — Audit complete'
-      }
+        nextPrompt: 'Press [Enter] to exit — Audit complete',
+      },
     ];
 
     function render() {
       clearScreen();
       printBanner(version);
 
-      const step    = steps[currentStep];
-      const sepLen  = Math.max(40, Math.min((process.stdout.columns || 80) - 4, 90));
+      const step = steps[currentStep];
+      const sepLen = Math.max(
+        40,
+        Math.min((process.stdout.columns || 80) - 4, 90),
+      );
       const controls = chalk.dim(`  [Enter] Next  [Backspace] Back  [Q] Quit`);
 
-      console.log(`\n${orangeBold('■')} ${chalk.white.bold(step.title)} ${chalk.dim('─'.repeat(4))}`);
+      console.log(
+        `\n${orangeBold('■')} ${chalk.white.bold(step.title)} ${chalk.dim('─'.repeat(4))}`,
+      );
       console.log(controls);
       console.log(chalk.dim('  ' + '─'.repeat(sepLen)) + '\n');
 

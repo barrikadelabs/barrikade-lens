@@ -39,22 +39,37 @@ export function validateTelemetryPayload(body) {
   }
 
   const intFields = [
-    'agentsCount', 'agentsActive', 'agentsInstalled',
-    'configsScanned', 'mcpServersFound',
-    'portsScanned', 'portsOpen', 'portsExposed',
-    'secretsFound', 'criticalFindings', 'highFindings', 'mediumFindings'
+    'agentsCount',
+    'agentsActive',
+    'agentsInstalled',
+    'configsScanned',
+    'mcpServersFound',
+    'portsScanned',
+    'portsOpen',
+    'portsExposed',
+    'secretsFound',
+    'criticalFindings',
+    'highFindings',
+    'mediumFindings',
   ];
 
   for (const field of intFields) {
     const val = body.metrics[field];
-    if (val !== undefined && (typeof val !== 'number' || !Number.isInteger(val) || val < 0)) {
-      errors.push(`metrics.${field}: must be a non-negative integer if provided`);
+    if (
+      val !== undefined &&
+      (typeof val !== 'number' || !Number.isInteger(val) || val < 0)
+    ) {
+      errors.push(
+        `metrics.${field}: must be a non-negative integer if provided`,
+      );
     }
   }
 
   const statusFields = [
-    'toolExecutionStatus', 'localInferenceStatus',
-    'workspacePresenceStatus', 'credentialExposureStatus'
+    'toolExecutionStatus',
+    'localInferenceStatus',
+    'workspacePresenceStatus',
+    'credentialExposureStatus',
   ];
 
   for (const field of statusFields) {

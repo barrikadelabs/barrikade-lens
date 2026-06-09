@@ -6,7 +6,7 @@ export const orangeBold = chalk.hex('#FF6600').bold;
 
 /**
  * Prints the CLI header banner and privacy disclosures.
- * 
+ *
  * @param {string} version Version of the tool
  */
 export function printBanner(version = '0.1.0') {
@@ -28,14 +28,16 @@ export function printBanner(version = '0.1.0') {
 
   if (col < 64) {
     console.log(center(chalk.white.bold('100% Local Scanning')));
-    console.log(center(chalk.white('No code or credentials leave this machine')));
+    console.log(
+      center(chalk.white('No code or credentials leave this machine')),
+    );
   } else {
     console.log(
       center(
         chalk.white.bold('100% Local Scanning') +
-        chalk.dim(' • ') +
-        chalk.white('No code or credentials leave this machine')
-      )
+          chalk.dim(' • ') +
+          chalk.white('No code or credentials leave this machine'),
+      ),
     );
   }
   console.log(line + '\n');

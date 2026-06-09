@@ -17,8 +17,5 @@ const bigquery = new BigQuery();
  * @returns {Promise<void>}
  */
 export async function insertTelemetryRow(row) {
-  await bigquery
-    .dataset(DATASET)
-    .table(TABLE)
-    .insert([row]);
+  await bigquery.dataset(DATASET).table(TABLE).insert([row]);
 }

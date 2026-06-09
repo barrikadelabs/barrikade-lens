@@ -5,7 +5,7 @@ import { program } from 'commander';
 import { runAudit } from '../src/runner.js';
 
 const pkg = JSON.parse(
-  await readFile(new URL('../package.json', import.meta.url), 'utf8')
+  await readFile(new URL('../package.json', import.meta.url), 'utf8'),
 );
 const version = pkg.version;
 
@@ -25,7 +25,10 @@ program
   .description('Instant Shadow AI agent discovery & security scanner')
   .version(version)
   .option('--json', 'Output raw JSON instead of interactive dashboard')
-  .option('-r, --report <path>', 'Write JSON scan report to specified file path')
+  .option(
+    '-r, --report <path>',
+    'Write JSON scan report to specified file path',
+  )
   .option('--html <path>', 'Generate a self-contained HTML CISO audit report')
   .option('--no-telemetry', 'Disable anonymous high-level telemetry reporting')
   .option('--verbose', 'Show detailed execution logs')

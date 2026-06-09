@@ -2,21 +2,29 @@ import os from 'node:os';
 import fs from 'node:fs/promises';
 import ora from 'ora';
 import chalk from 'chalk';
-import { auditConfigs, auditWorkspaceArtifacts, auditDependencies } from './scanners/config-auditor.js';
+import {
+  auditConfigs,
+  auditWorkspaceArtifacts,
+  auditDependencies,
+} from './scanners/config-auditor.js';
 import { scanPorts } from './scanners/port-scanner.js';
 import { scanProcesses } from './scanners/process-scanner.js';
 import { scanEnvFiles } from './scanners/env-scanner.js';
 import { scanHistory } from './scanners/history-scanner.js';
 import { scanConfigsForSecrets } from './scanners/secret-scanner.js';
 import { analyzeCapabilities } from './utils/analyzer.js';
-import { buildTelemetryPayload, promptTelemetryConsent, sendTelemetry } from './utils/telemetry.js';
+import {
+  buildTelemetryPayload,
+  promptTelemetryConsent,
+  sendTelemetry,
+} from './utils/telemetry.js';
 import { displayDashboard } from './ui/dashboard.js';
 import { exportJson } from './exporters/json-exporter.js';
 import { exportHtml } from './exporters/html-exporter.js';
 
 /**
  * Executes the full capability-based security audit workflow.
- * 
+ *
  * @param {{
  *   json?: boolean,
  *   report?: string,
@@ -34,7 +42,7 @@ export async function runAudit(options = {}) {
   if (!isQuiet) {
     spinner = ora({
       text: 'Scanning workspace structures & active processes...',
-      color: 'yellow'
+      color: 'yellow',
     }).start();
   }
 
@@ -44,15 +52,18 @@ export async function runAudit(options = {}) {
     const configs = await auditConfigs(process.cwd());
 
     // 2. Audit workspace directories & rule files
-    if (spinner) spinner.text = 'Sweeping agent workspace structures & rule files...';
+    if (spinner)
+      spinner.text = 'Sweeping agent workspace structures & rule files...';
     const workspaceArtifacts = await auditWorkspaceArtifacts(process.cwd());
 
     // 3. Audit project dependencies
-    if (spinner) spinner.text = 'Analyzing project dependencies for agent frameworks...';
+    if (spinner)
+      spinner.text = 'Analyzing project dependencies for agent frameworks...';
     const depFrameworks = await auditDependencies(process.cwd());
 
     // 4. Scan active processes
-    if (spinner) spinner.text = 'Detecting active AI and model inference processes...';
+    if (spinner)
+      spinner.text = 'Detecting active AI and model inference processes...';
     const processes = await scanProcesses();
 
     // 5. Scan local LLM ports
@@ -60,7 +71,8 @@ export async function runAudit(options = {}) {
     const ports = await scanPorts(300);
 
     // 6. Scan environment files for secrets
-    if (spinner) spinner.text = 'Scanning workspace .env files for hardcoded secrets...';
+    if (spinner)
+      spinner.text = 'Scanning workspace .env files for hardcoded secrets...';
     const envSecrets = await scanEnvFiles(process.cwd());
 
     // 7. Scan shell history for secrets & commands
@@ -68,7 +80,9 @@ export async function runAudit(options = {}) {
     const history = await scanHistory();
 
     // 8. Scan configurations for secrets
-    if (spinner) spinner.text = 'Analyzing configuration blocks for plaintext credentials...';
+    if (spinner)
+      spinner.text =
+        'Analyzing configuration blocks for plaintext credentials...';
     const configSecrets = await scanConfigsForSecrets(configs);
 
     if (spinner) {
@@ -84,7 +98,7 @@ export async function runAudit(options = {}) {
     const mergedSecrets = [
       ...configSecrets,
       ...envSecrets,
-      ...history.findings
+      ...history.findings,
     ];
 
     // 9. Run Capability Analysis
@@ -95,24 +109,34 @@ export async function runAudit(options = {}) {
       processes,
       ports,
       secrets: mergedSecrets,
-      history
+      history,
     });
 
     // 10. Calculate metrics summary
-    const configsCount = configs.filter(c => c.exists).length;
-    const serversCount = configs.reduce((acc, c) => acc + (c.exists ? c.servers.length : 0), 0);
+    const configsCount = configs.filter((c) => c.exists).length;
+    const serversCount = configs.reduce(
+      (acc, c) => acc + (c.exists ? c.servers.length : 0),
+      0,
+    );
     const portsScanned = ports.length;
-    const portsOpen = ports.filter(p => p.open).length;
-    const portsExposed = ports.filter(p => p.open && p.exposed).length;
+    const portsOpen = ports.filter((p) => p.open).length;
+    const portsExposed = ports.filter((p) => p.open && p.exposed).length;
     const secretsCount = mergedSecrets.length;
 
     const agentsCount = capabilityResult.agents.length;
-    const agentsActive = capabilityResult.agents.filter(a => a.status === 'ACTIVE').length;
-    const agentsInstalled = capabilityResult.agents.filter(a => a.status === 'INSTALLED').length;
+    const agentsActive = capabilityResult.agents.filter(
+      (a) => a.status === 'ACTIVE',
+    ).length;
+    const agentsInstalled = capabilityResult.agents.filter(
+      (a) => a.status === 'INSTALLED',
+    ).length;
 
-    const criticalCount = mergedSecrets.filter(s => s.risk === 'CRITICAL').length + portsExposed;
-    const highCount = mergedSecrets.filter(s => s.risk === 'HIGH').length;
-    const mediumCount = mergedSecrets.filter(s => s.risk === 'MEDIUM').length + configs.filter(c => c.exists && c.malformed).length;
+    const criticalCount =
+      mergedSecrets.filter((s) => s.risk === 'CRITICAL').length + portsExposed;
+    const highCount = mergedSecrets.filter((s) => s.risk === 'HIGH').length;
+    const mediumCount =
+      mergedSecrets.filter((s) => s.risk === 'MEDIUM').length +
+      configs.filter((c) => c.exists && c.malformed).length;
 
     const summary = {
       configsCount,
@@ -126,7 +150,7 @@ export async function runAudit(options = {}) {
       mediumCount,
       agentsCount,
       agentsActive,
-      agentsInstalled
+      agentsInstalled,
     };
 
     let version = 'unknown';
@@ -149,7 +173,7 @@ export async function runAudit(options = {}) {
       agents: capabilityResult.agents,
       configs,
       ports,
-      secrets: mergedSecrets
+      secrets: mergedSecrets,
     };
 
     // 12. Handle output formats
@@ -163,32 +187,46 @@ export async function runAudit(options = {}) {
     if (options.report) {
       await exportJson(aggregatedResults, options.report);
       if (!isQuiet) {
-        console.log(chalk.green(`\n✔ JSON report written to: `) + chalk.white(options.report));
+        console.log(
+          chalk.green(`\n✔ JSON report written to: `) +
+            chalk.white(options.report),
+        );
       }
     }
 
     if (options.html) {
       await exportHtml(aggregatedResults, options.html);
       if (!isQuiet) {
-        console.log(chalk.green(`✔ HTML CISO-Report written to: `) + chalk.white(options.html));
+        console.log(
+          chalk.green(`✔ HTML CISO-Report written to: `) +
+            chalk.white(options.html),
+        );
       }
     }
 
     // 13. Telemetry handling at the very end (prompt for consent or send silently in quiet mode)
-    if (!isTelemetryOptOut && process.env.BARRIKADE_NO_TELEMETRY !== '1' && process.env.BARRIKADE_NO_TELEMETRY !== 'true') {
-      const telemetryPayload = await buildTelemetryPayload(summary, capabilityResult.capabilities, version);
+    if (
+      !isTelemetryOptOut &&
+      process.env.BARRIKADE_NO_TELEMETRY !== '1' &&
+      process.env.BARRIKADE_NO_TELEMETRY !== 'true'
+    ) {
+      const telemetryPayload = await buildTelemetryPayload(
+        summary,
+        capabilityResult.capabilities,
+        version,
+      );
       if (options.json) {
-        sendTelemetry(telemetryPayload).catch(() => { });
+        sendTelemetry(telemetryPayload).catch(() => {});
       } else {
         const consented = await promptTelemetryConsent(telemetryPayload, 15000);
         if (consented) {
-          await sendTelemetry(telemetryPayload).catch(() => { });
+          await sendTelemetry(telemetryPayload).catch(() => {});
         }
       }
     }
 
     // Exit with 1 if there are any CRITICAL or HIGH findings, else 0
-    return (criticalCount > 0 || highCount > 0) ? 1 : 0;
+    return criticalCount > 0 || highCount > 0 ? 1 : 0;
   } catch (error) {
     if (spinner) spinner.stop();
     console.error(chalk.red('\n✖ Audit execution failed:'), error.message);

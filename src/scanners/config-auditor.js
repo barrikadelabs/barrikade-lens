@@ -1,13 +1,18 @@
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { getScanPaths, getAgentStateDirs, getAgentRuleFiles, getModelDirs } from '../utils/paths.js';
+import {
+  getScanPaths,
+  getAgentStateDirs,
+  getAgentRuleFiles,
+  getModelDirs,
+} from '../utils/paths.js';
 
 /**
  * Parses simple TOML content line by line (used for Codex CLI config.toml).
  * Extracts mcp_servers blocks.
- * 
- * @param {string} tomlContent 
+ *
+ * @param {string} tomlContent
  * @returns {any}
  */
 function parseToml(tomlContent) {
@@ -18,7 +23,8 @@ function parseToml(tomlContent) {
 
     for (const line of lines) {
       const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith(';')) continue;
+      if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith(';'))
+        continue;
 
       const headerMatch = trimmed.match(/^\[mcp_servers\.([^\]]+)\]/);
       if (headerMatch) {
@@ -39,14 +45,17 @@ function parseToml(tomlContent) {
           const val = trimmed.slice(eqIdx + 1).trim();
 
           if (key === 'command') {
-            data.mcpServers[currentServer].command = val.replace(/^['"]|['"]$/g, '');
+            data.mcpServers[currentServer].command = val.replace(
+              /^['"]|['"]$/g,
+              '',
+            );
           } else if (key === 'args') {
             if (val.startsWith('[') && val.endsWith(']')) {
               data.mcpServers[currentServer].args = val
                 .slice(1, -1)
                 .split(',')
-                .map(s => s.trim().replace(/^['"]|['"]$/g, ''))
-                .filter(s => s !== '');
+                .map((s) => s.trim().replace(/^['"]|['"]$/g, ''))
+                .filter((s) => s !== '');
             }
           } else if (key === 'env') {
             if (val.startsWith('{') && val.endsWith('}')) {
@@ -56,7 +65,10 @@ function parseToml(tomlContent) {
                 const eq = pair.indexOf('=');
                 if (eq !== -1) {
                   const k = pair.slice(0, eq).trim();
-                  const v = pair.slice(eq + 1).trim().replace(/^['"]|['"]$/g, '');
+                  const v = pair
+                    .slice(eq + 1)
+                    .trim()
+                    .replace(/^['"]|['"]$/g, '');
                   data.mcpServers[currentServer].env[k] = v;
                 }
               }
@@ -74,8 +86,8 @@ function parseToml(tomlContent) {
 /**
  * Parses simple YAML content line by line (used for Goose, Aider, and Continue).
  * Extracts mcpServers or extensions blocks.
- * 
- * @param {string} yamlContent 
+ *
+ * @param {string} yamlContent
  * @returns {any}
  */
 function parseYaml(yamlContent) {
@@ -93,7 +105,13 @@ function parseYaml(yamlContent) {
 
       const indent = line.length - line.trimStart().length;
 
-      if (inMcp && indent <= mcpIndent && trimmed && !trimmed.startsWith('-') && !trimmed.includes(':')) {
+      if (
+        inMcp &&
+        indent <= mcpIndent &&
+        trimmed &&
+        !trimmed.startsWith('-') &&
+        !trimmed.includes(':')
+      ) {
         inMcp = false;
         currentServer = null;
       }
@@ -102,7 +120,12 @@ function parseYaml(yamlContent) {
         const colonIdx = trimmed.indexOf(':');
         if (colonIdx !== -1) {
           const key = trimmed.slice(0, colonIdx).trim();
-          if (key === 'mcpServers' || key === 'mcp_servers' || key === 'servers' || key === 'extensions') {
+          if (
+            key === 'mcpServers' ||
+            key === 'mcp_servers' ||
+            key === 'servers' ||
+            key === 'extensions'
+          ) {
             inMcp = true;
             mcpIndent = indent;
           }
@@ -126,7 +149,10 @@ function parseYaml(yamlContent) {
         const srv = data.mcpServers[currentServer];
 
         if (trimmed.startsWith('-')) {
-          const val = trimmed.slice(1).trim().replace(/^['"]|['"]$/g, '');
+          const val = trimmed
+            .slice(1)
+            .trim()
+            .replace(/^['"]|['"]$/g, '');
           if (val) {
             srv.args.push(val);
           }
@@ -136,7 +162,10 @@ function parseYaml(yamlContent) {
         const colonIdx = trimmed.indexOf(':');
         if (colonIdx !== -1) {
           const key = trimmed.slice(0, colonIdx).trim();
-          const val = trimmed.slice(colonIdx + 1).trim().replace(/^['"]|['"]$/g, '');
+          const val = trimmed
+            .slice(colonIdx + 1)
+            .trim()
+            .replace(/^['"]|['"]$/g, '');
 
           if (key === 'command' || key === 'cmd') {
             srv.command = val;
@@ -145,12 +174,16 @@ function parseYaml(yamlContent) {
               srv.args = val
                 .slice(1, -1)
                 .split(',')
-                .map(s => s.trim().replace(/^['"]|['"]$/g, ''))
-                .filter(s => s);
+                .map((s) => s.trim().replace(/^['"]|['"]$/g, ''))
+                .filter((s) => s);
             }
           } else if (key === 'enabled' && val === 'false') {
             srv.disabled = true;
-          } else if (key === 'url' || key === 'serverUrl' || key === 'server_url') {
+          } else if (
+            key === 'url' ||
+            key === 'serverUrl' ||
+            key === 'server_url'
+          ) {
             srv.url = val;
           } else if (indent > serverIndent) {
             // Check for env properties
@@ -179,7 +212,10 @@ async function discoverJetBrainsPaths() {
   if (platform === 'darwin') {
     jbBase = path.join(home, 'Library', 'Application Support', 'JetBrains');
   } else if (platform === 'win32') {
-    jbBase = path.join(process.env.APPDATA || path.join(home, 'AppData', 'Roaming'), 'JetBrains');
+    jbBase = path.join(
+      process.env.APPDATA || path.join(home, 'AppData', 'Roaming'),
+      'JetBrains',
+    );
   } else {
     jbBase = path.join(home, '.config', 'JetBrains');
   }
@@ -190,7 +226,12 @@ async function discoverJetBrainsPaths() {
     const entries = await fs.readdir(jbBase, { withFileTypes: true });
     for (const entry of entries) {
       if (entry.isDirectory()) {
-        const xmlPath = path.join(jbBase, entry.name, 'options', 'llm.mcpServers.xml');
+        const xmlPath = path.join(
+          jbBase,
+          entry.name,
+          'options',
+          'llm.mcpServers.xml',
+        );
         try {
           const stats = await fs.stat(xmlPath);
           if (stats.isFile()) {
@@ -198,7 +239,7 @@ async function discoverJetBrainsPaths() {
               tool: `JetBrains (${entry.name})`,
               path: xmlPath,
               scope: 'global',
-              type: 'jetbrains'
+              type: 'jetbrains',
             });
           }
         } catch {
@@ -214,8 +255,8 @@ async function discoverJetBrainsPaths() {
 
 /**
  * Dynamically checks for server configurations inside .continue/mcpServers/ directory.
- * 
- * @param {string} cwd 
+ *
+ * @param {string} cwd
  * @returns {Promise<import('../utils/paths.js').ScanTarget[]>}
  */
 async function discoverContinueMcpServers(cwd = process.cwd()) {
@@ -223,26 +264,36 @@ async function discoverContinueMcpServers(cwd = process.cwd()) {
   /** @type {Array<{ dir: string, scope: 'global' | 'project' }>} */
   const dirsToCheck = [
     { dir: path.join(home, '.continue', 'mcpServers'), scope: 'global' },
-    { dir: path.join(cwd, '.continue', 'mcpServers'), scope: 'project' }
+    { dir: path.join(cwd, '.continue', 'mcpServers'), scope: 'project' },
   ];
-  
+
   /** @type {import('../utils/paths.js').ScanTarget[]} */
   const foundConfigs = [];
-  
+
   for (const { dir, scope } of dirsToCheck) {
     try {
       const entries = await fs.readdir(dir, { withFileTypes: true });
       for (const entry of entries) {
         if (entry.isFile()) {
           const ext = path.extname(entry.name).toLowerCase();
-          if (ext === '.json' || ext === '.yaml' || ext === '.yml' || ext === '.jsonc') {
+          if (
+            ext === '.json' ||
+            ext === '.yaml' ||
+            ext === '.yml' ||
+            ext === '.jsonc'
+          ) {
             const fullPath = path.join(dir, entry.name);
-            const parserType = (ext === '.yaml' || ext === '.yml') ? 'yaml' : (ext === '.jsonc' ? 'jsonc' : 'mcpServers');
+            const parserType =
+              ext === '.yaml' || ext === '.yml'
+                ? 'yaml'
+                : ext === '.jsonc'
+                  ? 'jsonc'
+                  : 'mcpServers';
             foundConfigs.push({
               tool: `Continue MCP Server Config (${entry.name})`,
               path: fullPath,
               scope,
-              type: parserType
+              type: parserType,
             });
           }
         }
@@ -251,13 +302,13 @@ async function discoverContinueMcpServers(cwd = process.cwd()) {
       // Directory doesn't exist, skip
     }
   }
-  
+
   return foundConfigs;
 }
 
 /**
  * Audits all configuration files on the workstation.
- * 
+ *
  * @param {string} [cwd=process.cwd()]
  */
 export async function auditConfigs(cwd = process.cwd()) {
@@ -277,7 +328,7 @@ export async function auditConfigs(cwd = process.cwd()) {
       exists: false,
       malformed: false,
       rawContent: '',
-      servers: []
+      servers: [],
     };
 
     try {
@@ -286,28 +337,33 @@ export async function auditConfigs(cwd = process.cwd()) {
       result.rawContent = content;
 
       if (scanConfig.type === 'jetbrains') {
-        const braveModeMatches = content.includes('braveMode" value="true"') || content.includes('name="braveMode" value="true"');
-        const mcpServerInfos = content.match(/<McpServerInfo>([\s\S]*?)<\/McpServerInfo>/g) || [];
-        
+        const braveModeMatches =
+          content.includes('braveMode" value="true"') ||
+          content.includes('name="braveMode" value="true"');
+        const mcpServerInfos =
+          content.match(/<McpServerInfo>([\s\S]*?)<\/McpServerInfo>/g) || [];
+
         const servers = [];
         for (const info of mcpServerInfos) {
           const nameMatch = info.match(/name="name" value="([^"]+)"/);
           const commandMatch = info.match(/name="command" value="([^"]+)"/);
           const braveModeMatch = info.match(/name="braveMode" value="([^"]+)"/);
-          
+
           servers.push({
             name: nameMatch ? nameMatch[1] : 'JetBrains MCP Server',
             type: 'jetbrains',
             command: commandMatch ? commandMatch[1] : undefined,
-            braveMode: braveModeMatch ? braveModeMatch[1] === 'true' : braveModeMatches
+            braveMode: braveModeMatch
+              ? braveModeMatch[1] === 'true'
+              : braveModeMatches,
           });
         }
-        
+
         if (servers.length === 0 && content.includes('braveMode')) {
           servers.push({
             name: 'JetBrains Global Config',
             type: 'jetbrains',
-            braveMode: braveModeMatches
+            braveMode: braveModeMatches,
           });
         }
 
@@ -334,7 +390,7 @@ export async function auditConfigs(cwd = process.cwd()) {
         }
 
         let mcpConfig = null;
-        
+
         if (scanConfig.type === 'toml' || scanConfig.type === 'yaml') {
           mcpConfig = json.mcpServers;
         } else if (scanConfig.type === 'mcpServers') {
@@ -343,14 +399,24 @@ export async function auditConfigs(cwd = process.cwd()) {
           mcpConfig = json.servers || json.mcpServers;
         } else if (scanConfig.type === 'vscodeSettings') {
           // VS Code settings can have mcp config in custom properties
-          mcpConfig = json['mcp.servers'] || json['mcpServers'] || json['augment.advanced.mcpServers'] || (json['augment.advanced'] && json['augment.advanced'].mcpServers);
+          mcpConfig =
+            json['mcp.servers'] ||
+            json['mcpServers'] ||
+            json['augment.advanced.mcpServers'] ||
+            (json['augment.advanced'] && json['augment.advanced'].mcpServers);
         } else if (scanConfig.type === 'continue') {
           mcpConfig = json.mcpServers;
         } else if (scanConfig.type === 'zed') {
           mcpConfig = json.context_servers || json.mcp;
-        } else if (scanConfig.type === 'antigravity' || scanConfig.type === 'antigravityCli') {
+        } else if (
+          scanConfig.type === 'antigravity' ||
+          scanConfig.type === 'antigravityCli'
+        ) {
           mcpConfig = json.mcp_servers || json.mcpServers || json.servers;
-        } else if (scanConfig.type === 'opencode' || scanConfig.type === 'jsonc') {
+        } else if (
+          scanConfig.type === 'opencode' ||
+          scanConfig.type === 'jsonc'
+        ) {
           mcpConfig = json.mcpServers || json.mcp_servers || json.servers;
         } else if (scanConfig.type === 'openclaw') {
           mcpConfig = json.mcpServers || json.mcp_servers || json.servers;
@@ -374,7 +440,7 @@ export async function auditConfigs(cwd = process.cwd()) {
                 args: srv.args || [],
                 envVars: envKeys,
                 url: srv.url || srv.serverUrl,
-                disabled: srv.disabled === true || srv.enabled === false
+                disabled: srv.disabled === true || srv.enabled === false,
               });
             });
           } else if (typeof mcpConfig === 'object') {
@@ -383,7 +449,7 @@ export async function auditConfigs(cwd = process.cwd()) {
                 const envKeys = srv.env ? Object.keys(srv.env) : [];
                 const sseUrl = srv.url || srv.serverUrl || srv.server_url;
                 const type = sseUrl ? 'sse' : 'stdio';
-                
+
                 result.servers.push({
                   name,
                   type,
@@ -392,13 +458,15 @@ export async function auditConfigs(cwd = process.cwd()) {
                   envVars: envKeys,
                   url: sseUrl,
                   disabled: srv.disabled === true || srv.enabled === false,
-                  autoApprove: Array.isArray(srv.autoApprove) ? srv.autoApprove : undefined
+                  autoApprove: Array.isArray(srv.autoApprove)
+                    ? srv.autoApprove
+                    : undefined,
                 });
               } else if (typeof srv === 'string') {
                 result.servers.push({
                   name,
                   type: 'sse',
-                  url: srv
+                  url: srv,
                 });
               }
             }
@@ -417,7 +485,7 @@ export async function auditConfigs(cwd = process.cwd()) {
 
 /**
  * Checks for the existence of agent state directories, rule files, and model directories.
- * 
+ *
  * @param {string} [cwd=process.cwd()]
  * @returns {Promise<{
  *   detectedStateDirs: string[],
@@ -439,7 +507,9 @@ export async function auditWorkspaceArtifacts(cwd = process.cwd()) {
     try {
       const stat = await fs.stat(dir.path);
       if (stat.isDirectory()) {
-        detectedStateDirs.push(`${dir.name} directory (${dir.scope === 'global' ? 'Global' : 'Project'})`);
+        detectedStateDirs.push(
+          `${dir.name} directory (${dir.scope === 'global' ? 'Global' : 'Project'})`,
+        );
       }
     } catch {
       // Doesn't exist
@@ -475,7 +545,7 @@ export async function auditWorkspaceArtifacts(cwd = process.cwd()) {
   return {
     detectedStateDirs,
     detectedRuleFiles,
-    detectedModelDirs
+    detectedModelDirs,
   };
 }
 
@@ -491,13 +561,13 @@ const AGENT_FRAMEWORKS = [
   'haystack',
   'llama-index',
   'mastra',
-  'voltagent'
+  'voltagent',
 ];
 
 /**
  * Inspects project files for agent framework dependencies (Tier 2).
- * 
- * @param {string} [cwd=process.cwd()] 
+ *
+ * @param {string} [cwd=process.cwd()]
  * @returns {Promise<string[]>} List of discovered agent frameworks
  */
 export async function auditDependencies(cwd = process.cwd()) {
@@ -505,10 +575,16 @@ export async function auditDependencies(cwd = process.cwd()) {
 
   // 1. Check package.json (JS/TS)
   try {
-    const pkgContent = await fs.readFile(path.join(cwd, 'package.json'), 'utf8');
+    const pkgContent = await fs.readFile(
+      path.join(cwd, 'package.json'),
+      'utf8',
+    );
     const pkg = JSON.parse(pkgContent);
-    const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) };
-    
+    const deps = {
+      ...(pkg.dependencies || {}),
+      ...(pkg.devDependencies || {}),
+    };
+
     for (const name of Object.keys(deps)) {
       const normalized = name.toLowerCase();
       for (const fw of AGENT_FRAMEWORKS) {

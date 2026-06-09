@@ -4,7 +4,7 @@ import { scanStringForSecrets } from '../utils/patterns.js';
 
 /**
  * Scans workspace .env files for hardcoded API keys and secrets.
- * 
+ *
  * @param {string} [cwd=process.cwd()] Working directory to scan
  * @returns {Promise<Array<{
  *   filePath: string,
@@ -18,10 +18,12 @@ import { scanStringForSecrets } from '../utils/patterns.js';
  */
 export async function scanEnvFiles(cwd = process.cwd()) {
   const findings = [];
-  
+
   try {
     const files = await fs.readdir(cwd);
-    const envFiles = files.filter(f => f === '.env' || (f.startsWith('.env.') && !f.endsWith('.example')));
+    const envFiles = files.filter(
+      (f) => f === '.env' || (f.startsWith('.env.') && !f.endsWith('.example')),
+    );
 
     for (const fileName of envFiles) {
       const filePath = path.join(cwd, fileName);
@@ -35,7 +37,7 @@ export async function scanEnvFiles(cwd = process.cwd()) {
         lines.forEach((lineText, lineIdx) => {
           const lineNum = lineIdx + 1;
           const trimmed = lineText.trim();
-          
+
           // Skip comments and empty lines
           if (trimmed.startsWith('#') || trimmed === '') return;
 
@@ -44,7 +46,10 @@ export async function scanEnvFiles(cwd = process.cwd()) {
           if (eqIdx === -1) return;
 
           const key = trimmed.substring(0, eqIdx).trim();
-          const val = trimmed.substring(eqIdx + 1).trim().replace(/^['"]|['"]$/g, ''); // strip quotes
+          const val = trimmed
+            .substring(eqIdx + 1)
+            .trim()
+            .replace(/^['"]|['"]$/g, ''); // strip quotes
 
           // Search value for credentials
           const secretsFound = scanStringForSecrets(val);
@@ -56,7 +61,7 @@ export async function scanEnvFiles(cwd = process.cwd()) {
               matched: s.matched,
               line: lineNum,
               risk: s.risk,
-              remediation: `Remove hardcoded credentials from ${fileName}. Read keys from system env variables instead.`
+              remediation: `Remove hardcoded credentials from ${fileName}. Read keys from system env variables instead.`,
             });
           }
         });
