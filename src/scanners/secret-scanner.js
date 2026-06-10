@@ -1,4 +1,8 @@
-import { SECRET_PATTERNS, redactSecret } from '../utils/patterns.js';
+import {
+  SECRET_PATTERNS,
+  redactSecret,
+  resolveRisk,
+} from '../utils/patterns.js';
 
 /**
  * Scans audited configurations for plaintext secrets, credentials, and risky configurations.
@@ -40,13 +44,15 @@ export function scanConfigsForSecrets(auditedConfigs) {
         let match;
         while ((match = pattern.regex.exec(lineText)) !== null) {
           const rawMatch = match[0];
+          const risk = resolveRisk(pattern, rawMatch);
+          if (risk === null) continue;
           findings.push({
             filePath: config.filePath,
             tool: config.tool,
             type: pattern.name,
             matched: redactSecret(rawMatch),
             line: lineNum,
-            risk: pattern.risk,
+            risk,
             remediation: pattern.remediation,
           });
         }
