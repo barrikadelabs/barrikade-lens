@@ -19,7 +19,7 @@ const AGENT_COMMANDS = [
   { term: 'goose', label: 'Goose CLI invocation' },
   { term: 'kiro', label: 'Kiro CLI/IDE invocation' },
   { term: 'amazonq', label: 'Amazon Q Developer CLI' },
-  { term: 'npx barrikade-audit', label: 'Barrikade security scan' },
+  { term: 'npx barrikade-lens', label: 'Barrikade security scan' },
 ];
 
 /**
