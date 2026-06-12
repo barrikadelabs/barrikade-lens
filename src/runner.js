@@ -216,7 +216,6 @@ export async function runAudit(options = {}) {
         version,
       );
       if (options.json) {
-        sendTelemetry(telemetryPayload).catch(() => {});
       } else {
         const consented = await promptTelemetryConsent(telemetryPayload, 15000);
         if (consented) {
