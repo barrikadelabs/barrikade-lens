@@ -31,8 +31,10 @@ var (
 		"poetry.lock": true, "uv.lock": true, "pipfile": true, "gemfile": true, "package-lock.json": true,
 		"pnpm-lock.yaml": true, "yarn.lock": true, "go.sum": true, "cargo.toml": true, "cargo.lock": true,
 	}
-	sourceExtensions = map[string]bool{".go": true, ".py": true, ".ts": true, ".tsx": true, ".js": true, ".jsx": true}
-	agentFilePattern = regexp.MustCompile(`(?i)(^|[._-])(agents?|crew|workflow)([._-]|$)`)
+	sourceExtensions        = map[string]bool{".go": true, ".py": true, ".ts": true, ".tsx": true, ".js": true, ".jsx": true}
+	agentFilePattern        = regexp.MustCompile(`(?i)(^|[._-])(agents?|crew|workflow)([._-]|$)`)
+	kubernetesKindPattern   = regexp.MustCompile(`(?mi)^\s*kind:\s*([a-z][a-z0-9]*)\s*(?:#.*)?$`)
+	kubernetesWorkloadKinds = map[string]bool{"deployment": true, "statefulset": true, "daemonset": true, "job": true, "cronjob": true, "pod": true}
 )
 
 type Options struct {
@@ -99,7 +101,7 @@ func Scan(ctx context.Context, options Options) (discovery.Snapshot, error) {
 	}
 	repositoryID := b.AddEntity(discovery.KindRepository, canonical, filepath.Base(root), attributes, repoEvidence)
 
-	state := scanState{options: options, builder: b, repositoryID: repositoryID, frameworks: map[string]string{}, agentID: ""}
+	state := scanState{options: options, builder: b, repositoryID: repositoryID, repositoryCanonical: canonical, frameworks: map[string]string{}, agentID: ""}
 	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			b.Snapshot.Coverage.LocationsDenied++
@@ -137,12 +139,13 @@ func Scan(ctx context.Context, options Options) (discovery.Snapshot, error) {
 }
 
 type scanState struct {
-	options      Options
-	builder      *builder.Builder
-	repositoryID string
-	frameworks   map[string]string
-	agentID      string
-	files        int
+	options             Options
+	builder             *builder.Builder
+	repositoryID        string
+	repositoryCanonical string
+	frameworks          map[string]string
+	agentID             string
+	files               int
 }
 
 func (s *scanState) inspect(path string) {
@@ -162,7 +165,9 @@ func (s *scanState) inspect(path string) {
 		isAgent = false
 	}
 	normalizedPath := strings.ToLower(filepath.ToSlash(path))
-	isDeployment := base == "dockerfile" || strings.HasPrefix(base, "docker-compose") || base == ".gitlab-ci.yml" || base == "bitbucket-pipelines.yml" || base == "azure-pipelines.yml" || base == "jenkinsfile" || strings.Contains(normalizedPath, "/.github/workflows/") || strings.Contains(normalizedPath, "/.circleci/") || strings.Contains(normalizedPath, "/.buildkite/") || strings.Contains(normalizedPath, "/k8s/") || strings.Contains(normalizedPath, "/kubernetes/") || strings.Contains(normalizedPath, "/helm/") || strings.Contains(normalizedPath, "/terraform/") || strings.Contains(normalizedPath, "/pulumi/") || strings.Contains(normalizedPath, "/cloudformation/")
+	isDeclarative := extension == ".yaml" || extension == ".yml" || extension == ".json" || extension == ".toml" || extension == ".tf" || extension == ".hcl"
+	isDeploymentPath := strings.Contains(normalizedPath, "/k8s/") || strings.Contains(normalizedPath, "/kubernetes/") || strings.Contains(normalizedPath, "/helm/") || strings.Contains(normalizedPath, "/terraform/") || strings.Contains(normalizedPath, "/pulumi/") || strings.Contains(normalizedPath, "/cloudformation/")
+	isDeployment := base == "dockerfile" || strings.HasPrefix(base, "docker-compose") || base == ".gitlab-ci.yml" || base == "bitbucket-pipelines.yml" || base == "azure-pipelines.yml" || base == "jenkinsfile" || strings.Contains(normalizedPath, "/.github/workflows/") || strings.Contains(normalizedPath, "/.circleci/") || strings.Contains(normalizedPath, "/.buildkite/") || isDeclarative && isDeploymentPath
 	isOwners := base == "codeowners"
 	if !isManifest && !isSource && !isMCP && !isOpenAPI && !isArazzo && !isA2A && !isAgent && !isDeployment && !isOwners {
 		return
@@ -187,7 +192,7 @@ func (s *scanState) inspect(path string) {
 		Specificity: specificity(isSource), Locator: locator, ContentHash: discovery.ContentHash(data),
 	})
 	if isManifest || isSource {
-		s.detectFrameworks(locator, string(data), ref)
+		s.detectFrameworks(locator, string(data), ref, isManifest, isSource)
 	}
 	if isMCP {
 		s.detectMCP(locator, data, ref)
@@ -224,19 +229,22 @@ func (s *scanState) agent(ref string) string {
 	return s.agentID
 }
 
-func (s *scanState) detectFrameworks(locator, content, ref string) {
+func (s *scanState) detectFrameworks(locator, content, ref string, isManifest, isSource bool) {
 	lower := strings.ToLower(content)
 	for _, signature := range s.options.Pack.Frameworks {
 		matched := ""
-		for _, packageName := range signature.Packages {
-			if packageMatch(lower, strings.ToLower(packageName)) {
-				matched = packageName
-				break
+		if isManifest {
+			for _, packageName := range signature.Packages {
+				if packageMatch(lower, strings.ToLower(packageName)) {
+					matched = packageName
+					break
+				}
 			}
 		}
-		if matched == "" {
-			for _, importName := range signature.Imports {
-				if importMatch(lower, strings.ToLower(importName)) {
+		if matched == "" && isSource {
+			candidates := append(append([]string{}, signature.Imports...), signature.Packages...)
+			for _, importName := range candidates {
+				if importMatch(lower, strings.ToLower(importName), strings.ToLower(filepath.Ext(locator))) {
 					matched = importName
 					break
 				}
@@ -288,7 +296,7 @@ func (s *scanState) detectMCP(locator string, data []byte, ref string) {
 			canonical = "repository:" + s.options.SourceID + ":mcp-url:" + sanitized
 		}
 		id := s.builder.AddEntity(discovery.KindMCPServer, canonical, name, attributes, ref)
-		s.builder.AddRelationship(discovery.RelationshipConnectsTo, s.agent(ref), id, nil, ref)
+		s.builder.AddRelationship(discovery.RelationshipConfiguredBy, id, s.repositoryID, nil, ref)
 	}
 }
 
@@ -334,7 +342,7 @@ func (s *scanState) detectOpenAPI(locator string, data []byte, ref string) {
 		attributes["servers"] = servers
 	}
 	apiID := s.builder.AddEntity(discovery.KindAPIService, canonical, name, attributes, ref)
-	s.builder.AddRelationship(discovery.RelationshipExposes, s.agent(ref), apiID, nil, ref)
+	s.builder.AddRelationship(discovery.RelationshipDefinedIn, apiID, s.repositoryID, nil, ref)
 	paths, _ := document["paths"].(map[string]any)
 	for path, rawPath := range paths {
 		operations, _ := rawPath.(map[string]any)
@@ -367,7 +375,7 @@ func (s *scanState) detectArazzo(locator string, data []byte, ref string) {
 			name = fmt.Sprintf("workflow-%d", index+1)
 		}
 		id := s.builder.AddEntity(discovery.KindWorkflow, "repository:"+s.options.SourceID+":workflow:"+locator+":"+name, name, map[string]any{"document": locator, "arazzo_version": version}, ref)
-		s.builder.AddRelationship(discovery.RelationshipProvides, s.agent(ref), id, nil, ref)
+		s.builder.AddRelationship(discovery.RelationshipDefinedIn, id, s.repositoryID, nil, ref)
 	}
 }
 
@@ -404,16 +412,55 @@ func (s *scanState) detectA2A(locator string, data []byte, ref string) {
 }
 
 func (s *scanState) detectDeployment(locator, base string, data []byte, ref string) {
-	typeName := "infrastructure"
+	normalized := strings.ToLower(filepath.ToSlash(locator))
+	if base == ".gitlab-ci.yml" || base == "bitbucket-pipelines.yml" || base == "azure-pipelines.yml" || base == "jenkinsfile" || strings.HasPrefix(normalized, ".github/workflows/") || strings.Contains(normalized, "/.github/workflows/") || strings.HasPrefix(normalized, ".circleci/") || strings.Contains(normalized, "/.circleci/") || strings.HasPrefix(normalized, ".buildkite/") || strings.Contains(normalized, "/.buildkite/") {
+		name := strings.TrimSuffix(filepath.Base(locator), filepath.Ext(locator))
+		if document, err := structuredDocument(data); err == nil {
+			if declared := firstString(document, "name"); declared != "" && len(declared) <= 200 {
+				name = declared
+			}
+		}
+		id := s.builder.AddEntity(discovery.KindWorkflow, "repository:"+s.options.SourceID+":ci:"+locator, name, map[string]any{"declared": true, "workflow_type": "ci", "locator": locator}, ref)
+		s.builder.AddRelationship(discovery.RelationshipDefinedIn, id, s.repositoryID, nil, ref)
+		return
+	}
+	if strings.HasPrefix(base, "docker-compose") {
+		document, err := structuredDocument(data)
+		if err == nil {
+			if services, ok := document["services"].(map[string]any); ok {
+				for name := range services {
+					if strings.TrimSpace(name) == "" || len(name) > 200 {
+						continue
+					}
+					id := s.builder.AddEntity(discovery.KindWorkload, "repository:"+s.options.SourceID+":compose:"+locator+":"+name, name, map[string]any{"deployment_reference": true, "type": "compose_service", "locator": locator}, ref)
+					s.builder.AddRelationship(discovery.RelationshipDefinedIn, id, s.repositoryID, nil, ref)
+				}
+			}
+		}
+		s.markRepositoryDeployment(ref, "compose_present")
+		return
+	}
 	if base == "dockerfile" {
-		typeName = "container_image_build"
+		s.markRepositoryDeployment(ref, "container_build_present")
+		return
 	}
-	if strings.Contains(locator, ".github/workflows/") {
-		typeName = "ci_workflow"
+
+	workloadIndex := 0
+	for _, match := range kubernetesKindPattern.FindAllSubmatch(data, -1) {
+		kind := strings.ToLower(string(match[1]))
+		if !kubernetesWorkloadKinds[kind] {
+			continue
+		}
+		workloadIndex++
+		name := strings.ToUpper(kind[:1]) + kind[1:] + " at " + filepath.Base(locator)
+		id := s.builder.AddEntity(discovery.KindWorkload, fmt.Sprintf("repository:%s:deployment:%s:%s:%d", s.options.SourceID, locator, kind, workloadIndex), name, map[string]any{"deployment_reference": true, "type": "kubernetes_" + kind, "locator": locator}, ref)
+		s.builder.AddRelationship(discovery.RelationshipDefinedIn, id, s.repositoryID, nil, ref)
 	}
-	name := filepath.Base(locator)
-	id := s.builder.AddEntity(discovery.KindWorkload, "repository:"+s.options.SourceID+":deployment:"+locator, name, map[string]any{"deployment_reference": true, "type": typeName, "locator": locator}, ref)
-	s.builder.AddRelationship(discovery.RelationshipDeployedAs, s.agent(ref), id, nil, ref)
+	s.markRepositoryDeployment(ref, "deployment_configuration_present")
+}
+
+func (s *scanState) markRepositoryDeployment(ref, attribute string) {
+	s.builder.AddEntity(discovery.KindRepository, s.repositoryCanonical, filepath.Base(s.options.Root), map[string]any{attribute: true}, ref)
 }
 
 func (s *scanState) detectOwners(data []byte, ref string) {
@@ -489,8 +536,80 @@ func packageMatch(content, name string) bool {
 	return strings.Contains(content, "\n"+name+"==") || strings.Contains(content, "\n"+name+">=") || strings.HasPrefix(content, name+"==")
 }
 
-func importMatch(content, name string) bool {
-	return strings.Contains(content, "import "+name) || strings.Contains(content, "from "+name) || strings.Contains(content, "require(\""+name) || strings.Contains(content, "from \""+name)
+func importMatch(content, name, extension string) bool {
+	for _, rawLine := range strings.Split(content, "\n") {
+		line := strings.TrimSpace(rawLine)
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "//") || strings.HasPrefix(line, "*") {
+			continue
+		}
+		switch extension {
+		case ".py":
+			if pythonImportLine(line, "import ", name) || pythonImportLine(line, "from ", name) {
+				return true
+			}
+		case ".js", ".jsx", ".ts", ".tsx":
+			if (strings.HasPrefix(line, "import ") || strings.HasPrefix(line, "export ")) && containsModuleLiteral(line, name) {
+				return true
+			}
+			if tokenOutsideString(line, "require") && containsModuleLiteral(line, name) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func pythonImportLine(line, prefix, name string) bool {
+	if !strings.HasPrefix(line, prefix) {
+		return false
+	}
+	remainder := strings.TrimSpace(strings.TrimPrefix(line, prefix))
+	if !strings.HasPrefix(remainder, name) {
+		return false
+	}
+	if len(remainder) == len(name) {
+		return true
+	}
+	switch remainder[len(name)] {
+	case '.', ' ', '\t', ',', ';':
+		return true
+	}
+	return false
+}
+
+func containsModuleLiteral(line, name string) bool {
+	for _, quote := range []string{"\"", "'", "`"} {
+		if strings.Contains(line, quote+name+quote) || strings.Contains(line, quote+name+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+func tokenOutsideString(line, token string) bool {
+	inString := byte(0)
+	escaped := false
+	for index := 0; index+len(token) <= len(line); index++ {
+		current := line[index]
+		if inString != 0 {
+			if escaped {
+				escaped = false
+			} else if current == '\\' {
+				escaped = true
+			} else if current == inString {
+				inString = 0
+			}
+			continue
+		}
+		if current == '\'' || current == '"' || current == '`' {
+			inString = current
+			continue
+		}
+		if strings.HasPrefix(line[index:], token) {
+			return true
+		}
+	}
+	return false
 }
 
 func evidenceFamily(manifest, source, mcp, openapi, arazzo, a2a, agent, deployment bool) string {

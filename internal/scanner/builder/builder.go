@@ -136,6 +136,12 @@ func mergeAttributes(target, incoming map[string]any) {
 			incomingBool, incomingOK := value.(bool)
 			if currentOK && incomingOK {
 				target[key] = currentBool || incomingBool
+				continue
+			}
+			currentStrings, currentOK := current.([]string)
+			incomingStrings, incomingOK := value.([]string)
+			if currentOK && incomingOK {
+				target[key] = union(currentStrings, incomingStrings)
 			}
 			continue
 		}

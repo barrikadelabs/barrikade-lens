@@ -118,16 +118,6 @@ func newScanCommand(dependencies Dependencies, organizationID, packPath *string)
 			switch strings.ToLower(scope) {
 			case "endpoint":
 				snapshot, err = endpoint.Scan(command.Context(), endpoint.Options{OrganizationID: *organizationID, Pack: pack})
-				if err == nil {
-					if repositorySnapshot, repoErr := repositoryscanner.Scan(command.Context(), repositoryscanner.Options{OrganizationID: *organizationID, Root: root, Pack: pack}); repoErr == nil {
-						if mergeErr := discovery.MergeSnapshots(&snapshot, repositorySnapshot); mergeErr != nil {
-							return mergeErr
-						}
-					} else {
-						snapshot.Coverage.Partial = true
-						snapshot.Errors = append(snapshot.Errors, discovery.ScanError{DetectorID: "repository", Code: "project_scan_failed", Message: "The project path could not be fully inspected"})
-					}
-				}
 			case "repo", "repository":
 				snapshot, err = repositoryscanner.Scan(command.Context(), repositoryscanner.Options{OrganizationID: *organizationID, Root: root, Pack: pack})
 			default:

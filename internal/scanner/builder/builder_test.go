@@ -20,3 +20,14 @@ func TestConfidenceAggregation(t *testing.T) {
 		t.Fatalf("independent high-specificity evidence should confirm entity: %#v", b.Snapshot.Entities[0])
 	}
 }
+
+func TestEntityAttributeStringListsAreUnioned(t *testing.T) {
+	snapshot := discovery.NewSnapshot("org", "source", discovery.SourceEndpoint, discovery.Collector{ID: "test", Name: "test", Version: "1", Mode: "test"})
+	b := New(snapshot)
+	b.AddEntity(discovery.KindRuntime, "runtime", "Runtime", map[string]any{"installation_methods": []string{"ide_extension"}})
+	b.AddEntity(discovery.KindRuntime, "runtime", "Runtime", map[string]any{"installation_methods": []string{"executable_path", "ide_extension"}})
+	methods, ok := b.Snapshot.Entities[0].Attributes["installation_methods"].([]string)
+	if !ok || len(methods) != 2 || methods[0] != "executable_path" || methods[1] != "ide_extension" {
+		t.Fatalf("installation methods were not normalized: %#v", methods)
+	}
+}

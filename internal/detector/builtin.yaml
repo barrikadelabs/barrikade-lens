@@ -7,6 +7,7 @@ runtimes:
     processes: [claude]
     images: [claude-code, anthropic/claude]
     environment_keys: [CLAUDE_CODE_ENTRYPOINT]
+    install_paths: ["~/.vscode/extensions/anthropic.claude-code-*", "~/.cursor/extensions/anthropic.claude-code-*"]
     paths: ["~/.claude", "~/.config/claude"]
     configs:
       - {path: "~/.claude.json", format: json, scope: user}
@@ -20,6 +21,7 @@ runtimes:
     processes: [codex]
     images: [openai/codex, codex-cli]
     environment_keys: [CODEX_HOME]
+    install_paths: ["/Applications/ChatGPT.app/Contents/Resources/codex"]
     paths: ["~/.codex"]
     configs:
       - {path: "~/.codex/config.toml", format: toml, scope: user}
@@ -28,6 +30,7 @@ runtimes:
   - id: cursor
     name: Cursor
     processes: [Cursor, cursor]
+    install_paths: ["/Applications/Cursor.app"]
     paths: ["~/.cursor", "~/Library/Application Support/Cursor", "~/.config/Cursor", "%APPDATA%/Cursor/User"]
     configs:
       - {path: "~/.cursor/mcp.json", format: json, scope: user}
@@ -35,21 +38,24 @@ runtimes:
   - id: copilot
     name: GitHub Copilot
     processes: [copilot-language-server, github-copilot]
+    install_paths: ["~/.vscode/extensions/github.copilot-*", "~/.cursor/extensions/github.copilot-*"]
     paths: ["~/.config/github-copilot", "~/.copilot"]
   - id: vscode
     name: Visual Studio Code
     processes: [Code, code]
+    install_paths: ["/Applications/Visual Studio Code.app"]
     paths: ["~/Library/Application Support/Code/User", "~/.config/Code/User", "~/.vscode", "%APPDATA%/Code/User"]
     configs:
       - {path: "~/Library/Application Support/Code/User/mcp.json", format: json, scope: user}
       - {path: "~/.config/Code/User/mcp.json", format: json, scope: user}
       - {path: "%APPDATA%/Code/User/mcp.json", format: json, scope: user}
-      - {path: "~/Library/Application Support/Code/User/settings.json", format: json, scope: user}
-      - {path: "~/.config/Code/User/settings.json", format: json, scope: user}
-      - {path: "%APPDATA%/Code/User/settings.json", format: json, scope: user}
+      - {path: "~/Library/Application Support/Code/User/settings.json", format: jsonc, scope: user}
+      - {path: "~/.config/Code/User/settings.json", format: jsonc, scope: user}
+      - {path: "%APPDATA%/Code/User/settings.json", format: jsonc, scope: user}
   - id: gemini
     name: Gemini CLI and Antigravity
-    processes: [gemini, antigravity]
+    processes: [gemini, antigravity, "Antigravity IDE"]
+    install_paths: ["/Applications/Antigravity IDE.app", "/Applications/Antigravity.app"]
     paths: ["~/.gemini", "~/.antigravity"]
     configs:
       - {path: "~/.gemini/settings.json", format: json, scope: user}
@@ -57,6 +63,7 @@ runtimes:
   - id: windsurf
     name: Windsurf
     processes: [Windsurf, windsurf]
+    install_paths: ["/Applications/Windsurf.app"]
     paths: ["~/.codeium/windsurf", "~/Library/Application Support/Windsurf", "~/.config/Windsurf", "%APPDATA%/Windsurf/User"]
     configs:
       - {path: "~/.codeium/windsurf/mcp_config.json", format: json, scope: user}
@@ -68,6 +75,7 @@ runtimes:
   - id: cline
     name: Cline
     processes: [cline]
+    install_paths: ["~/.vscode/extensions/saoudrizwan.claude-dev-*", "~/.cursor/extensions/saoudrizwan.claude-dev-*"]
     paths: ["~/.cline"]
     configs:
       - {path: "~/.cline/mcp_settings.json", format: json, scope: user}
@@ -80,6 +88,7 @@ runtimes:
   - id: roo
     name: Roo Code
     processes: [roo]
+    install_paths: ["~/.vscode/extensions/rooveterinaryinc.roo-cline-*", "~/.cursor/extensions/rooveterinaryinc.roo-cline-*"]
     paths: ["~/.roo"]
     configs:
       - {path: "~/.roo/mcp.json", format: json, scope: user}
@@ -100,6 +109,7 @@ runtimes:
   - id: continue
     name: Continue
     processes: [continue]
+    install_paths: ["~/.vscode/extensions/continue.continue-*", "~/.cursor/extensions/continue.continue-*"]
     paths: ["~/.continue"]
     configs:
       - {path: "~/.continue/config.yaml", format: yaml, scope: user}
@@ -111,7 +121,7 @@ runtimes:
       - {path: "~/.config/opencode/opencode.json", format: json, scope: user}
   - id: openclaw
     name: OpenClaw
-    processes: [openclaw]
+    processes: [openclaw, openclaw-gateway]
     paths: ["~/.openclaw"]
     configs:
       - {path: "~/.openclaw/openclaw.json", format: json, scope: user}
@@ -143,12 +153,14 @@ runtimes:
   - id: zed
     name: Zed
     processes: [zed, Zed]
+    install_paths: ["/Applications/Zed.app"]
     paths: ["~/.config/zed", "~/Library/Application Support/Zed", "%APPDATA%/Zed"]
     configs:
       - {path: "~/.config/zed/settings.json", format: json, scope: user}
   - id: warp
     name: Warp
     processes: [Warp, warp]
+    install_paths: ["/Applications/Warp.app"]
     paths: ["~/.warp", "~/Library/Application Support/dev.warp.Warp-Stable"]
   - id: junie
     name: JetBrains Junie
@@ -167,6 +179,7 @@ runtimes:
     processes: [ollama]
     images: [ollama/ollama]
     environment_keys: [OLLAMA_HOST, OLLAMA_MODELS]
+    install_paths: ["/Applications/Ollama.app"]
     paths: ["~/.ollama"]
     model_servers: [{name: Ollama, port: 11434}]
   - id: lm-studio
@@ -174,11 +187,13 @@ runtimes:
     processes: [LM Studio, lms]
     images: [lmstudio, lm-studio]
     environment_keys: [LM_STUDIO_HOME]
+    install_paths: ["/Applications/LM Studio.app"]
     paths: ["~/.lmstudio", "~/.cache/lm-studio", "~/Library/Application Support/LM Studio", "%APPDATA%/LM Studio"]
     model_servers: [{name: LM Studio, port: 1234}]
   - id: jan
     name: Jan
     processes: [jan, Jan]
+    install_paths: ["/Applications/Jan.app"]
     paths: ["~/.jan", "~/Library/Application Support/Jan", "%APPDATA%/Jan"]
     model_servers: [{name: Jan, port: 1337}]
   - id: llama-cpp
@@ -199,10 +214,12 @@ runtimes:
   - id: anythingllm
     name: AnythingLLM
     processes: [anythingllm, AnythingLLM]
+    install_paths: ["/Applications/AnythingLLM.app"]
     paths: ["~/.anythingllm", "~/Library/Application Support/anythingllm-desktop", "%APPDATA%/anythingllm-desktop"]
   - id: trae
     name: Trae
     processes: [trae, Trae]
+    install_paths: ["/Applications/Trae.app"]
     paths: ["~/.trae", "~/Library/Application Support/Trae", "%APPDATA%/Trae"]
   - id: nodejs
     name: Node.js
@@ -249,10 +266,10 @@ model_caches:
     layout: directory
     paths: ["~/.cache/torch"]
 listeners:
-  - {id: localai-8080, name: LocalAI or llama.cpp, kind: model_server, port: 8080}
-  - {id: inference-8000, name: LocalAI, vLLM, or LiteLLM, kind: model_server, port: 8000}
-  - {id: textgen-7860, name: Text Generation WebUI, kind: model_server, port: 7860}
-  - {id: textgen-5000, name: Text Generation WebUI API, kind: model_server, port: 5000}
-  - {id: figma-mcp-3845, name: Figma Desktop MCP, kind: mcp_server, port: 3845}
-  - {id: jetbrains-mcp-63334, name: JetBrains MCP, kind: mcp_server, port: 63334}
-  - {id: jetbrains-mcp-64342, name: JetBrains MCP, kind: mcp_server, port: 64342}
+  - {id: localai-8080, name: LocalAI or llama.cpp, kind: model_server, port: 8080, processes: [local-ai, localai, llama-server]}
+  - {id: inference-8000, name: LocalAI, vLLM, or LiteLLM, kind: model_server, port: 8000, processes: [local-ai, localai, vllm, litellm]}
+  - {id: textgen-7860, name: Text Generation WebUI, kind: model_server, port: 7860, processes: [text-generation-webui, text-generation-launcher]}
+  - {id: textgen-5000, name: Text Generation WebUI API, kind: model_server, port: 5000, processes: [text-generation-webui, text-generation-launcher]}
+  - {id: figma-mcp-3845, name: Figma Desktop MCP, kind: mcp_server, port: 3845, processes: [Figma, figma]}
+  - {id: jetbrains-mcp-63334, name: JetBrains MCP, kind: mcp_server, port: 63334, processes: [idea, goland, webstorm, pycharm]}
+  - {id: jetbrains-mcp-64342, name: JetBrains MCP, kind: mcp_server, port: 64342, processes: [idea, goland, webstorm, pycharm]}

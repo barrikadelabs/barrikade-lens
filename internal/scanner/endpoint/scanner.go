@@ -41,6 +41,7 @@ type Options struct {
 	ExecutableNames         map[string]bool
 	ListeningPorts          map[int]bool
 	ListeningBindings       map[int]string
+	ListeningProcesses      map[int]map[string]bool
 	DisableSystemInspection bool
 }
 
@@ -85,6 +86,9 @@ func Scan(ctx context.Context, options Options) (discovery.Snapshot, error) {
 		}
 		if options.ListeningBindings == nil {
 			options.ListeningBindings = listeningBindings(ctx, options.Platform)
+		}
+		if options.ListeningProcesses == nil {
+			options.ListeningProcesses = listeningProcessOwners(ctx, options.Platform)
 		}
 		if options.ListeningPorts == nil {
 			options.ListeningPorts = map[int]bool{}
@@ -147,6 +151,37 @@ func scanRuntime(b *builder.Builder, options Options, signature detector.Runtime
 		return runtimeID
 	}
 
+	for _, pattern := range signature.InstallPaths {
+		path := expandPath(pattern, options.HomeDir)
+		if path == "" {
+			continue
+		}
+		b.Snapshot.Coverage.LocationsChecked++
+		matches, err := installedPathMatches(path)
+		if err != nil {
+			if errors.Is(err, os.ErrPermission) {
+				b.Snapshot.Coverage.LocationsDenied++
+				b.Snapshot.Coverage.Partial = true
+			} else {
+				b.Error(signature.ID, "install_pattern_invalid", "A detector installation path pattern was invalid", false)
+			}
+			continue
+		}
+		for _, match := range matches {
+			method := "application"
+			installationMethod := "application_path"
+			if strings.Contains(strings.ToLower(filepath.ToSlash(match)), "/extensions/") {
+				method = "package"
+				installationMethod = "ide_extension"
+			}
+			ref := b.AddEvidence(builder.Observation{
+				DetectorID: signature.ID, DetectorVersion: options.Pack.Version, Method: method,
+				Family: "installation", Specificity: "high", Locator: discovery.SafeLocator(options.OrganizationID, "", match),
+			})
+			addRuntime(map[string]any{"installed": true, "installation_methods": []string{installationMethod}}, ref)
+		}
+	}
+
 	for _, pattern := range signature.Paths {
 		path := expandPath(pattern, options.HomeDir)
 		if path == "" {
@@ -156,9 +191,9 @@ func scanRuntime(b *builder.Builder, options Options, signature detector.Runtime
 		if _, err := os.Stat(path); err == nil {
 			ref := b.AddEvidence(builder.Observation{
 				DetectorID: signature.ID, DetectorVersion: options.Pack.Version, Method: "path",
-				Family: "installation", Specificity: "high", Locator: discovery.SafeLocator(options.OrganizationID, "", path),
+				Family: "runtime_state", Specificity: "low", Locator: discovery.SafeLocator(options.OrganizationID, "", path),
 			})
-			addRuntime(map[string]any{"installed": true}, ref)
+			addRuntime(map[string]any{"state_present": true}, ref)
 		} else if errors.Is(err, os.ErrPermission) {
 			b.Snapshot.Coverage.LocationsDenied++
 			b.Snapshot.Coverage.Partial = true
@@ -210,10 +245,11 @@ func scanRuntime(b *builder.Builder, options Options, signature detector.Runtime
 				DetectorID: signature.ID, DetectorVersion: options.Pack.Version, Method: "executable",
 				Family: "installation", Specificity: "high", Locator: discovery.HashLocator(options.OrganizationID, strings.ToLower(process)),
 			})
-			addRuntime(map[string]any{"installed": true, "installation_method": "executable_path"}, ref)
+			addRuntime(map[string]any{"installed": true, "installation_methods": []string{"executable_path"}}, ref)
 			break
 		}
 	}
+	processMatched := false
 	for _, process := range signature.Processes {
 		if options.ProcessNames[strings.ToLower(process)] {
 			ref := b.AddEvidence(builder.Observation{
@@ -221,11 +257,13 @@ func scanRuntime(b *builder.Builder, options Options, signature detector.Runtime
 				Family: "process", Specificity: "high", Locator: discovery.HashLocator(options.OrganizationID, strings.ToLower(process)),
 			})
 			addRuntime(map[string]any{"running_at_scan": true}, ref)
+			processMatched = true
 			break
 		}
 	}
 	for _, modelServer := range signature.ModelServers {
-		if !options.ListeningPorts[modelServer.Port] {
+		listenerMatched, ownershipVerified := matchingListenerProcess(options, modelServer.Port, signature.Processes)
+		if !options.ListeningPorts[modelServer.Port] || !listenerMatched || !processMatched && !ownershipVerified {
 			continue
 		}
 		ref := b.AddEvidence(builder.Observation{
@@ -236,6 +274,9 @@ func scanRuntime(b *builder.Builder, options Options, signature detector.Runtime
 		serverID := b.AddEntity(discovery.KindModelServer, fmt.Sprintf("endpoint:%s:model-server:%d", options.SourceID, modelServer.Port), modelServer.Name, map[string]any{
 			"running_at_scan": true, "transport": "http", "port": modelServer.Port,
 		}, ref)
+		if ownershipVerified {
+			b.AddEntity(discovery.KindModelServer, fmt.Sprintf("endpoint:%s:model-server:%d", options.SourceID, modelServer.Port), modelServer.Name, map[string]any{"listener_process_verified": true}, ref)
+		}
 		if binding := options.ListeningBindings[modelServer.Port]; binding != "" {
 			b.AddEntity(discovery.KindModelServer, fmt.Sprintf("endpoint:%s:model-server:%d", options.SourceID, modelServer.Port), modelServer.Name, map[string]any{"binding": binding}, ref)
 		}
@@ -245,7 +286,8 @@ func scanRuntime(b *builder.Builder, options Options, signature detector.Runtime
 }
 
 func scanKnownListener(b *builder.Builder, options Options, listener detector.Listener, endpointID string) {
-	if !options.ListeningPorts[listener.Port] {
+	processMatched, ownershipVerified := matchingListenerProcess(options, listener.Port, listener.Processes)
+	if !options.ListeningPorts[listener.Port] || !processMatched {
 		return
 	}
 	ref := b.AddEvidence(builder.Observation{
@@ -253,6 +295,9 @@ func scanKnownListener(b *builder.Builder, options Options, listener detector.Li
 		Family: "network_listener", Specificity: "high", Locator: fmt.Sprintf("tcp-listener:%d", listener.Port),
 	})
 	attributes := map[string]any{"running_at_scan": true, "transport": "tcp", "port": listener.Port}
+	if ownershipVerified {
+		attributes["listener_process_verified"] = true
+	}
 	if binding := options.ListeningBindings[listener.Port]; binding != "" {
 		attributes["binding"] = binding
 	}
@@ -479,7 +524,7 @@ func findMCPServers(document any) []mcpServer {
 						if env, ok := config["env"].(map[string]any); ok {
 							for envKey, envValue := range env {
 								server.EnvironmentKeys = append(server.EnvironmentKeys, envKey)
-								if fmt.Sprint(envValue) != "" {
+								if discovery.IsSensitiveKey(envKey) && fmt.Sprint(envValue) != "" {
 									server.CredentialPresent = true
 								}
 							}
@@ -536,6 +581,12 @@ func parseConfig(format string, data []byte) (any, error) {
 	switch strings.ToLower(format) {
 	case "json":
 		err = json.Unmarshal(data, &value)
+	case "jsonc":
+		var normalized []byte
+		normalized, err = normalizeJSONC(data)
+		if err == nil {
+			err = json.Unmarshal(normalized, &value)
+		}
 	case "yaml", "yml":
 		err = yaml.Unmarshal(data, &value)
 	case "toml":
@@ -544,6 +595,99 @@ func parseConfig(format string, data []byte) (any, error) {
 		return nil, fmt.Errorf("unsupported config format %q", format)
 	}
 	return value, err
+}
+
+func normalizeJSONC(data []byte) ([]byte, error) {
+	withoutComments := make([]byte, 0, len(data))
+	inString := false
+	escaped := false
+	for index := 0; index < len(data); index++ {
+		current := data[index]
+		if inString {
+			withoutComments = append(withoutComments, current)
+			if escaped {
+				escaped = false
+			} else if current == '\\' {
+				escaped = true
+			} else if current == '"' {
+				inString = false
+			}
+			continue
+		}
+		if current == '"' {
+			inString = true
+			withoutComments = append(withoutComments, current)
+			continue
+		}
+		if current == '/' && index+1 < len(data) && data[index+1] == '/' {
+			withoutComments = append(withoutComments, ' ', ' ')
+			index += 2
+			for ; index < len(data) && data[index] != '\n' && data[index] != '\r'; index++ {
+				withoutComments = append(withoutComments, ' ')
+			}
+			if index < len(data) {
+				withoutComments = append(withoutComments, data[index])
+			}
+			continue
+		}
+		if current == '/' && index+1 < len(data) && data[index+1] == '*' {
+			withoutComments = append(withoutComments, ' ', ' ')
+			index += 2
+			closed := false
+			for ; index < len(data); index++ {
+				if data[index] == '*' && index+1 < len(data) && data[index+1] == '/' {
+					withoutComments = append(withoutComments, ' ', ' ')
+					index++
+					closed = true
+					break
+				}
+				if data[index] == '\n' || data[index] == '\r' {
+					withoutComments = append(withoutComments, data[index])
+				} else {
+					withoutComments = append(withoutComments, ' ')
+				}
+			}
+			if !closed {
+				return nil, fmt.Errorf("unterminated JSONC block comment")
+			}
+			continue
+		}
+		withoutComments = append(withoutComments, current)
+	}
+
+	result := make([]byte, 0, len(withoutComments))
+	inString = false
+	escaped = false
+	for index, current := range withoutComments {
+		if inString {
+			result = append(result, current)
+			if escaped {
+				escaped = false
+			} else if current == '\\' {
+				escaped = true
+			} else if current == '"' {
+				inString = false
+			}
+			continue
+		}
+		if current == '"' {
+			inString = true
+			result = append(result, current)
+			continue
+		}
+		if current == ',' {
+			next := index + 1
+			for next < len(withoutComments) && (withoutComments[next] == ' ' || withoutComments[next] == '\t' || withoutComments[next] == '\n' || withoutComments[next] == '\r') {
+				next++
+			}
+			if next < len(withoutComments) && (withoutComments[next] == '}' || withoutComments[next] == ']') {
+				result = append(result, ' ')
+				continue
+			}
+		}
+		result = append(result, current)
+	}
+	return result, nil
 }
 
 func stringValue(object map[string]any, keys ...string) (string, bool) {
@@ -612,6 +756,19 @@ func readLimited(path string, limit int64) ([]byte, error) {
 	return data, nil
 }
 
+func installedPathMatches(pattern string) ([]string, error) {
+	if strings.ContainsAny(pattern, "*?[") {
+		return filepath.Glob(pattern)
+	}
+	if _, err := os.Stat(pattern); err == nil {
+		return []string{pattern}, nil
+	} else if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	} else {
+		return nil, err
+	}
+}
+
 func processNames(ctx context.Context, platform string) map[string]bool {
 	result := map[string]bool{}
 	if platform == "windows" {
@@ -635,12 +792,44 @@ func processNames(ctx context.Context, platform string) map[string]bool {
 		return result
 	}
 	for _, line := range strings.Split(string(output), "\n") {
-		name := strings.ToLower(filepath.Base(strings.TrimSpace(line)))
+		command := strings.TrimSpace(line)
+		name := strings.ToLower(filepath.Base(command))
 		if name != "" {
 			result[name] = true
 		}
+		if platform == "darwin" {
+			if appName := macApplicationName(command); appName != "" {
+				result[strings.ToLower(appName)] = true
+			}
+		}
 	}
 	return result
+}
+
+func macApplicationName(command string) string {
+	normalized := filepath.ToSlash(strings.TrimSpace(command))
+	marker := strings.Index(strings.ToLower(normalized), ".app/")
+	if marker < 0 {
+		return ""
+	}
+	bundle := normalized[:marker]
+	return filepath.Base(bundle)
+}
+
+func anyProcessRunning(running map[string]bool, candidates []string) bool {
+	for _, candidate := range candidates {
+		if running[strings.ToLower(candidate)] {
+			return true
+		}
+	}
+	return false
+}
+
+func matchingListenerProcess(options Options, port int, candidates []string) (matched, ownershipVerified bool) {
+	if owners := options.ListeningProcesses[port]; len(owners) > 0 {
+		return anyProcessRunning(owners, candidates), true
+	}
+	return anyProcessRunning(options.ProcessNames, candidates), false
 }
 
 func executableNames(pack detector.Pack) map[string]bool {
@@ -698,6 +887,130 @@ func listeningBindings(ctx context.Context, platform string) map[int]string {
 		}
 	}
 	return result
+}
+
+func listeningProcessOwners(ctx context.Context, platform string) map[int]map[string]bool {
+	switch platform {
+	case "darwin":
+		output, err := exec.CommandContext(ctx, "lsof", "-nP", "-iTCP", "-sTCP:LISTEN", "-Fpcn").Output()
+		if err != nil {
+			return map[int]map[string]bool{}
+		}
+		return parseDarwinListenerOwners(string(output))
+	case "linux":
+		output, err := exec.CommandContext(ctx, "ss", "-ltnpH").Output()
+		if err != nil {
+			return map[int]map[string]bool{}
+		}
+		return parseLinuxListenerOwners(string(output))
+	case "windows":
+		return windowsListenerOwners(ctx)
+	default:
+		return map[int]map[string]bool{}
+	}
+}
+
+func parseDarwinListenerOwners(output string) map[int]map[string]bool {
+	result := map[int]map[string]bool{}
+	process := ""
+	for _, line := range strings.Split(output, "\n") {
+		if len(line) < 2 {
+			continue
+		}
+		switch line[0] {
+		case 'p':
+			process = ""
+		case 'c':
+			process = strings.ToLower(strings.TrimSpace(line[1:]))
+		case 'n':
+			if process != "" {
+				if port := listenerPort(line[1:]); port > 0 {
+					addListenerOwner(result, port, process)
+				}
+			}
+		}
+	}
+	return result
+}
+
+func parseLinuxListenerOwners(output string) map[int]map[string]bool {
+	result := map[int]map[string]bool{}
+	for _, line := range strings.Split(output, "\n") {
+		marker := strings.Index(line, `users:(("`)
+		if marker < 0 {
+			continue
+		}
+		remainder := line[marker+len(`users:(("`):]
+		end := strings.IndexByte(remainder, '"')
+		if end < 1 {
+			continue
+		}
+		process := strings.ToLower(strings.TrimSpace(remainder[:end]))
+		fields := strings.Fields(line[:marker])
+		for _, field := range fields {
+			if port := listenerPort(field); port > 0 {
+				addListenerOwner(result, port, process)
+			}
+		}
+	}
+	return result
+}
+
+func windowsListenerOwners(ctx context.Context) map[int]map[string]bool {
+	result := map[int]map[string]bool{}
+	taskOutput, err := exec.CommandContext(ctx, "tasklist", "/FO", "CSV", "/NH").Output()
+	if err != nil {
+		return result
+	}
+	rows, err := csv.NewReader(strings.NewReader(string(taskOutput))).ReadAll()
+	if err != nil {
+		return result
+	}
+	processByPID := map[string]string{}
+	for _, row := range rows {
+		if len(row) >= 2 {
+			processByPID[strings.TrimSpace(row[1])] = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(row[0]), ".exe"))
+		}
+	}
+	netstatOutput, err := exec.CommandContext(ctx, "netstat", "-ano", "-p", "tcp").Output()
+	if err != nil {
+		return result
+	}
+	for _, line := range strings.Split(string(netstatOutput), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 5 || !strings.EqualFold(fields[len(fields)-2], "LISTENING") {
+			continue
+		}
+		port := listenerPort(fields[1])
+		if process := processByPID[fields[len(fields)-1]]; port > 0 && process != "" {
+			addListenerOwner(result, port, process)
+		}
+	}
+	return result
+}
+
+func listenerPort(endpoint string) int {
+	endpoint = strings.TrimSpace(strings.Trim(endpoint, "[]"))
+	index := strings.LastIndex(endpoint, ":")
+	if index < 0 {
+		index = strings.LastIndex(endpoint, ".")
+	}
+	if index < 0 {
+		return 0
+	}
+	value := strings.TrimSpace(strings.Trim(endpoint[index+1:], "()"))
+	port, err := strconv.Atoi(value)
+	if err != nil || port < 1 || port > 65535 {
+		return 0
+	}
+	return port
+}
+
+func addListenerOwner(result map[int]map[string]bool, port int, process string) {
+	if result[port] == nil {
+		result[port] = map[string]bool{}
+	}
+	result[port][strings.ToLower(process)] = true
 }
 
 func classifyBinding(host string) string {

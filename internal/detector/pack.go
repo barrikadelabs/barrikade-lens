@@ -27,6 +27,7 @@ type RuntimeSignature struct {
 	Processes       []string `yaml:"processes,omitempty" json:"processes,omitempty"`
 	Images          []string `yaml:"images,omitempty" json:"images,omitempty"`
 	EnvironmentKeys []string `yaml:"environment_keys,omitempty" json:"environment_keys,omitempty"`
+	InstallPaths    []string `yaml:"install_paths,omitempty" json:"install_paths,omitempty"`
 	Paths           []string `yaml:"paths,omitempty" json:"paths,omitempty"`
 	Configs         []Config `yaml:"configs,omitempty" json:"configs,omitempty"`
 	SkillRoots      []string `yaml:"skill_roots,omitempty" json:"skill_roots,omitempty"`
@@ -61,10 +62,11 @@ type ModelCache struct {
 }
 
 type Listener struct {
-	ID   string `yaml:"id" json:"id"`
-	Name string `yaml:"name" json:"name"`
-	Kind string `yaml:"kind" json:"kind"`
-	Port int    `yaml:"port" json:"port"`
+	ID        string   `yaml:"id" json:"id"`
+	Name      string   `yaml:"name" json:"name"`
+	Kind      string   `yaml:"kind" json:"kind"`
+	Port      int      `yaml:"port" json:"port"`
+	Processes []string `yaml:"processes" json:"processes"`
 }
 
 func Load(path string) (Pack, error) {
@@ -96,7 +98,7 @@ func (p Pack) Validate() error {
 		}
 		seen[runtime.ID] = struct{}{}
 		for _, config := range runtime.Configs {
-			if config.Format != "json" && config.Format != "yaml" && config.Format != "yml" && config.Format != "toml" {
+			if config.Format != "json" && config.Format != "jsonc" && config.Format != "yaml" && config.Format != "yml" && config.Format != "toml" {
 				return fmt.Errorf("runtime %q has unsupported configuration format %q", runtime.ID, config.Format)
 			}
 			if config.Scope != "user" && config.Scope != "project" && config.Scope != "system" {
@@ -131,8 +133,8 @@ func (p Pack) Validate() error {
 		seen[cache.ID] = struct{}{}
 	}
 	for _, listener := range p.Listeners {
-		if listener.ID == "" || listener.Name == "" || listener.Port < 1 || listener.Port > 65535 {
-			return fmt.Errorf("listener id, name, and a valid port are required")
+		if listener.ID == "" || listener.Name == "" || listener.Port < 1 || listener.Port > 65535 || len(listener.Processes) == 0 {
+			return fmt.Errorf("listener id, name, matching processes, and a valid port are required")
 		}
 		if listener.Kind != "model_server" && listener.Kind != "mcp_server" && listener.Kind != "api_service" {
 			return fmt.Errorf("listener %q has unsupported kind %q", listener.ID, listener.Kind)
