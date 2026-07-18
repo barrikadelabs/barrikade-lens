@@ -1,0 +1,66 @@
+version: 2
+project_name: barrikade-lens
+before:
+  hooks:
+    - go mod tidy
+builds:
+  - id: lens
+    main: ./cmd/barrikade-lens
+    binary: barrikade-lens
+    env: [CGO_ENABLED=0]
+    goos: [linux]
+    goarch: [amd64, arm64]
+    ldflags: ['-s -w -X main.version={{.Version}}']
+  - id: hub
+    main: ./cmd/lens-hub
+    binary: lens-hub
+    env: [CGO_ENABLED=0]
+    goos: [linux]
+    goarch: [amd64, arm64]
+    ldflags: ['-s -w -X main.version={{.Version}}']
+  - id: kubernetes
+    main: ./cmd/lens-k8s
+    binary: lens-k8s
+    env: [CGO_ENABLED=0]
+    goos: [linux]
+    goarch: [amd64, arm64]
+    ldflags: ['-s -w -X main.version={{.Version}}']
+archives:
+  - id: archives
+    ids: [lens]
+    formats: [tar.gz]
+    name_template: "{{.ProjectName}}_{{.Version}}_{{.Os}}_{{.Arch}}"
+nfpms:
+  - id: linux-packages
+    ids: [lens]
+    package_name: barrikade-lens
+    maintainer: Barrikade Labs <hello@barrikade.ai>
+    description: Organization-wide autonomous agent discovery collector
+    homepage: https://github.com/barrikadelabs/barrikade-lens
+    license: Apache-2.0
+    formats: [deb, rpm]
+    bindir: /usr/bin
+    contents:
+      - src: packaging/linux/barrikade-lens.service
+        dst: /usr/lib/systemd/system/barrikade-lens.service
+        type: config
+      - src: LICENSE
+        dst: /usr/share/doc/barrikade-lens/LICENSE
+      - src: NOTICE
+        dst: /usr/share/doc/barrikade-lens/NOTICE
+      - src: THIRD_PARTY_NOTICES.md
+        dst: /usr/share/doc/barrikade-lens/THIRD_PARTY_NOTICES.md
+checksum:
+  name_template: checksums.txt
+sboms:
+  - artifacts: archive
+  - id: packages
+    artifacts: package
+signs:
+  - cmd: cosign
+    artifacts: checksum
+    args: ["sign-blob", "--yes", "--output-signature=${signature}", "${artifact}"]
+release:
+  draft: true
+changelog:
+  use: github-native

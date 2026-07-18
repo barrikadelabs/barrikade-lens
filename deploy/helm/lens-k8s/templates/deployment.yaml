@@ -1,0 +1,28 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: {{ .Release.Name }}-lens-k8s}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app.kubernetes.io/name: lens-k8s, app.kubernetes.io/instance: {{ .Release.Name }}}}
+  template:
+    metadata: {labels: {app.kubernetes.io/name: lens-k8s, app.kubernetes.io/instance: {{ .Release.Name }}}}
+    spec:
+      serviceAccountName: {{ .Release.Name }}-lens-k8s
+      securityContext: {runAsNonRoot: true, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: controller
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["--config", "/var/lib/lens/config.json", "--bootstrap-config", "/var/run/lens-bootstrap/config.json", "--cluster-id", {{ .Values.clusterID | quote }}, "--cluster-name", {{ .Values.clusterName | quote }}]
+          volumeMounts:
+            - {name: collector-bootstrap, mountPath: /var/run/lens-bootstrap, readOnly: true}
+            - {name: collector-state, mountPath: /var/lib/lens}
+          resources: {{ toYaml .Values.resources | nindent 12 }}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: ["ALL"]}}
+      volumes:
+        - {name: collector-bootstrap, secret: {secretName: {{ .Values.existingSecret }}, defaultMode: 0400}}
+        {{- if .Values.persistence.enabled }}
+        - {name: collector-state, persistentVolumeClaim: {claimName: {{ .Release.Name }}-lens-k8s-state}}
+        {{- else }}
+        - {name: collector-state, emptyDir: {}}
+        {{- end }}

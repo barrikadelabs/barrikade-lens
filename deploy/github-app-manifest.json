@@ -1,0 +1,18 @@
+{
+  "name": "Barrikade Lens Discovery",
+  "url": "https://barrikade.ai/lens",
+  "hook_attributes": {
+    "url": "https://lens.example.com/v1/connectors/github/webhook",
+    "active": true
+  },
+  "public": false,
+  "default_permissions": {
+    "contents": "read",
+    "metadata": "read"
+  },
+  "default_events": [
+    "installation",
+    "installation_repositories",
+    "push"
+  ]
+}

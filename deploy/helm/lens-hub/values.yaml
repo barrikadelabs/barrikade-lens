@@ -1,0 +1,21 @@
+replicaCount: 2
+image:
+  repository: ghcr.io/barrikadelabs/barrikade-lens-hub
+  tag: "2.0.0"
+  pullPolicy: IfNotPresent
+existingSecret: lens-hub
+publicURL: https://lens.example.com
+catalog:
+  enabled: true
+  manifest: https://raw.githubusercontent.com/jentic/jentic-public-apis/refs/heads/main/apis/openapi/apis.json
+oidc:
+  issuer: ""
+  clientID: ""
+  redirectURI: ""
+  adminGroup: ""
+service:
+  type: ClusterIP
+  port: 80
+resources:
+  requests: {cpu: 100m, memory: 128Mi}
+  limits: {cpu: "1", memory: 512Mi}

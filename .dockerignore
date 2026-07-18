@@ -1,0 +1,7 @@
+.git
+node_modules
+hub-ui/dist
+npm/*/dist
+build
+dist
+*.log

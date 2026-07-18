@@ -1,0 +1,63 @@
+openapi: 3.1.0
+info:
+  title: Barrikade Lens Hub API
+  version: 1.0.0
+  description: Open ingestion and query API for evidence-backed autonomous-agent discovery. Lens exposes inventory facts; it does not register, approve, protect, or govern agents.
+servers: [{url: /}]
+security: [{bearerAuth: []}]
+paths:
+  /healthz:
+    get: {security: [], operationId: health, responses: {'200': {description: Healthy}}}
+  /v1/auth/config:
+    get: {security: [], operationId: authConfig, responses: {'200': {description: OIDC and quickstart access configuration}}}
+  /v1/auth/exchange:
+    post: {security: [], operationId: exchangeOIDCCode, requestBody: {required: true, content: {application/json: {schema: {type: object, required: [code, redirect_uri, code_verifier], properties: {code: {type: string}, redirect_uri: {type: string, format: uri}, code_verifier: {type: string, minLength: 43}}}}}}, responses: {'200': {description: Lens human session token}}}
+  /v1/enrollment/exchange:
+    post: {security: [], operationId: enrollCollector, requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/Enrollment'}}}}, responses: {'200': {description: Source-scoped rotating collector credentials}}}
+  /v1/collector/token:
+    post: {security: [], operationId: rotateCollectorToken, requestBody: {required: true, content: {application/json: {schema: {type: object, additionalProperties: false, required: [refresh_token], properties: {refresh_token: {type: string}}}}}}, responses: {'200': {description: Rotated access and refresh credentials}}}
+  /v1/admin/enrollment-codes:
+    post: {operationId: createEnrollmentCode, requestBody: {content: {application/json: {schema: {type: object, additionalProperties: false, properties: {expires_in_seconds: {type: integer, minimum: 60, maximum: 86400, default: 600}, uses: {type: integer, minimum: 1, maximum: 10000, default: 1}, source_type: {enum: [endpoint, repository, kubernetes], default: endpoint}}}}}}, responses: {'201': {description: Expiring use-limited enrollment code}}}
+  /v1/admin/sources/{id}:
+    delete: {operationId: revokeDiscoverySource, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'204': {description: Source credentials revoked and its current observations removed}, '404': {description: Source not found}}}
+  /v1/discovery/snapshots:
+    post:
+      operationId: submitDiscoverySnapshot
+      requestBody: {required: true, content: {application/json: {schema: {$ref: './schema/discovery-snapshot-v1.json'}}}}
+      responses: {'202': {description: Snapshot accepted into the PostgreSQL ingestion queue}, '422': {description: Snapshot failed schema or privacy validation}}
+  /v1/discovery/jobs/{id}:
+    get:
+      operationId: getDiscoveryJob
+      parameters: [{$ref: '#/components/parameters/ID'}]
+      responses: {'200': {description: Ingestion job status}, '404': {description: Job not found in the caller organization/source}}
+  /v1/entities:
+    get:
+      operationId: listEntities
+      parameters: [{name: kind, in: query, schema: {type: string}}, {name: confidence, in: query, schema: {enum: [confirmed, likely, possible]}}, {$ref: '#/components/parameters/Limit'}]
+      responses: {'200': {description: Current evidence-backed entity inventory}}
+  /v1/entities/{id}:
+    get: {operationId: getEntity, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Entity and retained evidence}, '404': {description: Entity not found}}}
+  /v1/relationships:
+    get: {operationId: listRelationships, parameters: [{name: kind, in: query, schema: {type: string}}, {name: entity_id, in: query, schema: {type: string}}, {$ref: '#/components/parameters/Limit'}], responses: {'200': {description: Current discovery graph edges}}}
+  /v1/changes:
+    get: {operationId: listChanges, parameters: [{$ref: '#/components/parameters/Limit'}], responses: {'200': {description: Entity discovery and lifecycle changes}}}
+  /v1/coverage:
+    get: {operationId: getCoverage, responses: {'200': {description: Source coverage and freshness}}}
+  /v1/exports:
+    get: {operationId: exportInventory, parameters: [{name: format, in: query, schema: {enum: [lens, ndjson, cyclonedx]}}], responses: {'200': {description: Lens JSON, JSONL, or CycloneDX 1.7 export}}}
+  /v1/webhooks:
+    post: {operationId: createWebhook, requestBody: {required: true, content: {application/json: {schema: {type: object, additionalProperties: false, required: [url], properties: {url: {type: string, format: uri, pattern: '^https://'}}}}}}, responses: {'201': {description: Webhook and one-time HMAC signing secret}}}
+  /v1/connectors/github/webhook:
+    post: {security: [], operationId: receiveGitHubWebhook, responses: {'202': {description: Signed webhook accepted}, '401': {description: Invalid signature}}}
+components:
+  securitySchemes:
+    bearerAuth: {type: http, scheme: bearer, bearerFormat: JWT}
+  parameters:
+    ID: {name: id, in: path, required: true, schema: {type: string}}
+    Limit: {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 1000, default: 100}}
+  schemas:
+    Enrollment:
+      type: object
+      additionalProperties: false
+      required: [code, hostname, platform, architecture, collector_version]
+      properties: {code: {type: string}, hostname: {type: string}, platform: {type: string}, architecture: {type: string}, collector_version: {type: string}}

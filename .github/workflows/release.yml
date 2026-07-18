@@ -1,0 +1,256 @@
+name: release
+on:
+  push:
+    tags: ['v*']
+permissions:
+  contents: write
+  id-token: write
+  packages: write
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - uses: actions/setup-go@v6
+        with: {go-version: '1.26.x', cache: true}
+      - uses: sigstore/cosign-installer@v3
+      - uses: goreleaser/goreleaser-action@v7
+        with: {distribution: goreleaser, version: latest, args: release --clean}
+        env: {GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'}
+
+  linux-native:
+    needs: goreleaser
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with: {go-version: '1.26.x', cache: true}
+      - name: Build native npm binaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p dist
+          GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$version" -o dist/barrikade-lens-linux-x64 ./cmd/barrikade-lens
+          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$version" -o dist/barrikade-lens-linux-arm64 ./cmd/barrikade-lens
+      - uses: actions/upload-artifact@v4
+        with: {name: native-linux, path: dist/barrikade-lens-linux-*}
+
+  macos-signed:
+    needs: goreleaser
+    runs-on: macos-15
+    env:
+      MACOS_CERTIFICATE_P12: '${{ secrets.MACOS_CERTIFICATE_P12 }}'
+      MACOS_CERTIFICATE_PASSWORD: '${{ secrets.MACOS_CERTIFICATE_PASSWORD }}'
+      MACOS_SIGNING_IDENTITY: '${{ secrets.MACOS_SIGNING_IDENTITY }}'
+      MACOS_INSTALLER_IDENTITY: '${{ secrets.MACOS_INSTALLER_IDENTITY }}'
+      APPLE_ID: '${{ secrets.APPLE_ID }}'
+      APPLE_TEAM_ID: '${{ secrets.APPLE_TEAM_ID }}'
+      APPLE_APP_PASSWORD: '${{ secrets.APPLE_APP_PASSWORD }}'
+      GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with: {go-version: '1.26.x', cache: true}
+      - name: Require Apple signing credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in MACOS_CERTIFICATE_P12 MACOS_CERTIFICATE_PASSWORD MACOS_SIGNING_IDENTITY MACOS_INSTALLER_IDENTITY APPLE_ID APPLE_TEAM_ID APPLE_APP_PASSWORD; do
+            test -n "${!name}" || { echo "Missing required release secret: $name" >&2; exit 1; }
+          done
+      - name: Import signing certificate
+        shell: bash
+        run: |
+          set -euo pipefail
+          keychain_password="$(openssl rand -hex 24)"
+          printf '%s' "$MACOS_CERTIFICATE_P12" | base64 -D > certificate.p12
+          security create-keychain -p "$keychain_password" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$keychain_password" build.keychain
+          security import certificate.p12 -k build.keychain -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign -T /usr/bin/productbuild
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" build.keychain
+      - name: Build, sign, package, and notarize
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p dist pkgroot/usr/local/bin pkgroot/usr/local/share/doc/barrikade-lens
+          GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$version" -o dist/barrikade-lens-darwin-arm64 ./cmd/barrikade-lens
+          GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$version" -o dist/barrikade-lens-darwin-x64 ./cmd/barrikade-lens
+          codesign --force --options runtime --timestamp --sign "$MACOS_SIGNING_IDENTITY" dist/barrikade-lens-darwin-arm64
+          codesign --force --options runtime --timestamp --sign "$MACOS_SIGNING_IDENTITY" dist/barrikade-lens-darwin-x64
+          codesign --verify --strict --verbose=2 dist/barrikade-lens-darwin-arm64
+          codesign --verify --strict --verbose=2 dist/barrikade-lens-darwin-x64
+          lipo -create dist/barrikade-lens-darwin-arm64 dist/barrikade-lens-darwin-x64 -output pkgroot/usr/local/bin/barrikade-lens
+          codesign --force --options runtime --timestamp --sign "$MACOS_SIGNING_IDENTITY" pkgroot/usr/local/bin/barrikade-lens
+          cp LICENSE NOTICE THIRD_PARTY_NOTICES.md pkgroot/usr/local/share/doc/barrikade-lens/
+          pkgbuild --root pkgroot --identifier ai.barrikade.lens --version "$version" dist/barrikade-lens-component.pkg
+          productbuild --package dist/barrikade-lens-component.pkg --sign "$MACOS_INSTALLER_IDENTITY" dist/barrikade-lens-$version-universal.pkg
+          rm dist/barrikade-lens-component.pkg
+          xcrun notarytool submit dist/barrikade-lens-$version-universal.pkg --apple-id "$APPLE_ID" --team-id "$APPLE_TEAM_ID" --password "$APPLE_APP_PASSWORD" --wait
+          xcrun stapler staple dist/barrikade-lens-$version-universal.pkg
+          pkgutil --check-signature dist/barrikade-lens-$version-universal.pkg
+          gh release upload "$GITHUB_REF_NAME" dist/barrikade-lens-$version-universal.pkg dist/barrikade-lens-darwin-arm64 dist/barrikade-lens-darwin-x64 --clobber
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-macos
+          path: |
+            dist/barrikade-lens-darwin-arm64
+            dist/barrikade-lens-darwin-x64
+
+  windows-signed:
+    needs: goreleaser
+    runs-on: windows-2025
+    env:
+      WINDOWS_CERTIFICATE_PFX: '${{ secrets.WINDOWS_CERTIFICATE_PFX }}'
+      WINDOWS_CERTIFICATE_PASSWORD: '${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}'
+      GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with: {go-version: '1.26.x', cache: true}
+      - name: Require Authenticode credentials
+        shell: pwsh
+        run: |
+          if (-not $env:WINDOWS_CERTIFICATE_PFX -or -not $env:WINDOWS_CERTIFICATE_PASSWORD) { throw "WINDOWS_CERTIFICATE_PFX and WINDOWS_CERTIFICATE_PASSWORD are required" }
+      - name: Build, sign, and package
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $version = $env:GITHUB_REF_NAME.TrimStart("v")
+          New-Item -ItemType Directory -Force dist | Out-Null
+          $env:GOOS = "windows"; $env:CGO_ENABLED = "0"; $env:GOARCH = "amd64"
+          go build -trimpath -ldflags "-s -w -X main.version=$version" -o dist/barrikade-lens-win32-x64.exe ./cmd/barrikade-lens
+          $env:GOARCH = "arm64"
+          go build -trimpath -ldflags "-s -w -X main.version=$version" -o dist/barrikade-lens-win32-arm64.exe ./cmd/barrikade-lens
+          [IO.File]::WriteAllBytes("certificate.pfx", [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_PFX))
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Filter signtool.exe -Recurse | Where-Object FullName -Match '\\x64\\signtool.exe$' | Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $signtool) { throw "signtool.exe was not found" }
+          foreach ($binary in @("dist/barrikade-lens-win32-x64.exe", "dist/barrikade-lens-win32-arm64.exe")) {
+            & $signtool.FullName sign /f certificate.pfx /p $env:WINDOWS_CERTIFICATE_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $binary
+            & $signtool.FullName verify /pa /v $binary
+          }
+          dotnet tool install --global wix --version "5.*"
+          $env:PATH += ";$env:USERPROFILE\.dotnet\tools"
+          wix build packaging/windows/Product.wxs -arch x64 -d LensVersion=$version -d LensBinary="$PWD/dist/barrikade-lens-win32-x64.exe" -d LicenseFile="$PWD/LICENSE" -d NoticeFile="$PWD/NOTICE" -d ThirdPartyNoticesFile="$PWD/THIRD_PARTY_NOTICES.md" -o dist/barrikade-lens-$version-win32-x64.msi
+          wix build packaging/windows/Product.wxs -arch arm64 -d LensVersion=$version -d LensBinary="$PWD/dist/barrikade-lens-win32-arm64.exe" -d LicenseFile="$PWD/LICENSE" -d NoticeFile="$PWD/NOTICE" -d ThirdPartyNoticesFile="$PWD/THIRD_PARTY_NOTICES.md" -o dist/barrikade-lens-$version-win32-arm64.msi
+          foreach ($msi in Get-ChildItem dist/*.msi) {
+            & $signtool.FullName sign /f certificate.pfx /p $env:WINDOWS_CERTIFICATE_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $msi.FullName
+            & $signtool.FullName verify /pa /v $msi.FullName
+            gh release upload $env:GITHUB_REF_NAME $msi.FullName --clobber
+          }
+          gh release upload $env:GITHUB_REF_NAME dist/barrikade-lens-win32-x64.exe dist/barrikade-lens-win32-arm64.exe --clobber
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-windows
+          path: |
+            dist/barrikade-lens-win32-x64.exe
+            dist/barrikade-lens-win32-arm64.exe
+
+  containers:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - {name: hub, dockerfile: Dockerfile, image: barrikade-lens-hub}
+          - {name: kubernetes, dockerfile: Dockerfile.k8s, image: barrikade-lens-k8s}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with: {registry: ghcr.io, username: '${{ github.actor }}', password: '${{ secrets.GITHUB_TOKEN }}'}
+      - uses: sigstore/cosign-installer@v3
+      - id: version
+        shell: bash
+        run: echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+      - id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: '${{ matrix.dockerfile }}'
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: VERSION=${{ steps.version.outputs.value }}
+          tags: ghcr.io/barrikadelabs/${{ matrix.image }}:${{ steps.version.outputs.value }}
+          provenance: true
+          sbom: true
+      - name: Sign image digest
+        run: cosign sign --yes ghcr.io/barrikadelabs/${{ matrix.image }}@${{ steps.build.outputs.digest }}
+
+  helm:
+    needs: goreleaser
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - name: Package, publish, and attach charts
+        shell: bash
+        env: {GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}'}
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p dist
+          for chart in deploy/helm/lens-hub deploy/helm/lens-k8s; do
+            sed -i "s/^version:.*/version: $version/; s/^appVersion:.*/appVersion: \"$version\"/" "$chart/Chart.yaml"
+            helm lint "$chart"
+            helm package "$chart" --destination dist
+          done
+          printf '%s' "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io --username "${{ github.actor }}" --password-stdin
+          for archive in dist/*.tgz; do
+            helm push "$archive" oci://ghcr.io/barrikadelabs/charts
+            gh release upload "$GITHUB_REF_NAME" "$archive" --clobber
+          done
+
+  npm:
+    needs: [linux-native, macos-signed, windows-signed]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v6
+        with: {node-version: 24, registry-url: 'https://registry.npmjs.org'}
+      - uses: actions/download-artifact@v4
+        with: {pattern: native-*, path: artifacts, merge-multiple: true}
+      - name: Stage platform packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -Dm755 artifacts/barrikade-lens-darwin-arm64 npm/darwin-arm64/bin/barrikade-lens
+          install -Dm755 artifacts/barrikade-lens-darwin-x64 npm/darwin-x64/bin/barrikade-lens
+          install -Dm755 artifacts/barrikade-lens-linux-arm64 npm/linux-arm64/bin/barrikade-lens
+          install -Dm755 artifacts/barrikade-lens-linux-x64 npm/linux-x64/bin/barrikade-lens
+          install -Dm644 artifacts/barrikade-lens-win32-arm64.exe npm/win32-arm64/bin/barrikade-lens.exe
+          install -Dm644 artifacts/barrikade-lens-win32-x64.exe npm/win32-x64/bin/barrikade-lens.exe
+          for package in npm/darwin-arm64 npm/darwin-x64 npm/linux-arm64 npm/linux-x64 npm/win32-arm64 npm/win32-x64; do
+            cp LICENSE NOTICE THIRD_PARTY_NOTICES.md "$package/"
+          done
+          VERSION="${GITHUB_REF_NAME#v}" node <<'NODE'
+          const fs = require('fs');
+          const version = process.env.VERSION;
+          const roots = ['darwin-arm64','darwin-x64','linux-arm64','linux-x64','win32-arm64','win32-x64'];
+          for (const root of roots) {
+            const path = `npm/${root}/package.json`;
+            const value = JSON.parse(fs.readFileSync(path, 'utf8'));
+            value.version = version;
+            fs.writeFileSync(path, JSON.stringify(value, null, 2) + '\n');
+          }
+          const launcher = JSON.parse(fs.readFileSync('npm/launcher/package.json', 'utf8'));
+          launcher.version = version;
+          for (const name of Object.keys(launcher.optionalDependencies)) launcher.optionalDependencies[name] = version;
+          fs.writeFileSync('npm/launcher/package.json', JSON.stringify(launcher, null, 2) + '\n');
+          NODE
+      - name: Test and publish native packages before launcher
+        shell: bash
+        env: {NODE_AUTH_TOKEN: '${{ secrets.NPM_TOKEN }}'}
+        run: |
+          set -euo pipefail
+          npm ci --ignore-scripts
+          npm run build -w barrikade-lens
+          npm test -w barrikade-lens
+          for package in npm/darwin-arm64 npm/darwin-x64 npm/linux-arm64 npm/linux-x64 npm/win32-arm64 npm/win32-x64; do
+            npm publish "$package" --access public --provenance
+          done
+          npm publish npm/launcher --access public --provenance

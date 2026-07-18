@@ -1,0 +1,258 @@
+schema_version: "1"
+id: barrikade-lens-builtin
+version: "2.0.0-dev"
+runtimes:
+  - id: claude
+    name: Claude Code
+    processes: [claude]
+    images: [claude-code, anthropic/claude]
+    environment_keys: [CLAUDE_CODE_ENTRYPOINT]
+    paths: ["~/.claude", "~/.config/claude"]
+    configs:
+      - {path: "~/.claude.json", format: json, scope: user}
+      - {path: "~/.claude/settings.json", format: json, scope: user}
+      - {path: "~/Library/Application Support/Claude/claude_desktop_config.json", format: json, scope: user}
+      - {path: "~/.config/Claude/claude_desktop_config.json", format: json, scope: user}
+      - {path: "%APPDATA%/Claude/claude_desktop_config.json", format: json, scope: user}
+    skill_roots: ["~/.claude/skills"]
+  - id: codex
+    name: OpenAI Codex
+    processes: [codex]
+    images: [openai/codex, codex-cli]
+    environment_keys: [CODEX_HOME]
+    paths: ["~/.codex"]
+    configs:
+      - {path: "~/.codex/config.toml", format: toml, scope: user}
+      - {path: "~/.codex/.codex-global-state.json", format: json, scope: user}
+    skill_roots: ["~/.codex/skills"]
+  - id: cursor
+    name: Cursor
+    processes: [Cursor, cursor]
+    paths: ["~/.cursor", "~/Library/Application Support/Cursor", "~/.config/Cursor", "%APPDATA%/Cursor/User"]
+    configs:
+      - {path: "~/.cursor/mcp.json", format: json, scope: user}
+      - {path: "%APPDATA%/Cursor/User/mcp.json", format: json, scope: user}
+  - id: copilot
+    name: GitHub Copilot
+    processes: [copilot-language-server, github-copilot]
+    paths: ["~/.config/github-copilot", "~/.copilot"]
+  - id: vscode
+    name: Visual Studio Code
+    processes: [Code, code]
+    paths: ["~/Library/Application Support/Code/User", "~/.config/Code/User", "~/.vscode", "%APPDATA%/Code/User"]
+    configs:
+      - {path: "~/Library/Application Support/Code/User/mcp.json", format: json, scope: user}
+      - {path: "~/.config/Code/User/mcp.json", format: json, scope: user}
+      - {path: "%APPDATA%/Code/User/mcp.json", format: json, scope: user}
+      - {path: "~/Library/Application Support/Code/User/settings.json", format: json, scope: user}
+      - {path: "~/.config/Code/User/settings.json", format: json, scope: user}
+      - {path: "%APPDATA%/Code/User/settings.json", format: json, scope: user}
+  - id: gemini
+    name: Gemini CLI and Antigravity
+    processes: [gemini, antigravity]
+    paths: ["~/.gemini", "~/.antigravity"]
+    configs:
+      - {path: "~/.gemini/settings.json", format: json, scope: user}
+    skill_roots: ["~/.gemini/skills"]
+  - id: windsurf
+    name: Windsurf
+    processes: [Windsurf, windsurf]
+    paths: ["~/.codeium/windsurf", "~/Library/Application Support/Windsurf", "~/.config/Windsurf", "%APPDATA%/Windsurf/User"]
+    configs:
+      - {path: "~/.codeium/windsurf/mcp_config.json", format: json, scope: user}
+      - {path: "%APPDATA%/Windsurf/User/mcp_config.json", format: json, scope: user}
+  - id: devin
+    name: Devin
+    processes: [devin]
+    paths: ["~/.devin"]
+  - id: cline
+    name: Cline
+    processes: [cline]
+    paths: ["~/.cline"]
+    configs:
+      - {path: "~/.cline/mcp_settings.json", format: json, scope: user}
+      - {path: "~/.cline/data/settings/cline_mcp_settings.json", format: json, scope: user}
+      - {path: "~/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json", format: json, scope: user}
+      - {path: "~/Library/Application Support/Code - Insiders/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json", format: json, scope: user}
+      - {path: "~/.config/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json", format: json, scope: user}
+      - {path: "~/.config/Code - Insiders/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json", format: json, scope: user}
+      - {path: "%APPDATA%/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json", format: json, scope: user}
+  - id: roo
+    name: Roo Code
+    processes: [roo]
+    paths: ["~/.roo"]
+    configs:
+      - {path: "~/.roo/mcp.json", format: json, scope: user}
+      - {path: "~/Library/Application Support/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/cline_mcp_settings.json", format: json, scope: user}
+      - {path: "~/.config/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/cline_mcp_settings.json", format: json, scope: user}
+      - {path: "%APPDATA%/Code/User/globalStorage/rooveterinaryinc.roo-cline/settings/cline_mcp_settings.json", format: json, scope: user}
+  - id: kiro
+    name: Kiro
+    processes: [kiro]
+    paths: ["~/.kiro"]
+    configs:
+      - {path: "~/.kiro/settings/mcp.json", format: json, scope: user}
+    skill_roots: ["~/.kiro/skills"]
+  - id: amazon-q
+    name: Amazon Q Developer
+    processes: [q, amazon-q]
+    paths: ["~/.aws/amazonq", "~/.config/amazon-q"]
+  - id: continue
+    name: Continue
+    processes: [continue]
+    paths: ["~/.continue"]
+    configs:
+      - {path: "~/.continue/config.yaml", format: yaml, scope: user}
+  - id: opencode
+    name: OpenCode
+    processes: [opencode]
+    paths: ["~/.config/opencode", "~/.opencode"]
+    configs:
+      - {path: "~/.config/opencode/opencode.json", format: json, scope: user}
+  - id: openclaw
+    name: OpenClaw
+    processes: [openclaw]
+    paths: ["~/.openclaw"]
+    configs:
+      - {path: "~/.openclaw/openclaw.json", format: json, scope: user}
+  - id: aider
+    name: Aider
+    processes: [aider]
+    paths: ["~/.aider"]
+    configs:
+      - {path: "~/.aider.conf.yml", format: yaml, scope: user}
+  - id: goose
+    name: Goose
+    processes: [goose]
+    images: [block/goose, goose-ai]
+    paths: ["~/.config/goose"]
+    configs:
+      - {path: "~/.config/goose/config.yaml", format: yaml, scope: user}
+  - id: factory
+    name: Factory
+    processes: [droid, factory]
+    paths: ["~/.factory"]
+  - id: grok
+    name: Grok CLI
+    processes: [grok]
+    paths: ["~/.grok"]
+  - id: hermes
+    name: Hermes Agent
+    processes: [hermes]
+    paths: ["~/.hermes"]
+  - id: zed
+    name: Zed
+    processes: [zed, Zed]
+    paths: ["~/.config/zed", "~/Library/Application Support/Zed", "%APPDATA%/Zed"]
+    configs:
+      - {path: "~/.config/zed/settings.json", format: json, scope: user}
+  - id: warp
+    name: Warp
+    processes: [Warp, warp]
+    paths: ["~/.warp", "~/Library/Application Support/dev.warp.Warp-Stable"]
+  - id: junie
+    name: JetBrains Junie
+    processes: [junie]
+    paths: ["~/.junie"]
+  - id: augment
+    name: Augment Code
+    processes: [augment]
+    paths: ["~/.augment"]
+  - id: qodo
+    name: Qodo
+    processes: [qodo]
+    paths: ["~/.qodo"]
+  - id: ollama
+    name: Ollama
+    processes: [ollama]
+    images: [ollama/ollama]
+    environment_keys: [OLLAMA_HOST, OLLAMA_MODELS]
+    paths: ["~/.ollama"]
+    model_servers: [{name: Ollama, port: 11434}]
+  - id: lm-studio
+    name: LM Studio
+    processes: [LM Studio, lms]
+    images: [lmstudio, lm-studio]
+    environment_keys: [LM_STUDIO_HOME]
+    paths: ["~/.lmstudio", "~/.cache/lm-studio", "~/Library/Application Support/LM Studio", "%APPDATA%/LM Studio"]
+    model_servers: [{name: LM Studio, port: 1234}]
+  - id: jan
+    name: Jan
+    processes: [jan, Jan]
+    paths: ["~/.jan", "~/Library/Application Support/Jan", "%APPDATA%/Jan"]
+    model_servers: [{name: Jan, port: 1337}]
+  - id: llama-cpp
+    name: llama.cpp
+    processes: [llama-server, llama-cli, llama]
+    images: [llama.cpp, llama-cpp]
+  - id: vllm
+    name: vLLM
+    processes: [vllm]
+    images: [vllm/vllm-openai, vllm]
+    model_servers: [{name: vLLM OpenAI-compatible API, port: 8000}]
+  - id: localai
+    name: LocalAI
+    processes: [local-ai, localai]
+    images: [localai/localai]
+    paths: ["~/.localai"]
+    model_servers: [{name: LocalAI API, port: 8080}]
+  - id: anythingllm
+    name: AnythingLLM
+    processes: [anythingllm, AnythingLLM]
+    paths: ["~/.anythingllm", "~/Library/Application Support/anythingllm-desktop", "%APPDATA%/anythingllm-desktop"]
+  - id: trae
+    name: Trae
+    processes: [trae, Trae]
+    paths: ["~/.trae", "~/Library/Application Support/Trae", "%APPDATA%/Trae"]
+  - id: nodejs
+    name: Node.js
+    processes: [node]
+  - id: python
+    name: Python
+    processes: [python, python3]
+  - id: bun
+    name: Bun
+    processes: [bun]
+  - id: uv
+    name: uv
+    processes: [uv]
+frameworks:
+  - {id: langchain, name: LangChain, packages: [langchain, "@langchain/core"], imports: [langchain]}
+  - {id: langgraph, name: LangGraph, packages: [langgraph, "@langchain/langgraph"], imports: [langgraph]}
+  - {id: llamaindex, name: LlamaIndex, packages: [llama-index, llama_index], imports: [llama_index]}
+  - {id: crewai, name: CrewAI, packages: [crewai], imports: [crewai]}
+  - {id: autogen, name: AutoGen, packages: [autogen-agentchat, pyautogen], imports: [autogen]}
+  - {id: agents-sdk, name: OpenAI Agents SDK, packages: [openai-agents, "@openai/agents"], imports: [agents]}
+  - {id: google-adk, name: Google Agent Development Kit, packages: [google-adk], imports: [google.adk]}
+  - {id: semantic-kernel, name: Semantic Kernel, packages: [semantic-kernel, microsoft-semantic-kernel], imports: [semantic_kernel]}
+  - {id: mastra, name: Mastra, packages: ["@mastra/core"], imports: [mastra]}
+  - {id: pydantic-ai, name: PydanticAI, packages: [pydantic-ai], imports: [pydantic_ai]}
+  - {id: smolagents, name: smolagents, packages: [smolagents], imports: [smolagents]}
+  - {id: haystack, name: Haystack, packages: [haystack-ai], imports: [haystack]}
+  - {id: vercel-ai, name: Vercel AI SDK, packages: [ai, "@ai-sdk/openai"], imports: [ai]}
+  - {id: voltagent, name: VoltAgent, packages: [voltagent, "@voltagent/core"], imports: [voltagent]}
+model_caches:
+  - id: huggingface-cache
+    name: Hugging Face Hub Cache
+    layout: huggingface
+    paths: ["~/.cache/huggingface/hub"]
+  - id: ollama-cache
+    name: Ollama Model Cache
+    layout: ollama
+    paths: ["~/.ollama/models/manifests"]
+  - id: lm-studio-cache
+    name: LM Studio Model Cache
+    layout: lm-studio
+    paths: ["~/.cache/lm-studio/models", "~/.lmstudio/models", "%USERPROFILE%/.cache/lm-studio/models"]
+  - id: torch-cache
+    name: Torch Model Cache
+    layout: directory
+    paths: ["~/.cache/torch"]
+listeners:
+  - {id: localai-8080, name: LocalAI or llama.cpp, kind: model_server, port: 8080}
+  - {id: inference-8000, name: LocalAI, vLLM, or LiteLLM, kind: model_server, port: 8000}
+  - {id: textgen-7860, name: Text Generation WebUI, kind: model_server, port: 7860}
+  - {id: textgen-5000, name: Text Generation WebUI API, kind: model_server, port: 5000}
+  - {id: figma-mcp-3845, name: Figma Desktop MCP, kind: mcp_server, port: 3845}
+  - {id: jetbrains-mcp-63334, name: JetBrains MCP, kind: mcp_server, port: 63334}
+  - {id: jetbrains-mcp-64342, name: JetBrains MCP, kind: mcp_server, port: 64342}

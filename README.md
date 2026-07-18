@@ -1,0 +1,126 @@
+# Barrikade Lens v2
+
+Barrikade Lens is the open-source discovery plane for autonomous agents. It finds agents, runtimes, frameworks, MCP servers, skills, models, APIs, repositories, endpoints, and deployments, then explains every finding with sanitized evidence and confidence.
+
+Lens is intentionally the first step in the Barrikade lifecycle: **discover**. It does not register, approve, protect, block, score, or govern anything it finds.
+
+## Run a local scan
+
+```sh
+npx barrikade-lens
+```
+
+The no-argument command opens a guided terminal interface in a TTY and emits canonical Lens JSON in automation. It works without signup or network access. Local scans do not send telemetry.
+
+```sh
+barrikade-lens scan --scope endpoint --format human
+barrikade-lens scan --scope repo --path . --format ndjson --output lens.ndjson
+barrikade-lens scan --scope repo --format cyclonedx --output agent-bom.json
+barrikade-lens doctor
+```
+
+Exit code `0` means the scan completed, even if nothing was found. Exit code `2` means coverage was partial. Exit code `1` means a fatal scan or configuration failure.
+
+Active handshakes are off by default. An explicitly allowed metadata-only probe looks like:
+
+```sh
+barrikade-lens scan --probe-url http://127.0.0.1:11434/v1/models --allow-probe-host 127.0.0.1
+```
+
+Probes reject credential-bearing URLs and metadata targets, use strict limits, and never invoke a tool.
+
+## Organization-wide discovery
+
+Lens Hub aggregates sources in PostgreSQL and exposes an open API, signed webhooks, Lens JSON/JSONL, and CycloneDX 1.7 exports.
+
+For a local quickstart:
+
+```sh
+docker compose up --build
+```
+
+Open `http://localhost:8080` and use the quickstart token `lens-local-admin`. The compose credentials are deliberately development-only; use [the self-hosting guide](docs/self-hosting.md) for a real deployment.
+
+From the Hub’s Sources page, create a ten-minute enrollment code and run the one short command it provides:
+
+```sh
+npx barrikade-lens enroll ABCDE-FGHIJ --hub https://lens.example.com
+barrikade-lens service install
+```
+
+Managed endpoint discovery performs an initial full scan, watches only known agent/configuration/skill roots, debounces relevant filesystem changes, reconciles processes and listeners every 15 minutes, and runs a jittered daily full scan. It does not install runtime hooks or capture prompts, tool calls, or commands.
+
+System collectors inspect eligible local user profiles rather than the service account's home. Fleet deployment templates are documented in [fleet rollout](docs/fleet-rollout.md); secrets remain in the organization's MDM or secret tooling.
+
+The Kubernetes controller is installed from `deploy/helm/lens-k8s`. Its RBAC permits read-only `get/list/watch` for workloads, Services, Ingresses, ConfigMaps, and CRD definitions. It has no Secret or pod-exec permission.
+
+GitLab, Bitbucket, and generic pipelines use the ephemeral [CI repository scanner](docs/ci-scanning.md). The native GitHub App starts from [the supplied manifest](deploy/github-app-manifest.json).
+
+## Architecture
+
+```mermaid
+flowchart LR
+  endpoint["Native endpoint collectors"] --> snapshot["Discovery Snapshot v1"]
+  repo["GitHub App and CI scanner"] --> snapshot
+  kube["Read-only Kubernetes controller"] --> snapshot
+  snapshot --> hub["Lens Hub / PostgreSQL"]
+  catalog["Replaceable open catalog providers"] --> hub
+  hub --> ui["Discovery UI"]
+  hub --> api["Open API, webhooks, exports"]
+  api --> external["Any registration or control plane"]
+```
+
+- Go powers the detector engine, collectors, CLI/TUI, Kubernetes controller, Hub API, and PostgreSQL workers.
+- TypeScript powers the no-download npm launcher and React Hub UI.
+- PostgreSQL stores relational entities/edges plus JSONB attributes and is also the horizontally scalable job queue. There is no graph database or external queue.
+- The canonical contract is [Discovery Snapshot v1](api/schema/discovery-snapshot-v1.json); [OpenAPI](api/openapi.yaml) describes the Hub.
+- Detector signatures are declarative, checksummed YAML with no executable code.
+- Catalog enrichment happens only at Hub. The bundled adapter reads a compact OAK-compatible manifest and lazily fetches only matched documents.
+
+## Repository layout
+
+| Path | Purpose |
+|---|---|
+| `cmd/barrikade-lens` | Native CLI and managed endpoint service |
+| `cmd/lens-hub` | Hub API and PostgreSQL workers |
+| `cmd/lens-k8s` | Informer-based Kubernetes collector |
+| `pkg/discovery` | Stable public discovery contract, privacy validation, identities |
+| `internal/scanner` | Endpoint, repository, and Kubernetes analyzers |
+| `internal/catalog` | Generic OAK/Git/file/directory catalog providers |
+| `hub-ui` | Discovery-only React console |
+| `npm` | npm launcher and platform packages |
+| `deploy/helm` | Hub and Kubernetes Helm charts |
+
+## Privacy contract
+
+Lens accepts useful organizational identity—hostnames, OS users, repository/workload names, relative repository paths, and sanitized endpoint hosts—but rejects private content. Absolute paths become organization-salted hashes. URLs lose userinfo, query strings, and fragments. Configuration bodies, prompts, environment values, credentials, secret values, and full command arguments are forbidden by validation and property tests.
+
+Read [privacy and evidence](docs/privacy.md), [architecture](docs/architecture.md), and the [threat model](docs/threat-model.md) before extending a detector.
+
+## Build and test
+
+Requirements are Go 1.26, Node.js 24+, npm 11+, and PostgreSQL 16+ for Hub integration tests.
+
+```sh
+go test ./...
+npm ci --ignore-scripts
+npm test
+go build ./cmd/barrikade-lens ./cmd/lens-hub ./cmd/lens-k8s
+```
+
+Set `LENS_TEST_DATABASE_URL` to run the PostgreSQL stale/removal and tenant-isolation integration tests. Release builds use GoReleaser, generate SBOMs and checksums, and populate the platform-specific npm packages.
+
+For a source checkout, install the local native development build once:
+
+```sh
+npm ci --ignore-scripts
+npm run install:local
+```
+
+This stages the binary for the current OS and architecture, creates the local npm executable, and links `barrikade-lens` into npm's global bin directory. Afterward, both `npx barrikade-lens` and `barrikade-lens` run the checkout. Registry users do not need this step after the v2 platform packages and launcher are published.
+
+Weekly and manually triggered scale CI enforces a two-second inventory-query gate at one million current entities. Signed artifact requirements and release secrets are described in [release integrity](docs/releasing.md).
+
+## License and provenance
+
+Lens is Apache-2.0. Select inventory, redaction, digest, and managed-deployment design lessons were ported from Agent Beacon under its MIT license; the notice is retained in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). The bundled public catalog adapter treats its CC0 source as replaceable data and exposes source provenance as “Public API Catalog.”

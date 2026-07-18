@@ -1,0 +1,9 @@
+version: 1
+description: Reusable OpenTelemetry GenAI attribute names for Lens inventory attributes. A Lens snapshot is not a trace or runtime-observability signal.
+mappings:
+  agent.name: gen_ai.agent.name
+  agent.id: gen_ai.agent.id
+  model.name: gen_ai.request.model
+  provider.name: gen_ai.provider.name
+  tool.name: gen_ai.tool.name
+  operation.name: gen_ai.operation.name

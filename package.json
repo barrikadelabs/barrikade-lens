@@ -1,0 +1,11 @@
+{
+  "name": "barrikade-lens-monorepo",
+  "private": true,
+  "packageManager": "npm@11.4.1",
+  "workspaces": ["npm/launcher", "hub-ui"],
+  "scripts": {
+    "build": "npm run build -w barrikade-lens && npm run build -w @barrikade/lens-hub-ui",
+    "test": "npm run test -w barrikade-lens && npm run test -w @barrikade/lens-hub-ui",
+    "install:local": "node scripts/install-local.mjs"
+  }
+}

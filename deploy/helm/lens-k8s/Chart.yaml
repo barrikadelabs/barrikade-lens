@@ -1,0 +1,6 @@
+apiVersion: v2
+name: lens-k8s
+description: Read-only Kubernetes discovery collector for Barrikade Lens
+type: application
+version: 2.0.0
+appVersion: "2.0.0"

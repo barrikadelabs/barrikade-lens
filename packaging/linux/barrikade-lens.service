@@ -1,0 +1,18 @@
+[Unit]
+Description=Barrikade Lens managed discovery collector
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/barrikade-lens service run --config /etc/barrikade-lens/config.json
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/barrikade-lens /var/log/barrikade-lens
+
+[Install]
+WantedBy=multi-user.target

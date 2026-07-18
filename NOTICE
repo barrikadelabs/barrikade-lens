@@ -1,0 +1,10 @@
+Barrikade Lens
+Copyright 2026 Barrikade Labs
+
+This product includes implementation patterns and selectively adapted code from
+Agent Beacon, Copyright 2026 Asymptote Labs, licensed under the MIT License.
+The complete MIT notice is included in THIRD_PARTY_NOTICES.md.
+
+The optional public API catalog data source is distributed under CC0 1.0. Lens
+does not require, bundle, or call a hosted catalog service.
+

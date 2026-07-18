@@ -1,0 +1,75 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://barrikade.ai/schemas/lens/discovery-snapshot-v1.json",
+  "title": "Barrikade Lens Discovery Snapshot v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "snapshot_id", "organization_id", "source_id", "source_type", "collector", "observed_at", "full", "sequence", "scope", "entities", "relationships", "evidence", "coverage"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "snapshot_id": {"type": "string", "format": "uuid"},
+    "organization_id": {"type": "string", "minLength": 1},
+    "source_id": {"type": "string", "minLength": 1},
+    "source_type": {"enum": ["endpoint", "repository", "kubernetes"]},
+    "collector": {"$ref": "#/$defs/collector"},
+    "observed_at": {"type": "string", "format": "date-time"},
+    "full": {"type": "boolean"},
+    "sequence": {"type": "integer", "minimum": 0},
+    "scope": {"$ref": "#/$defs/scope"},
+    "entities": {"type": "array", "items": {"$ref": "#/$defs/entity"}},
+    "relationships": {"type": "array", "items": {"$ref": "#/$defs/relationship"}},
+    "evidence": {"type": "array", "items": {"$ref": "#/$defs/evidence"}},
+    "coverage": {"$ref": "#/$defs/coverage"},
+    "errors": {"type": "array", "items": {"$ref": "#/$defs/error"}}
+  },
+  "$defs": {
+    "collector": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "version", "mode"],
+      "properties": {
+        "id": {"type": "string"}, "name": {"type": "string"},
+        "version": {"type": "string"}, "mode": {"type": "string"}
+      }
+    },
+    "confidence": {"enum": ["confirmed", "likely", "possible"]},
+    "scope": {"type":"object","additionalProperties":false,"properties":{"name":{"type":"string"},"attributes":{"type":"object","additionalProperties":{"type":"string"}}}},
+    "coverage": {"type":"object","additionalProperties":false,"required":["detectors_run","detectors_failed","locations_checked","locations_denied","partial"],"properties":{"detectors_run":{"type":"integer","minimum":0},"detectors_failed":{"type":"integer","minimum":0},"locations_checked":{"type":"integer","minimum":0},"locations_denied":{"type":"integer","minimum":0},"partial":{"type":"boolean"},"notes":{"type":"array","items":{"type":"string"}}}},
+    "error": {"type":"object","additionalProperties":false,"required":["code","message"],"properties":{"detector_id":{"type":"string"},"code":{"type":"string"},"message":{"type":"string"},"retryable":{"type":"boolean"}}},
+    "entity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "name", "confidence"],
+      "properties": {
+        "id": {"type": "string"}, "kind": {"enum":["endpoint","user","repository","cluster","workload","agent","runtime","framework","mcp_server","skill","model","model_server","tool","api_service","api_operation","workflow","credential_reference"]},
+        "canonical_key": {"type": "string"}, "name": {"type": "string"},
+        "attributes": {"type": "object"}, "confidence": {"$ref": "#/$defs/confidence"},
+        "evidence_refs": {"type": "array", "items": {"type": "string"}},
+        "provenance": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "relationship": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "from", "to", "confidence"],
+      "properties": {
+        "id": {"type": "string"}, "kind": {"enum":["runs_on","defined_in","deployed_as","uses","exposes","connects_to","provides","invokes","configured_by","owned_by"]},
+        "from": {"type": "string"}, "to": {"type": "string"},
+        "attributes": {"type": "object"}, "confidence": {"$ref": "#/$defs/confidence"},
+        "evidence_refs": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "detector_id", "detector_version", "method", "family", "specificity", "observed_at"],
+      "properties": {
+        "id": {"type": "string"}, "detector_id": {"type": "string"},
+        "detector_version": {"type": "string"}, "method": {"type": "string"},
+        "family": {"type": "string"}, "specificity": {"enum":["high","medium","low"]},
+        "locator": {"type": "string"}, "content_hash": {"type": "string"},
+        "observed_at": {"type": "string", "format": "date-time"}
+      }
+    }
+  }
+}

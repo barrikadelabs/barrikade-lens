@@ -1,0 +1,26 @@
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_DB: lens
+      POSTGRES_USER: lens
+      POSTGRES_PASSWORD: lens-quickstart-only
+    volumes: ["lens-postgres:/var/lib/postgresql"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lens"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  hub:
+    build: .
+    ports: ["8080:8080"]
+    depends_on:
+      postgres: {condition: service_healthy}
+    environment:
+      LENS_DATABASE_URL: postgres://lens:lens-quickstart-only@postgres:5432/lens?sslmode=disable
+      LENS_PUBLIC_URL: http://localhost:8080
+      LENS_JWT_SECRET: replace-this-quickstart-signing-key-before-production
+      LENS_DEV_ADMIN_TOKEN: lens-local-admin
+      LENS_CATALOG_ENABLED: "true"
+volumes:
+  lens-postgres: {}
