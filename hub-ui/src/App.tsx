@@ -219,18 +219,6 @@ function SignIn({ onToken, authError }: { onToken: (value: string) => void; auth
             Lens discovers agents, runtimes, models, MCP servers, APIs, repositories, and deployments—then connects every finding to the evidence behind it.
           </p>
         </div>
-        <div className="lifecycle-ribbon" aria-label="Barrikade lifecycle">
-          {[
-            ["01", "Discover"],
-            ["02", "Register"],
-            ["03", "Protect"],
-            ["04", "Govern"],
-          ].map(([number, label], index) => (
-            <div className={index === 0 ? "active" : ""} key={label}>
-              <span>{number}</span><b>{label}</b>{index < 3 && <ArrowRight size={13} />}
-            </div>
-          ))}
-        </div>
       </section>
       <section className="signin-access">
         <div className="access-card">
@@ -263,10 +251,10 @@ function SignIn({ onToken, authError }: { onToken: (value: string) => void; auth
             </form>
           )}
           {error && <p className="error-message">{error}</p>}
-          <div className="access-note">
+          {/* <div className="access-note">
             <ShieldCheck size={16} />
             <span>Production access uses OIDC Authorization Code with PKCE. Bootstrap access is for local quickstarts only.</span>
-          </div>
+          </div> */}
         </div>
       </section>
     </main>
