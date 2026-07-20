@@ -25,6 +25,15 @@ func TestBuiltinPack(t *testing.T) {
 	if pack.Checksum != pack.CalculatedChecksum() {
 		t.Fatal("built-in pack checksum was not attached")
 	}
+	categories := map[string]string{}
+	for _, runtime := range pack.Runtimes {
+		categories[runtime.ID] = runtime.Category
+	}
+	for id, category := range map[string]string{"python": "development_runtime", "nodejs": "development_runtime", "bun": "development_runtime", "uv": "development_runtime", "vscode": "host_application", "ollama": "model_runtime", "lm-studio": "model_runtime", "vllm": "model_runtime", "localai": "model_runtime", "codex": "agent_tool"} {
+		if categories[id] != category {
+			t.Errorf("runtime %q category=%q, want %q", id, categories[id], category)
+		}
+	}
 	assertDetectorIDs(t, "runtime", runtimeIDs(pack), []string{
 		"claude", "codex", "cursor", "copilot", "vscode", "gemini", "windsurf", "devin", "cline", "roo", "kiro", "amazon-q", "continue", "opencode", "openclaw", "aider", "goose", "factory", "grok", "hermes", "zed", "warp", "junie", "augment", "qodo", "ollama", "lm-studio", "localai", "vllm", "llama-cpp", "anythingllm", "trae",
 	})
@@ -59,9 +68,20 @@ func assertDetectorIDs(t *testing.T, kind string, present map[string]struct{}, r
 }
 
 func TestChecksumRetainsDetectorStructure(t *testing.T) {
-	left := Pack{SchemaVersion: "1", ID: "test-pack", Version: "1", Runtimes: []RuntimeSignature{{ID: "one", Name: "One", Processes: []string{"a"}}, {ID: "two", Name: "Two", Processes: []string{"b"}}}}
-	right := Pack{SchemaVersion: "1", ID: "test-pack", Version: "1", Runtimes: []RuntimeSignature{{ID: "one", Name: "One", Processes: []string{"b"}}, {ID: "two", Name: "Two", Processes: []string{"a"}}}}
+	left := Pack{SchemaVersion: "2", ID: "test-pack", Version: "1", Runtimes: []RuntimeSignature{{ID: "one", Name: "One", Category: "unclassified", Processes: []string{"a"}}, {ID: "two", Name: "Two", Category: "unclassified", Processes: []string{"b"}}}}
+	right := Pack{SchemaVersion: "2", ID: "test-pack", Version: "1", Runtimes: []RuntimeSignature{{ID: "one", Name: "One", Category: "unclassified", Processes: []string{"b"}}, {ID: "two", Name: "Two", Category: "unclassified", Processes: []string{"a"}}}}
 	if left.CalculatedChecksum() == right.CalculatedChecksum() {
 		t.Fatal("checksum lost detector field association")
+	}
+}
+
+func TestPackV2RequiresRuntimeClassification(t *testing.T) {
+	pack := Pack{SchemaVersion: "2", ID: "test-pack", Version: "1", Runtimes: []RuntimeSignature{{ID: "example", Name: "Example"}}}
+	if err := pack.Validate(); err == nil {
+		t.Fatal("pack without a runtime classification passed validation")
+	}
+	pack.Runtimes[0].Category = "agent_tool"
+	if err := pack.Validate(); err != nil {
+		t.Fatal(err)
 	}
 }

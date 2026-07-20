@@ -32,6 +32,7 @@ const (
 type Options struct {
 	OrganizationID          string
 	SourceID                string
+	TargetID                string
 	HomeDir                 string
 	Hostname                string
 	Username                string
@@ -74,8 +75,11 @@ func Scan(ctx context.Context, options Options) (discovery.Snapshot, error) {
 		}
 		options.Pack = pack
 	}
+	if options.TargetID == "" {
+		options.TargetID = discovery.StableID(options.OrganizationID, discovery.KindEndpoint, strings.ToLower(options.Hostname))
+	}
 	if options.SourceID == "" {
-		options.SourceID = discovery.StableID(options.OrganizationID, discovery.KindEndpoint, strings.ToLower(options.Hostname))
+		options.SourceID = options.TargetID
 	}
 	if !options.DisableSystemInspection {
 		if options.ProcessNames == nil {
@@ -98,7 +102,7 @@ func Scan(ctx context.Context, options Options) (discovery.Snapshot, error) {
 		}
 	}
 
-	snapshot := discovery.NewSnapshot(options.OrganizationID, options.SourceID, discovery.SourceEndpoint, discovery.Collector{
+	snapshot := discovery.NewTargetSnapshot(options.OrganizationID, options.SourceID, options.TargetID, discovery.SourceEndpoint, discovery.Collector{
 		ID: "barrikade-lens", Name: "Barrikade Lens", Version: Version, Mode: "standalone",
 	})
 	snapshot.Scope = discovery.Scope{Name: options.Hostname, Attributes: map[string]string{"platform": options.Platform}}
@@ -106,17 +110,17 @@ func Scan(ctx context.Context, options Options) (discovery.Snapshot, error) {
 
 	systemEvidence := b.AddEvidence(builder.Observation{
 		DetectorID: "lens.endpoint", DetectorVersion: Version, Method: "system", Family: "identity", Specificity: "high",
-		Locator: discovery.HashLocator(options.OrganizationID, options.SourceID),
+		Locator: discovery.HashLocator(options.OrganizationID, options.TargetID),
 	})
-	endpointID := b.AddEntity(discovery.KindEndpoint, options.SourceID, options.Hostname, map[string]any{
-		"hostname": options.Hostname, "os": options.Platform, "architecture": runtime.GOARCH,
+	endpointID := b.AddEntity(discovery.KindEndpoint, options.TargetID, options.Hostname, map[string]any{
+		"hostname": options.Hostname, "os": options.Platform, "architecture": runtime.GOARCH, "source_surface": "endpoint",
 	}, systemEvidence)
 	userID := ""
 	if options.Username != "" {
-		userID = b.AddEntity(discovery.KindUser, "endpoint:"+options.SourceID+":user:"+options.Username, options.Username, map[string]any{
+		userID = b.AddEntity(discovery.KindUser, "target:"+options.TargetID+":user:"+strings.ToLower(options.Username), options.Username, map[string]any{
 			"os_user": true,
 		}, systemEvidence)
-		b.AddRelationship(discovery.RelationshipOwnedBy, endpointID, userID, nil, systemEvidence)
+		b.AddRelationship(discovery.RelationshipOwnedBy, endpointID, userID, map[string]any{"attribution": "observed_user", "authoritative": false}, systemEvidence)
 	}
 
 	for _, signature := range options.Pack.Runtimes {
@@ -140,13 +144,19 @@ func Scan(ctx context.Context, options Options) (discovery.Snapshot, error) {
 }
 
 func scanRuntime(b *builder.Builder, options Options, signature detector.RuntimeSignature, endpointID, userID string) {
-	canonical := "endpoint:" + options.SourceID + ":runtime:" + signature.ID
+	canonical := "target:" + options.TargetID + ":runtime:" + signature.ID
 	runtimeID := ""
 	addRuntime := func(attributes map[string]any, ref string) string {
+		if attributes == nil {
+			attributes = map[string]any{}
+		}
+		attributes["product_id"] = signature.ID
+		attributes["product_category"] = signature.Category
+		attributes["source_surface"] = "endpoint"
 		runtimeID = b.AddEntity(discovery.KindRuntime, canonical, signature.Name, attributes, ref)
 		b.AddRelationship(discovery.RelationshipRunsOn, runtimeID, endpointID, nil, ref)
 		if userID != "" {
-			b.AddRelationship(discovery.RelationshipOwnedBy, runtimeID, userID, map[string]any{"scope": "user"}, ref)
+			b.AddRelationship(discovery.RelationshipOwnedBy, runtimeID, userID, map[string]any{"scope": "user", "attribution": "observed_user", "authoritative": false}, ref)
 		}
 		return runtimeID
 	}
@@ -271,14 +281,14 @@ func scanRuntime(b *builder.Builder, options Options, signature detector.Runtime
 			Family: "network_listener", Specificity: "high", Locator: fmt.Sprintf("tcp://127.0.0.1:%d", modelServer.Port),
 		})
 		currentRuntimeID := addRuntime(map[string]any{"running_at_scan": true}, ref)
-		serverID := b.AddEntity(discovery.KindModelServer, fmt.Sprintf("endpoint:%s:model-server:%d", options.SourceID, modelServer.Port), modelServer.Name, map[string]any{
-			"running_at_scan": true, "transport": "http", "port": modelServer.Port,
+		serverID := b.AddEntity(discovery.KindModelServer, fmt.Sprintf("target:%s:model-server:%d", options.TargetID, modelServer.Port), modelServer.Name, map[string]any{
+			"running_at_scan": true, "transport": "http", "port": modelServer.Port, "source_surface": "endpoint",
 		}, ref)
 		if ownershipVerified {
-			b.AddEntity(discovery.KindModelServer, fmt.Sprintf("endpoint:%s:model-server:%d", options.SourceID, modelServer.Port), modelServer.Name, map[string]any{"listener_process_verified": true}, ref)
+			b.AddEntity(discovery.KindModelServer, fmt.Sprintf("target:%s:model-server:%d", options.TargetID, modelServer.Port), modelServer.Name, map[string]any{"listener_process_verified": true}, ref)
 		}
 		if binding := options.ListeningBindings[modelServer.Port]; binding != "" {
-			b.AddEntity(discovery.KindModelServer, fmt.Sprintf("endpoint:%s:model-server:%d", options.SourceID, modelServer.Port), modelServer.Name, map[string]any{"binding": binding}, ref)
+			b.AddEntity(discovery.KindModelServer, fmt.Sprintf("target:%s:model-server:%d", options.TargetID, modelServer.Port), modelServer.Name, map[string]any{"binding": binding}, ref)
 		}
 		b.AddRelationship(discovery.RelationshipProvides, currentRuntimeID, serverID, nil, ref)
 		b.AddRelationship(discovery.RelationshipRunsOn, serverID, endpointID, nil, ref)
@@ -294,7 +304,7 @@ func scanKnownListener(b *builder.Builder, options Options, listener detector.Li
 		DetectorID: listener.ID, DetectorVersion: options.Pack.Version, Method: "listener",
 		Family: "network_listener", Specificity: "high", Locator: fmt.Sprintf("tcp-listener:%d", listener.Port),
 	})
-	attributes := map[string]any{"running_at_scan": true, "transport": "tcp", "port": listener.Port}
+	attributes := map[string]any{"running_at_scan": true, "transport": "tcp", "port": listener.Port, "source_surface": "endpoint"}
 	if ownershipVerified {
 		attributes["listener_process_verified"] = true
 	}
@@ -302,7 +312,7 @@ func scanKnownListener(b *builder.Builder, options Options, listener detector.Li
 		attributes["binding"] = binding
 	}
 	kind := discovery.EntityKind(listener.Kind)
-	entityID := b.AddEntity(kind, fmt.Sprintf("endpoint:%s:%s:%d", options.SourceID, listener.Kind, listener.Port), listener.Name, attributes, ref)
+	entityID := b.AddEntity(kind, fmt.Sprintf("target:%s:%s:%d", options.TargetID, listener.Kind, listener.Port), listener.Name, attributes, ref)
 	b.AddRelationship(discovery.RelationshipRunsOn, entityID, endpointID, nil, ref)
 }
 
@@ -335,8 +345,8 @@ func scanSkills(b *builder.Builder, options Options, signature detector.RuntimeS
 			ContentHash: contentHash,
 		})
 		runtimeID := addRuntime(map[string]any{"skills_configured": true}, ref)
-		skillID := b.AddEntity(discovery.KindSkill, "endpoint:"+options.SourceID+":skill:"+strings.ToLower(options.Username)+":"+signature.ID+":"+entry.Name(), entry.Name(), map[string]any{
-			"configured": true,
+		skillID := b.AddEntity(discovery.KindSkill, "target:"+options.TargetID+":skill:"+strings.ToLower(options.Username)+":"+signature.ID+":"+entry.Name(), entry.Name(), map[string]any{
+			"configured": true, "source_surface": "endpoint",
 		}, ref)
 		b.AddRelationship(discovery.RelationshipProvides, runtimeID, skillID, nil, ref)
 	}
@@ -353,8 +363,8 @@ func scanModelCache(ctx context.Context, b *builder.Builder, options Options, ca
 		if cache.Layout == "directory" {
 			if info, err := os.Stat(root); err == nil && info.IsDir() {
 				ref := b.AddEvidence(builder.Observation{DetectorID: cache.ID, DetectorVersion: options.Pack.Version, Method: "path", Family: "model_cache", Specificity: "high", Locator: discovery.SafeLocator(options.OrganizationID, "", root)})
-				modelID := b.AddEntity(discovery.KindModel, "endpoint:"+options.SourceID+":model-cache:"+cache.ID, cache.Name, map[string]any{"cached": true, "cache_only": true, "cache_provider": cache.Name, "cache_id": cache.ID}, ref)
-				b.AddRelationship(discovery.RelationshipRunsOn, modelID, endpointID, map[string]any{"cached": true}, ref)
+				modelID := b.AddEntity(discovery.KindModel, "target:"+options.TargetID+":model-cache:"+cache.ID, cache.Name, map[string]any{}, ref)
+				b.AddRelationship(discovery.RelationshipRunsOn, modelID, endpointID, map[string]any{"cached": true, "cache_only": true, "cache_provider": cache.Name, "cache_id": cache.ID, "source_surface": "endpoint"}, ref)
 			} else if errors.Is(err, os.ErrPermission) {
 				b.Snapshot.Coverage.LocationsDenied++
 				b.Snapshot.Coverage.Partial = true
@@ -404,10 +414,8 @@ func scanModelCache(ctx context.Context, b *builder.Builder, options Options, ca
 				DetectorID: cache.ID, DetectorVersion: options.Pack.Version, Method: "path",
 				Family: "model_cache", Specificity: "high", Locator: discovery.SafeLocator(options.OrganizationID, "", path),
 			})
-			modelID := b.AddEntity(discovery.KindModel, "model:"+key, name, map[string]any{
-				"cached": true, "cache_provider": cache.Name, "cache_id": cache.ID,
-			}, ref)
-			b.AddRelationship(discovery.RelationshipRunsOn, modelID, endpointID, map[string]any{"cached": true}, ref)
+			modelID := b.AddEntity(discovery.KindModel, "model:"+key, name, map[string]any{}, ref)
+			b.AddRelationship(discovery.RelationshipRunsOn, modelID, endpointID, map[string]any{"cached": true, "cache_provider": cache.Name, "cache_id": cache.ID, "source_surface": "endpoint"}, ref)
 			return nil
 		})
 		if err != nil && !errors.Is(err, os.ErrNotExist) && !errors.Is(err, context.Canceled) {
@@ -459,8 +467,8 @@ type mcpServer struct {
 
 func addMCPServers(b *builder.Builder, options Options, signature detector.RuntimeSignature, runtimeID string, document any, ref string) {
 	for _, server := range findMCPServers(document) {
-		attributes := map[string]any{"configured": true, "transport": server.Transport}
-		canonical := "endpoint:" + options.SourceID + ":mcp:" + strings.ToLower(options.Username) + ":" + signature.ID + ":" + server.Name
+		attributes := map[string]any{"configured": true, "transport": server.Transport, "source_surface": "endpoint"}
+		canonical := "target:" + options.TargetID + ":mcp:" + strings.ToLower(options.Username) + ":" + signature.ID + ":" + server.Name
 		if server.URL != "" {
 			sanitized, err := discovery.SanitizeURL(server.URL)
 			if err != nil {
@@ -468,7 +476,7 @@ func addMCPServers(b *builder.Builder, options Options, signature detector.Runti
 			}
 			attributes["endpoint"] = sanitized
 			attributes["host"] = discovery.URLHost(sanitized)
-			canonical = "endpoint:" + options.SourceID + ":mcp-url:" + sanitized
+			canonical = "target:" + options.TargetID + ":mcp-url:" + sanitized
 		}
 		if server.Enabled != nil {
 			attributes["enabled"] = *server.Enabled
@@ -569,7 +577,7 @@ func addModels(b *builder.Builder, options Options, runtimeID string, document a
 			}
 			seen[name] = struct{}{}
 			modelID := b.AddEntity(discovery.KindModel, "model:"+strings.ToLower(name), name, map[string]any{"configured": true}, ref)
-			b.AddRelationship(discovery.RelationshipUses, runtimeID, modelID, nil, ref)
+			b.AddRelationship(discovery.RelationshipUses, runtimeID, modelID, map[string]any{"configured": true}, ref)
 		}
 	}
 	walk("", document)

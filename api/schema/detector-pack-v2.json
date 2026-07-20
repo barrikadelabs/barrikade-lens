@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://schemas.barrikade.ai/lens/detector-pack-v1.json",
-  "title": "Barrikade Lens Detector Pack v1",
+  "$id": "https://schemas.barrikade.ai/lens/detector-pack-v2.json",
+  "title": "Barrikade Lens Detector Pack v2",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "id", "version", "runtimes", "frameworks"],
   "properties": {
-    "schema_version": { "const": "1" },
+    "schema_version": { "const": "2" },
     "id": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]+$" },
     "version": { "type": "string", "minLength": 1 },
     "checksum": { "type": "string", "pattern": "^sha256:[a-f0-9]{64}$" },
@@ -19,10 +19,11 @@
     "runtime": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "name"],
+      "required": ["id", "name", "category"],
       "properties": {
         "id": { "type": "string" },
         "name": { "type": "string" },
+        "category": { "enum": ["agent_tool", "model_runtime", "host_application", "development_runtime", "unclassified"] },
         "processes": { "type": "array", "items": { "type": "string" } },
         "images": { "type": "array", "items": { "type": "string" } },
         "environment_keys": { "type": "array", "items": { "type": "string" } },

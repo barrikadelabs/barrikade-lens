@@ -56,6 +56,9 @@ func (c *Controller) Run(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if cfg.ConfigVersion != 2 || cfg.TargetID == "" {
+		return fmt.Errorf("Kubernetes collector configuration is from an older Lens version; re-enroll this collector")
+	}
 	if c.HubClient == nil {
 		c.HubClient = hubclient.New(c.Version)
 	}
@@ -117,7 +120,7 @@ func (c *Controller) Run(ctx context.Context) error {
 		if err := lensconfig.Save(c.ConfigPath, cfg); err != nil {
 			return err
 		}
-		snapshot, err := scanner.Scan(scanner.Options{OrganizationID: cfg.OrganizationID, SourceID: cfg.SourceID, Full: full, Sequence: cfg.Sequence, Pack: pack, Inventory: inventory})
+		snapshot, err := scanner.Scan(scanner.Options{OrganizationID: cfg.OrganizationID, SourceID: cfg.SourceID, TargetID: cfg.TargetID, Full: full, Sequence: cfg.Sequence, Pack: pack, Inventory: inventory})
 		if err != nil {
 			return err
 		}

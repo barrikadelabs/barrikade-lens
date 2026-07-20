@@ -1,131 +1,45 @@
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-  type ReactNode,
-} from "react";
-import {
-  Activity,
-  ArrowRight,
-  Bot,
-  Boxes,
-  BrainCircuit,
-  Check,
-  CheckCircle2,
-  ChevronDown,
-  ChevronRight,
-  CircleDot,
-  Clock3,
-  Container,
-  Copy,
-  Cpu,
-  Database,
-  Download,
-  GitBranch,
-  History,
-  KeyRound,
-  Layers3,
-  LayoutDashboard,
-  Link2,
-  LogOut,
-  Menu,
-  Monitor,
-  Network,
-  PackageSearch,
-  PlugZap,
-  Radar,
-  RadioTower,
-  RefreshCw,
-  Search,
-  Server,
-  ShieldCheck,
-  SlidersHorizontal,
-  Sparkles,
-  TerminalSquare,
-  UserRound,
-  Workflow,
-  Wrench,
-  X,
-  type LucideIcon,
+  Activity, AlertCircle, ArrowRight, Bot, Boxes, BrainCircuit, CheckCircle2, ChevronDown,
+  ChevronRight, CircleDot, Clock3, Container, Copy, Database, Download, ExternalLink,
+  GitBranch, HelpCircle, History, LayoutDashboard, Link2, LogOut, Menu, Monitor, Network,
+  PackageSearch, PlugZap, Radar, RefreshCw, Search, Server, ShieldCheck, SlidersHorizontal,
+  TerminalSquare, UserRound, Workflow, X, type LucideIcon,
 } from "lucide-react";
 import {
-  API,
-  type AuthConfig,
-  type Change,
-  type Entity,
-  type EntityDetail,
-  type Relationship,
-  type Source,
-  authConfig,
-  exchangeOIDC,
+  API, authConfig, exchangeOIDC, type AuthConfig, type Change, type Connection, type Entity,
+  type EntityDetail, type Overview, type SystemDetail, type SystemItem, type Target,
 } from "./api";
 
-type Page = "Overview" | "Inventory" | "Topology" | "Changes" | "Sources";
+type Page = "Overview" | "Systems" | "Coverage" | "Changes" | "Technical inventory" | "Evidence graph";
 
-const navigation: Array<{ page: Page; label: string; icon: LucideIcon; description: string }> = [
-  { page: "Overview", label: "Overview", icon: LayoutDashboard, description: "Fleet discovery at a glance" },
-  { page: "Inventory", label: "Inventory", icon: Boxes, description: "Every discovered entity" },
-  { page: "Topology", label: "Relationships", icon: Network, description: "How the inventory connects" },
-  { page: "Changes", label: "Changes", icon: History, description: "What changed and when" },
-  { page: "Sources", label: "Sources", icon: RadioTower, description: "Coverage and enrollment" },
+const navigation: Array<{ page: Page; icon: LucideIcon; detail: string }> = [
+  { page: "Overview", icon: LayoutDashboard, detail: "Discovery posture" },
+  { page: "Systems", icon: Bot, detail: "Root systems" },
+  { page: "Coverage", icon: Radar, detail: "Targets and freshness" },
+  { page: "Changes", icon: History, detail: "Material change" },
+  { page: "Technical inventory", icon: Boxes, detail: "Complete entity set" },
+  { page: "Evidence graph", icon: Network, detail: "Facts and connections" },
 ];
 
 const pageCopy: Record<Page, { eyebrow: string; title: string; detail: string }> = {
-  Overview: {
-    eyebrow: "DISCOVERY COMMAND CENTER",
-    title: "Your autonomous agent footprint",
-    detail: "A factual, evidence-backed view across endpoints, source repositories, and Kubernetes.",
-  },
-  Inventory: {
-    eyebrow: "CURRENT INVENTORY",
-    title: "Everything Lens can see",
-    detail: "Filter discovered agents, runtimes, models, tools, APIs, and deployment surfaces.",
-  },
-  Topology: {
-    eyebrow: "EVIDENCE GRAPH",
-    title: "See how the pieces connect",
-    detail: "Trace where agents run, what they use, and which capabilities they expose.",
-  },
-  Changes: {
-    eyebrow: "OBSERVATION HISTORY",
-    title: "What changed across the fleet",
-    detail: "Discovered, updated, stale, and removed inventory over the retention window.",
-  },
-  Sources: {
-    eyebrow: "COVERAGE MANAGEMENT",
-    title: "Bring the whole organization into view",
-    detail: "Track source freshness and enroll endpoints with short-lived, scoped credentials.",
-  },
+  Overview: { eyebrow: "DISCOVERY POSTURE", title: "Know what is operating across your organization", detail: "Distinct systems, collection coverage, factual attention, and meaningful change—grounded in discovery evidence." },
+  Systems: { eyebrow: "SYSTEM INVESTIGATION", title: "Autonomous systems in context", detail: "Agent systems, agent-capable tools, and model runtimes with their state, target, capabilities, and evidence." },
+  Coverage: { eyebrow: "COLLECTION COVERAGE", title: "See where Lens can—and cannot—see", detail: "Unique endpoints, repositories, and clusters with source freshness, scan gaps, and collector identity diagnostics." },
+  Changes: { eyebrow: "MATERIAL CHANGE", title: "What actually changed", detail: "State, exposure, attribution, capability, confidence, identity, and freshness changes. Routine re-observation is suppressed." },
+  "Technical inventory": { eyebrow: "CANONICAL INVENTORY", title: "Inspect every discovered entity", detail: "The complete evidence-backed graph, including supporting runtimes, cached artifacts, users, APIs, and workloads." },
+  "Evidence graph": { eyebrow: "EVIDENCE GRAPH", title: "Trace every conclusion to its source", detail: "Explore a system’s connected capabilities, deployment surfaces, observed users, and sanitized evidence without loading the fleet graph." },
 };
 
-const kindConfig: Record<string, { label: string; icon: LucideIcon; family: string }> = {
-  endpoint: { label: "Endpoint", icon: Monitor, family: "source" },
-  user: { label: "User", icon: UserRound, family: "source" },
-  repository: { label: "Repository", icon: GitBranch, family: "source" },
-  cluster: { label: "Cluster", icon: Container, family: "source" },
-  workload: { label: "Workload", icon: Container, family: "delivery" },
-  agent: { label: "Agent", icon: Bot, family: "agent" },
-  runtime: { label: "Runtime", icon: TerminalSquare, family: "agent" },
-  framework: { label: "Framework", icon: Layers3, family: "agent" },
-  mcp_server: { label: "MCP server", icon: PlugZap, family: "capability" },
-  skill: { label: "Skill", icon: Sparkles, family: "capability" },
-  model: { label: "Model", icon: BrainCircuit, family: "ai" },
-  model_server: { label: "Model server", icon: Server, family: "ai" },
-  tool: { label: "Tool", icon: Wrench, family: "capability" },
-  api_service: { label: "API service", icon: Database, family: "delivery" },
-  api_operation: { label: "API operation", icon: Link2, family: "delivery" },
-  workflow: { label: "Workflow", icon: Workflow, family: "delivery" },
-  credential_reference: { label: "Credential reference", icon: KeyRound, family: "capability" },
+const kindIcons: Record<string, LucideIcon> = {
+  endpoint: Monitor, repository: GitBranch, cluster: Container, workload: Container, agent: Bot,
+  runtime: TerminalSquare, framework: Boxes, mcp_server: PlugZap, skill: CheckCircle2, model: BrainCircuit,
+  model_server: Server, api_service: Database, api_operation: Link2, workflow: Workflow, user: UserRound,
 };
 
 export function App() {
   const [token, setToken] = useState(() => sessionStorage.getItem("lens-token") ?? "");
-  const [page, setPage] = useState<Page>("Overview");
-  const [inventoryKind, setInventoryKind] = useState("all");
   const [authError, setAuthError] = useState("");
-  const api = useMemo(() => new API(token), [token]);
-
   const saveToken = useCallback((value: string) => {
     sessionStorage.setItem("lens-token", value);
     setToken(value);
@@ -134,1008 +48,442 @@ export function App() {
   useEffect(() => {
     const params = new URLSearchParams(location.search);
     const code = params.get("code");
-    const state = params.get("state");
     if (!code) return;
     const verifier = sessionStorage.getItem("lens-pkce-verifier");
     const expected = sessionStorage.getItem("lens-oidc-state");
     const redirect = sessionStorage.getItem("lens-oidc-redirect");
-    if (!verifier || !redirect || state !== expected) {
+    if (!verifier || !redirect || params.get("state") !== expected) {
       setAuthError("The sign-in state could not be verified.");
       return;
     }
-    exchangeOIDC(code, redirect, verifier)
-      .then((result) => {
-        history.replaceState({}, "", location.pathname);
-        sessionStorage.removeItem("lens-pkce-verifier");
-        sessionStorage.removeItem("lens-oidc-state");
-        saveToken(result.access_token);
-      })
-      .catch((error) => setAuthError(String(error)));
+    exchangeOIDC(code, redirect, verifier).then((result) => {
+      history.replaceState({}, "", location.pathname);
+      saveToken(result.access_token);
+    }).catch((error) => setAuthError(String(error)));
   }, [saveToken]);
 
   if (!token) return <SignIn onToken={saveToken} authError={authError} />;
-
-  const openInventory = (kind = "all") => {
-    setInventoryKind(kind);
-    setPage("Inventory");
-  };
-
-  return (
-    <Shell
-      page={page}
-      setPage={setPage}
-      api={api}
-      inventoryKind={inventoryKind}
-      openInventory={openInventory}
-      signOut={() => {
-        sessionStorage.removeItem("lens-token");
-        setToken("");
-      }}
-    />
-  );
+  return <Shell api={new API(token)} signOut={() => { sessionStorage.removeItem("lens-token"); setToken(""); }} />;
 }
 
-function SignIn({ onToken, authError }: { onToken: (value: string) => void; authError: string }) {
-  const [value, setValue] = useState("");
+function SignIn({ onToken, authError }: { onToken: (token: string) => void; authError: string }) {
   const [config, setConfig] = useState<AuthConfig | null>(null);
+  const [value, setValue] = useState("");
   const [error, setError] = useState(authError);
-
-  useEffect(() => {
-    authConfig().then(setConfig).catch((reason) => setError(String(reason)));
-  }, []);
+  useEffect(() => { authConfig().then(setConfig).catch((reason) => setError(String(reason))); }, []);
 
   const beginOIDC = async () => {
     if (!config?.authorization_endpoint || !config.client_id || !config.redirect_uri) return;
     const verifier = randomURLSafe(64);
     const state = randomURLSafe(24);
     const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier));
-    const challenge = base64URL(new Uint8Array(digest));
     sessionStorage.setItem("lens-pkce-verifier", verifier);
     sessionStorage.setItem("lens-oidc-state", state);
     sessionStorage.setItem("lens-oidc-redirect", config.redirect_uri);
     const target = new URL(config.authorization_endpoint);
-    target.search = new URLSearchParams({
-      response_type: "code",
-      client_id: config.client_id,
-      redirect_uri: config.redirect_uri,
-      scope: (config.scopes ?? ["openid"]).join(" "),
-      state,
-      code_challenge: challenge,
-      code_challenge_method: "S256",
-    }).toString();
+    target.search = new URLSearchParams({ response_type: "code", client_id: config.client_id, redirect_uri: config.redirect_uri, scope: (config.scopes ?? ["openid"]).join(" "), state, code_challenge: base64URL(new Uint8Array(digest)), code_challenge_method: "S256" }).toString();
     location.assign(target);
   };
 
-  return (
-    <main className="signin">
-      <div className="signin-glow signin-glow-one" />
-      <div className="signin-glow signin-glow-two" />
-      <section className="signin-story">
-        <Brand lockup="Lens" />
-        <div className="signin-copy">
-          <div className="product-kicker"><Radar size={14} /> Autonomous agent discovery</div>
-          <h1>Bring your entire agent footprint into focus.</h1>
-          <p>
-            Lens discovers agents, runtimes, models, MCP servers, APIs, repositories, and deployments—then connects every finding to the evidence behind it.
-          </p>
-        </div>
-      </section>
-      <section className="signin-access">
-        <div className="access-card">
-          <p className="eyebrow">LENS HUB</p>
-          <h2>Open your discovery plane</h2>
-          <p className="muted">Sign in to view your organization’s current inventory and source coverage.</p>
-          {config?.enabled && (
-            <button className="button primary full" onClick={beginOIDC}>
-              Continue with organization SSO <ArrowRight size={16} />
-            </button>
-          )}
-          {config?.development_bootstrap && (
-            <form
-              onSubmit={(event) => {
-                event.preventDefault();
-                if (value.trim()) onToken(value.trim());
-              }}
-            >
-              <label>
-                Local bootstrap token
-                <input
-                  value={value}
-                  onChange={(event) => setValue(event.target.value)}
-                  type="password"
-                  placeholder="Enter development token"
-                  autoFocus={!config?.enabled}
-                />
-              </label>
-              <button className="button primary full">Open Lens Hub <ArrowRight size={16} /></button>
-            </form>
-          )}
-          {error && <p className="error-message">{error}</p>}
-          {/* <div className="access-note">
-            <ShieldCheck size={16} />
-            <span>Production access uses OIDC Authorization Code with PKCE. Bootstrap access is for local quickstarts only.</span>
-          </div> */}
-        </div>
-      </section>
-    </main>
-  );
-}
-
-function Shell({
-  page,
-  setPage,
-  api,
-  inventoryKind,
-  openInventory,
-  signOut,
-}: {
-  page: Page;
-  setPage: (page: Page) => void;
-  api: API;
-  inventoryKind: string;
-  openInventory: (kind?: string) => void;
-  signOut: () => void;
-}) {
-  const [menuOpen, setMenuOpen] = useState(false);
-  const data = useData(api);
-  const copy = pageCopy[page];
-  const latest = newestTimestamp(data.sources.map((source) => source.last_seen_at));
-
-  const navigate = (next: Page) => {
-    setPage(next);
-    setMenuOpen(false);
-  };
-
-  return (
-    <div className="app-shell">
-      <aside className={menuOpen ? "sidebar open" : "sidebar"}>
-        <div className="sidebar-brand"><Brand lockup="Lens" /></div>
-        <nav className="main-nav" aria-label="Lens Hub navigation">
-          <p className="nav-heading">DISCOVERY</p>
-          {navigation.map((item) => {
-            const Icon = item.icon;
-            return (
-              <button className={page === item.page ? "active" : ""} key={item.page} onClick={() => navigate(item.page)}>
-                <Icon size={17} />
-                <span><b>{item.label}</b><small>{item.description}</small></span>
-                {page === item.page && <ChevronRight size={14} />}
-              </button>
-            );
-          })}
-        </nav>
-        <div className="lifecycle-card">
-          <div className="lifecycle-card-title"><CircleDot size={14} /><span>Barrikade lifecycle</span></div>
-          <div className="lifecycle-steps">
-            <span className="active"><i />Discover</span>
-            <span><i />Register</span>
-            <span><i />Protect</span>
-            <span><i />Govern</span>
-          </div>
-          <p>Lens is the discovery layer. It observes and reports; it does not approve, block, or enforce.</p>
-        </div>
-        <div className="sidebar-footer">
-          <div className="hub-state"><i /><span><b>Lens Hub</b><small>Connected</small></span></div>
-          <button onClick={signOut} aria-label="Sign out"><LogOut size={16} /></button>
-        </div>
-      </aside>
-
-      <main className="main-area">
-        <header className="topbar">
-          <button className="mobile-menu" onClick={() => setMenuOpen((current) => !current)} aria-label="Toggle navigation">
-            {menuOpen ? <X size={20} /> : <Menu size={20} />}
-          </button>
-          <div className="topbar-status"><span className="status-dot" /> Inventory live</div>
-          <div className="topbar-actions">
-            <span className="last-sync">Last observation {latest ? relative(latest) : "pending"}</span>
-            <button className="icon-button" onClick={data.refresh} aria-label="Refresh inventory" title="Refresh inventory">
-              <RefreshCw size={16} className={data.loading ? "spinning" : ""} />
-            </button>
-            <ExportMenu api={api} />
-          </div>
-        </header>
-
-        <div className="workspace">
-          <section className="page-heading">
-            <div>
-              <p className="eyebrow">{copy.eyebrow}</p>
-              <h1>{copy.title}</h1>
-              <p>{copy.detail}</p>
-            </div>
-            {page === "Overview" && (
-              <button className="button primary" onClick={() => openInventory()}>
-                Explore inventory <ArrowRight size={15} />
-              </button>
-            )}
-          </section>
-
-          {data.loading && !data.loaded ? (
-            <LoadingState />
-          ) : data.error ? (
-            <ErrorState detail={data.error} retry={data.refresh} />
-          ) : (
-            <PageContent
-              page={page}
-              api={api}
-              entities={data.entities}
-              relationships={data.relationships}
-              sources={data.sources}
-              changes={data.changes}
-              initialInventoryKind={inventoryKind}
-              openInventory={openInventory}
-            />
-          )}
-        </div>
-      </main>
-      {menuOpen && <button className="sidebar-scrim" onClick={() => setMenuOpen(false)} aria-label="Close navigation" />}
-    </div>
-  );
-}
-
-function useData(api: API) {
-  const [entities, setEntities] = useState<Entity[]>([]);
-  const [relationships, setRelationships] = useState<Relationship[]>([]);
-  const [sources, setSources] = useState<Source[]>([]);
-  const [changes, setChanges] = useState<Change[]>([]);
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(true);
-  const [loaded, setLoaded] = useState(false);
-  const [revision, setRevision] = useState(0);
-
-  useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    setError("");
-    Promise.all([api.entities(), api.relationships(), api.coverage(), api.changes()])
-      .then(([entityResult, relationshipResult, sourceResult, changeResult]) => {
-        if (cancelled) return;
-        setEntities(entityResult.items);
-        setRelationships(relationshipResult.items);
-        setSources(sourceResult.sources);
-        setChanges(changeResult.items);
-        setLoaded(true);
-      })
-      .catch((reason) => !cancelled && setError(String(reason)))
-      .finally(() => !cancelled && setLoading(false));
-    return () => { cancelled = true; };
-  }, [api, revision]);
-
-  return {
-    entities,
-    relationships,
-    sources,
-    changes,
-    error,
-    loading,
-    loaded,
-    refresh: () => setRevision((current) => current + 1),
-  };
-}
-
-function PageContent({
-  page,
-  api,
-  entities,
-  relationships,
-  sources,
-  changes,
-  initialInventoryKind,
-  openInventory,
-}: {
-  page: Page;
-  api: API;
-  entities: Entity[];
-  relationships: Relationship[];
-  sources: Source[];
-  changes: Change[];
-  initialInventoryKind: string;
-  openInventory: (kind?: string) => void;
-}) {
-  if (page === "Overview") return <Overview entities={entities} sources={sources} changes={changes} openInventory={openInventory} />;
-  if (page === "Inventory") return <Inventory entities={entities} relationships={relationships} api={api} initialKind={initialInventoryKind} />;
-  if (page === "Topology") return <Topology entities={entities} relationships={relationships} openInventory={openInventory} />;
-  if (page === "Changes") return <Changes items={changes} entities={entities} sources={sources} />;
-  return <Sources items={sources} api={api} />;
-}
-
-function Overview({
-  entities,
-  sources,
-  changes,
-  openInventory,
-}: {
-  entities: Entity[];
-  sources: Source[];
-  changes: Change[];
-  openInventory: (kind?: string) => void;
-}) {
-  const counts = useMemo(() => countBy(entities, "kind"), [entities]);
-  const confidence = useMemo(() => countBy(entities, "confidence"), [entities]);
-  const reportingSources = sources.filter((source) => source.last_seen_at).length;
-  const staleEntities = sources.reduce((total, source) => total + (source.stale_entities ?? 0), 0);
-  const categories = [
-    { label: "Agents & runtimes", detail: "Agent definitions, execution surfaces, and frameworks", kinds: ["agent", "runtime", "framework"], icon: Bot, color: "orange" },
-    { label: "MCP, skills & tools", detail: "Configured capabilities and tool servers", kinds: ["mcp_server", "skill", "tool"], icon: PlugZap, color: "purple" },
-    { label: "Models & inference", detail: "Model inventory and serving endpoints", kinds: ["model", "model_server"], icon: BrainCircuit, color: "blue" },
-    { label: "Code & delivery", detail: "Repositories, workloads, workflows, and APIs", kinds: ["repository", "workload", "workflow", "api_service", "api_operation"], icon: GitBranch, color: "green" },
-  ];
-
-  return (
-    <div className="page-stack">
-      <section className="kpi-grid">
-        <Kpi icon={PackageSearch} label="Current entities" value={entities.length} detail={`${Object.keys(counts).length} entity types`} />
-        <Kpi icon={CheckCircle2} label="Confirmed findings" value={confidence.confirmed ?? 0} detail="Authoritative or corroborated" />
-        <Kpi icon={RadioTower} label="Sources reporting" value={`${reportingSources}/${sources.length}`} detail={sources.length ? "Across the organization" : "Enroll your first source"} />
-        <Kpi icon={Clock3} label="Stale entities" value={staleEntities} detail="Awaiting source reconciliation" tone={staleEntities ? "attention" : "default"} />
-      </section>
-
-      <section className="discovery-hero panel">
-        <div className="discovery-hero-copy">
-          <p className="eyebrow">DISCOVERED SURFACES</p>
-          <h2>Your inventory, organized by how teams use it</h2>
-          <p>Start broad, then drill into the exact evidence, posture, and relationships behind every finding.</p>
-        </div>
-        <div className="discovery-categories">
-          {categories.map((category) => {
-            const Icon = category.icon;
-            const total = category.kinds.reduce((sum, kind) => sum + (counts[kind] ?? 0), 0);
-            return (
-              <button key={category.label} onClick={() => openInventory(category.kinds[0])}>
-                <span className={`category-icon ${category.color}`}><Icon size={19} /></span>
-                <span><b>{category.label}</b><small>{category.detail}</small></span>
-                <strong>{total}</strong><ChevronRight size={15} />
-              </button>
-            );
-          })}
-        </div>
-      </section>
-
-      <div className="overview-grid">
-        <section className="panel coverage-panel">
-          <PanelTitle title="Fleet coverage" detail="Freshness and inventory contributed by each discovery source" action={<span className="panel-count">{sources.length} sources</span>} />
-          <div className="source-table">
-            {sources.length ? sources.slice(0, 10).map((source) => <SourceRow key={source.source_id} source={source} />) : (
-              <EmptyState icon={RadioTower} title="No managed sources yet" detail="Enroll an endpoint to start building an organization-wide inventory." />
-            )}
-          </div>
-        </section>
-
-        <section className="panel confidence-panel">
-          <PanelTitle title="Evidence confidence" detail="How strongly each entity is supported" />
-          <ConfidenceBreakdown values={confidence} total={entities.length} />
-          <div className="confidence-note">
-            <ShieldCheck size={17} />
-            <p><b>Confidence is not a risk score.</b><span>It describes the strength and independence of the discovery evidence.</span></p>
-          </div>
-        </section>
-
-        <section className="panel recent-panel">
-          <PanelTitle title="Recent changes" detail="Latest inventory observations" action={<Activity size={16} />} />
-          <ChangePreview changes={changes.slice(0, 7)} entities={entities} />
-        </section>
-
-        <section className="panel boundary-panel">
-          <div className="boundary-mark"><Radar size={22} /></div>
-          <p className="eyebrow">LENS PRODUCT BOUNDARY</p>
-          <h2>Discovery that hands off cleanly</h2>
-          <p>Lens finds and describes your autonomous agent footprint. Open APIs and exports let any registration or control plane consume the inventory.</p>
-          <div className="boundary-list">
-            <span><Check size={14} /> Evidence-backed facts</span>
-            <span><Check size={14} /> Sanitized metadata</span>
-            <span><Check size={14} /> Interoperable graph</span>
-          </div>
-        </section>
+  return <main className="signin">
+    <section className="signin-story">
+      <Brand />
+      <div className="signin-copy">
+        <span className="product-kicker"><Radar size={14} /> Autonomous agent discovery</span>
+        <h1>Bring the agent footprint into focus.</h1>
+        <p>Lens gives security and platform leaders a factual map of autonomous systems, where they run, what they connect to, and the evidence behind every conclusion.</p>
       </div>
-    </div>
-  );
-}
-
-function Inventory({
-  entities,
-  relationships,
-  api,
-  initialKind,
-}: {
-  entities: Entity[];
-  relationships: Relationship[];
-  api: API;
-  initialKind: string;
-}) {
-  const [query, setQuery] = useState("");
-  const [kind, setKind] = useState(initialKind);
-  const [confidence, setConfidence] = useState("all");
-  const [posture, setPosture] = useState("all");
-  const [selected, setSelected] = useState<EntityDetail | null>(null);
-  const [detailLoading, setDetailLoading] = useState(false);
-  const [detailError, setDetailError] = useState("");
-  const kinds = useMemo(() => [...new Set(entities.map((entity) => entity.kind))].sort(), [entities]);
-
-  useEffect(() => setKind(initialKind), [initialKind]);
-
-  const shown = useMemo(() => entities.filter((entity) => {
-    const search = query.trim().toLowerCase();
-    const matchesSearch = !search || `${entity.name} ${entity.kind} ${Object.keys(entity.attributes).join(" ")}`.toLowerCase().includes(search);
-    const matchesKind = kind === "all" || entity.kind === kind;
-    const matchesConfidence = confidence === "all" || entity.confidence === confidence;
-    const matchesPosture = posture === "all" || Boolean(entity.attributes[posture]);
-    return matchesSearch && matchesKind && matchesConfidence && matchesPosture;
-  }), [entities, query, kind, confidence, posture]);
-
-  const open = (entity: Entity) => {
-    setDetailError("");
-    setDetailLoading(true);
-    api.entity(entity.id)
-      .then(setSelected)
-      .catch((reason) => setDetailError(String(reason)))
-      .finally(() => setDetailLoading(false));
-  };
-
-  const clearFilters = () => {
-    setQuery("");
-    setKind("all");
-    setConfidence("all");
-    setPosture("all");
-  };
-
-  return (
-    <div className="page-stack inventory-page">
-      <section className="panel inventory-panel">
-        <div className="inventory-toolbar">
-          <label className="search-box">
-            <Search size={16} />
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search names, types, and posture…" />
-          </label>
-          <label className="select-box"><span>Type</span><select value={kind} onChange={(event) => setKind(event.target.value)}><option value="all">All types</option>{kinds.map((item) => <option value={item} key={item}>{kindLabel(item)}</option>)}</select><ChevronDown size={14} /></label>
-          <label className="select-box"><span>Confidence</span><select value={confidence} onChange={(event) => setConfidence(event.target.value)}><option value="all">All confidence</option><option value="confirmed">Confirmed</option><option value="likely">Likely</option><option value="possible">Possible</option></select><ChevronDown size={14} /></label>
-          <label className="select-box"><span>Posture</span><select value={posture} onChange={(event) => setPosture(event.target.value)}><option value="all">Any posture</option><option value="installed">Installed</option><option value="configured">Configured</option><option value="running_at_scan">Running at scan</option><option value="state_present">State present</option><option value="cached">Cached</option></select><ChevronDown size={14} /></label>
-        </div>
-
-        <div className="inventory-summary">
-          <span><SlidersHorizontal size={14} /> Showing <b>{shown.length}</b> of {entities.length} entities</span>
-          {(query || kind !== "all" || confidence !== "all" || posture !== "all") && <button onClick={clearFilters}>Clear filters <X size={13} /></button>}
-        </div>
-
-        <div className="entity-table" role="table" aria-label="Discovery inventory">
-          <div className="entity-row entity-head" role="row">
-            <span>Entity</span><span>Type</span><span>Factual posture</span><span>Confidence</span><span>Last observed</span><span />
-          </div>
-          {shown.map((entity) => (
-            <button className="entity-row" role="row" key={entity.id} onClick={() => open(entity)}>
-              <span className="entity-identity"><KindIcon kind={entity.kind} /><span><b>{entity.name}</b><small>{compactIdentifier(entity)}</small></span></span>
-              <span><span className="kind-badge">{kindLabel(entity.kind)}</span></span>
-              <span className="posture-list">{postureFacts(entity).length ? postureFacts(entity).slice(0, 3).map((fact) => <i key={fact}>{fact}</i>) : <i className="quiet">Observed</i>}</span>
-              <span><ConfidencePill value={entity.confidence} /></span>
-              <span className="observed-time">{relative(entity.last_seen_at)}</span>
-              <span><ChevronRight size={15} /></span>
-            </button>
-          ))}
-          {!shown.length && <EmptyState icon={Search} title="No entities match these filters" detail="Clear a filter or search for another name or type." />}
-        </div>
-      </section>
-
-      {detailLoading && <div className="drawer-loading"><RefreshCw className="spinning" size={20} /></div>}
-      {detailError && <div className="toast-error">{detailError}<button onClick={() => setDetailError("")}><X size={14} /></button></div>}
-      {selected && <EntityDrawer item={selected} entities={entities} relationships={relationships} close={() => setSelected(null)} />}
-    </div>
-  );
-}
-
-function EntityDrawer({
-  item,
-  entities,
-  relationships,
-  close,
-}: {
-  item: EntityDetail;
-  entities: Entity[];
-  relationships: Relationship[];
-  close: () => void;
-}) {
-  const names = useMemo(() => new Map(entities.map((entity) => [entity.id, entity])), [entities]);
-  const related = relationships.filter((relationship) => relationship.from === item.id || relationship.to === item.id);
-  const attributes = Object.entries(item.attributes).sort(([left], [right]) => attributeRank(left) - attributeRank(right) || left.localeCompare(right));
-
-  useEffect(() => {
-    const listener = (event: KeyboardEvent) => event.key === "Escape" && close();
-    document.addEventListener("keydown", listener);
-    return () => document.removeEventListener("keydown", listener);
-  }, [close]);
-
-  return (
-    <div className="drawer-overlay" onMouseDown={close}>
-      <aside className="entity-drawer" onMouseDown={(event) => event.stopPropagation()} aria-label={`${item.name} details`}>
-        <header className="drawer-header">
-          <div className="drawer-heading">
-            <KindIcon kind={item.kind} large />
-            <div><p className="eyebrow">EVIDENCE-BACKED FINDING</p><h2>{item.name}</h2><div><span className="kind-badge">{kindLabel(item.kind)}</span><ConfidencePill value={item.confidence} />{item.stale && <span className="stale-pill">Stale</span>}</div></div>
-          </div>
-          <button className="icon-button" onClick={close} aria-label="Close details"><X size={18} /></button>
-        </header>
-
-        <div className="drawer-body">
-          <section className="drawer-section">
-            <PanelTitle title="Factual posture" detail="Sanitized attributes reported by discovery collectors" />
-            {attributes.length ? <dl className="facts-grid">{attributes.map(([key, value]) => <div key={key}><dt>{humanize(key)}</dt><dd>{displayValue(value)}</dd></div>)}</dl> : <EmptyState icon={CircleDot} title="No posture attributes" detail="This entity is represented by identity and relationship evidence." compact />}
-          </section>
-
-          {item.canonical_key && (
-            <section className="drawer-section identity-section">
-              <PanelTitle title="Stable identity" detail="Deterministic identity used for reconciliation" />
-              <div className="copy-field"><code>{item.canonical_key}</code><CopyButton value={item.canonical_key} /></div>
-            </section>
-          )}
-
-          <section className="drawer-section">
-            <PanelTitle title="Relationships" detail={`${related.length} current connections in the discovery graph`} />
-            <div className="related-list">
-              {related.slice(0, 20).map((relationship) => {
-                const outbound = relationship.from === item.id;
-                const other = names.get(outbound ? relationship.to : relationship.from);
-                return (
-                  <div key={relationship.id}>
-                    <KindIcon kind={other?.kind ?? "unknown"} />
-                    <span><small>{outbound ? humanize(relationship.kind) : `Is ${humanize(relationship.kind)} by`}</small><b>{other?.name ?? "Unknown entity"}</b></span>
-                    <ConfidencePill value={relationship.confidence} />
-                  </div>
-                );
-              })}
-              {!related.length && <EmptyState icon={Network} title="No current relationships" detail="This finding is currently an independent inventory node." compact />}
-            </div>
-          </section>
-
-          <section className="drawer-section">
-            <PanelTitle title="Evidence trail" detail={`${item.evidence?.length ?? 0} retained observations`} />
-            <div className="evidence-cards">
-              {item.evidence?.length ? item.evidence.map((evidence) => (
-                <article key={evidence.id}>
-                  <div><span className="method-pill">{humanize(evidence.method)}</span><time>{formatDate(evidence.observed_at)}</time></div>
-                  <h3>{evidence.detector_id}</h3>
-                  <p>{humanize(evidence.family)} · {evidence.specificity} specificity · detector {evidence.detector_version}</p>
-                  {evidence.locator && <code>{evidence.locator}</code>}
-                </article>
-              )) : <EmptyState icon={Radar} title="No retained observation" detail="Catalog-derived capability entities may not include collector evidence." compact />}
-            </div>
-          </section>
-
-          <section className="drawer-section provenance-section">
-            <span>First seen <b>{item.first_seen_at ? formatDate(item.first_seen_at) : "Unknown"}</b></span>
-            <span>Last observed <b>{formatDate(item.last_seen_at)}</b></span>
-          </section>
-        </div>
-      </aside>
-    </div>
-  );
-}
-
-function Topology({
-  entities,
-  relationships,
-  openInventory,
-}: {
-  entities: Entity[];
-  relationships: Relationship[];
-  openInventory: (kind?: string) => void;
-}) {
-  const [type, setType] = useState("all");
-  const [query, setQuery] = useState("");
-  const entityMap = useMemo(() => new Map(entities.map((entity) => [entity.id, entity])), [entities]);
-  const types = useMemo(() => [...new Set(relationships.map((relationship) => relationship.kind))].sort(), [relationships]);
-  const filtered = relationships.filter((relationship) => {
-    const from = entityMap.get(relationship.from);
-    const to = entityMap.get(relationship.to);
-    const search = query.trim().toLowerCase();
-    return (type === "all" || relationship.kind === type) && (!search || `${from?.name} ${to?.name} ${relationship.kind}`.toLowerCase().includes(search));
-  });
-  const pairs = useMemo(() => {
-    const values = new Map<string, number>();
-    relationships.forEach((relationship) => {
-      const from = entityMap.get(relationship.from)?.kind ?? "unknown";
-      const to = entityMap.get(relationship.to)?.kind ?? "unknown";
-      const key = `${from}|${relationship.kind}|${to}`;
-      values.set(key, (values.get(key) ?? 0) + 1);
-    });
-    return [...values.entries()].sort((left, right) => right[1] - left[1]).slice(0, 8);
-  }, [relationships, entityMap]);
-
-  return (
-    <div className="page-stack topology-page">
-      <section className="topology-kpis">
-        <div><Network size={18} /><span><b>{relationships.length}</b><small>Current relationships</small></span></div>
-        <div><Boxes size={18} /><span><b>{entities.length}</b><small>Connected inventory nodes</small></span></div>
-        <div><Layers3 size={18} /><span><b>{types.length}</b><small>Relationship types</small></span></div>
-      </section>
-
-      <section className="panel topology-shape">
-        <PanelTitle title="Topology shape" detail="Most common paths through the discovery graph" />
-        <div className="topology-pairs">
-          {pairs.map(([key, count]) => {
-            const [from, relationship, to] = key.split("|");
-            return (
-              <button key={key} onClick={() => setType(relationship)}>
-                <span><KindIcon kind={from} /><b>{kindLabel(from)}</b></span>
-                <span className="relationship-arrow"><small>{humanize(relationship)}</small><ArrowRight size={16} /></span>
-                <span><KindIcon kind={to} /><b>{kindLabel(to)}</b></span>
-                <strong>{count}</strong>
-              </button>
-            );
-          })}
-          {!pairs.length && <EmptyState icon={Network} title="No relationships yet" detail="Relationships appear as sources contribute connected inventory." />}
-        </div>
-      </section>
-
-      <section className="panel relationship-explorer">
-        <PanelTitle title="Relationship explorer" detail="Inspect the exact entity-to-entity connections" action={<span className="panel-count">{filtered.length} edges</span>} />
-        <div className="relationship-toolbar">
-          <label className="search-box"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search connected entities…" /></label>
-          <label className="select-box"><span>Relationship</span><select value={type} onChange={(event) => setType(event.target.value)}><option value="all">All relationships</option>{types.map((item) => <option value={item} key={item}>{humanize(item)}</option>)}</select><ChevronDown size={14} /></label>
-        </div>
-        <div className="relationship-list">
-          {filtered.slice(0, 120).map((relationship) => {
-            const from = entityMap.get(relationship.from);
-            const to = entityMap.get(relationship.to);
-            return (
-              <article key={relationship.id}>
-                <button onClick={() => openInventory(from?.kind)}><KindIcon kind={from?.kind ?? "unknown"} /><span><small>{kindLabel(from?.kind ?? "unknown")}</small><b>{from?.name ?? "Unknown"}</b></span></button>
-                <div><span>{humanize(relationship.kind)}</span><ArrowRight size={17} /><ConfidencePill value={relationship.confidence} /></div>
-                <button onClick={() => openInventory(to?.kind)}><KindIcon kind={to?.kind ?? "unknown"} /><span><small>{kindLabel(to?.kind ?? "unknown")}</small><b>{to?.name ?? "Unknown"}</b></span></button>
-              </article>
-            );
-          })}
-          {!filtered.length && <EmptyState icon={Search} title="No relationships match" detail="Try another entity name or relationship type." />}
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function Changes({ items, entities, sources }: { items: Change[]; entities: Entity[]; sources: Source[] }) {
-  const [eventType, setEventType] = useState("all");
-  const [query, setQuery] = useState("");
-  const names = useMemo(() => new Map(entities.map((entity) => [entity.id, entity])), [entities]);
-  const sourceNames = useMemo(() => new Map(sources.map((source) => [source.source_id, source.name])), [sources]);
-  const events = useMemo(() => countBy(items, "event_type"), [items]);
-  const shown = items.filter((item) => {
-    const entity = names.get(item.entity_id);
-    const search = query.trim().toLowerCase();
-    return (eventType === "all" || item.event_type === eventType) && (!search || `${entity?.name} ${item.event_type} ${sourceNames.get(item.source_id)}`.toLowerCase().includes(search));
-  });
-
-  return (
-    <div className="page-stack changes-page">
-      <section className="change-summary">
-        {[
-          ["entity.discovered", "Discovered", events["entity.discovered"] ?? 0],
-          ["entity.updated", "Updated", events["entity.updated"] ?? 0],
-          ["entity.stale", "Stale", events["entity.stale"] ?? 0],
-          ["entity.removed", "Removed", events["entity.removed"] ?? 0],
-        ].map(([value, label, count]) => <button className={eventType === value ? "active" : ""} onClick={() => setEventType(eventType === value ? "all" : String(value))} key={String(value)}><span className={`event-dot ${String(value).split(".")[1]}`} /><b>{Number(count).toLocaleString()}</b><small>{label}</small></button>)}
-      </section>
-      <section className="panel change-log">
-        <PanelTitle title="Change history" detail="Normalized inventory events from every discovery source" action={<span className="panel-count">90-day history</span>} />
-        <div className="change-toolbar">
-          <label className="search-box"><Search size={15} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search entities or sources…" /></label>
-          {(query || eventType !== "all") && <button className="text-button" onClick={() => { setQuery(""); setEventType("all"); }}>Clear filters <X size={13} /></button>}
-        </div>
-        <div className="timeline">
-          {shown.map((item) => {
-            const entity = names.get(item.entity_id);
-            const event = item.event_type.replace("entity.", "");
-            return (
-              <article key={item.id}>
-                <div className={`timeline-marker ${event}`}><span /></div>
-                <div className="timeline-content">
-                  <div><span className={`event-pill ${event}`}>{event}</span><time>{formatDate(item.changed_at)}</time></div>
-                  <h3>{entity?.name ?? shortID(item.entity_id)}</h3>
-                  <p>{kindLabel(entity?.kind ?? "entity")} · observed by <b>{sourceNames.get(item.source_id) ?? shortID(item.source_id)}</b></p>
-                </div>
-              </article>
-            );
-          })}
-          {!shown.length && <EmptyState icon={History} title="No changes match" detail="Change events will appear as sources reconcile inventory." />}
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function Sources({ items, api }: { items: Source[]; api: API }) {
-  const [code, setCode] = useState<{ code: string; expires_at: string } | null>(null);
-  const [error, setError] = useState("");
-  const current = items.reduce((total, source) => total + source.current_entities, 0);
-  const stale = items.reduce((total, source) => total + source.stale_entities, 0);
-
-  const create = () => {
-    setError("");
-    api.enrollment().then(setCode).catch((reason) => setError(String(reason)));
-  };
-
-  return (
-    <div className="page-stack sources-page">
-      <section className="source-kpis">
-        <Kpi icon={RadioTower} label="Enrolled sources" value={items.length} detail={`${items.filter((item) => item.last_seen_at).length} have reported`} />
-        <Kpi icon={Boxes} label="Contributed entities" value={current} detail="Current source observations" />
-        <Kpi icon={Clock3} label="Stale observations" value={stale} detail="Pending reconciliation" tone={stale ? "attention" : "default"} />
-      </section>
-
-      <section className="panel source-inventory">
-        <PanelTitle title="Discovery sources" detail="Endpoint, repository, and Kubernetes coverage" action={<span className="panel-count">{items.length} enrolled</span>} />
-        <div className="source-table full">
-          <div className="source-row source-head"><span>Source</span><span>Type</span><span>Inventory</span><span>Collector</span><span>Last full scan</span><span>Status</span></div>
-          {items.map((source) => <SourceRow key={source.source_id} source={source} expanded />)}
-          {!items.length && <EmptyState icon={RadioTower} title="No sources enrolled" detail="Use the enrollment card below to connect the first endpoint." />}
-        </div>
-      </section>
-
-      <div className="enrollment-grid">
-        <section className="panel enrollment-card featured">
-          <div className="enrollment-icon"><Monitor size={21} /></div>
-          <p className="eyebrow">QUICK ENROLLMENT</p>
-          <h2>Connect one endpoint</h2>
-          <p>Generate a single-use code that expires in ten minutes. No signup or package customization required.</p>
-          {code ? (
-            <div className="enrollment-result">
-              <div className="enrollment-code"><span>{code.code}</span><CopyButton value={code.code} /></div>
-              <div className="command-box"><code>npx barrikade-lens enroll {code.code} --hub {location.origin}</code><CopyButton value={`npx barrikade-lens enroll ${code.code} --hub ${location.origin}`} /></div>
-              <span className="expiry"><Clock3 size={13} /> Expires {relative(code.expires_at, true)}</span>
-              <button className="text-button" onClick={create}>Generate another code <RefreshCw size={13} /></button>
-            </div>
-          ) : <button className="button primary" onClick={create}>Generate enrollment code <ArrowRight size={15} /></button>}
-          {error && <p className="error-message">{error}</p>}
-        </section>
-
-        <FleetProfile api={api} />
-      </div>
-    </div>
-  );
-}
-
-function FleetProfile({ api }: { api: API }) {
-  const [uses, setUses] = useState(100);
-  const [hours, setHours] = useState(24);
-  const [profile, setProfile] = useState<{ code: string; expires_at: string } | null>(null);
-  const [error, setError] = useState("");
-
-  const create = () => {
-    setError("");
-    api.enrollment(Math.max(1, uses), Math.max(1, hours) * 3600, "endpoint")
-      .then(setProfile)
-      .catch((reason) => setError(String(reason)));
-  };
-
-  const profileText = profile ? `BARRIKADE_LENS_ENROLLMENT_CODE=${profile.code}\nBARRIKADE_LENS_HUB=${location.origin}` : "";
-
-  return (
-    <section className="panel enrollment-card">
-      <div className="enrollment-icon secondary"><Layers3 size={21} /></div>
-      <p className="eyebrow">FLEET ROLLOUT</p>
-      <h2>Create a deployment profile</h2>
-      <p>Issue an expiring, use-limited bootstrap profile for Jamf, Intune, Fleet, or Linux package automation.</p>
-      {profile ? (
-        <div className="enrollment-result">
-          <div className="enrollment-code"><span>{profile.code}</span><CopyButton value={profile.code} /></div>
-          <div className="command-box multi"><code>{profileText}</code><CopyButton value={profileText} /></div>
-          <span className="expiry"><Clock3 size={13} /> {uses} uses · expires {formatDate(profile.expires_at)}</span>
-          <button className="text-button" onClick={() => setProfile(null)}>Create another profile <RefreshCw size={13} /></button>
-        </div>
-      ) : (
-        <>
-          <div className="profile-fields">
-            <label>Maximum devices<input type="number" min="1" max="10000" value={uses} onChange={(event) => setUses(Number(event.target.value))} /></label>
-            <label>Expires in hours<input type="number" min="1" max="24" value={hours} onChange={(event) => setHours(Number(event.target.value))} /></label>
-          </div>
-          <button className="button secondary" onClick={create}>Create fleet profile <ArrowRight size={15} /></button>
-        </>
-      )}
-      {error && <p className="error-message">{error}</p>}
     </section>
-  );
+    <section className="signin-access"><div className="access-card">
+      <p className="eyebrow">LENS HUB</p><h2>Open your discovery plane</h2>
+      <p className="muted">No scores. No enforcement. Just trustworthy organization-wide discovery posture.</p>
+      {config?.enabled && <button className="button primary full" onClick={beginOIDC}>Continue with organization SSO <ArrowRight size={16} /></button>}
+      {config?.development_bootstrap && <form onSubmit={(event) => { event.preventDefault(); if (value.trim()) onToken(value.trim()); }}>
+        <label>Local bootstrap token<input type="password" value={value} onChange={(event) => setValue(event.target.value)} autoFocus={!config?.enabled} /></label>
+        <button className="button primary full">Open Lens Hub <ArrowRight size={16} /></button>
+      </form>}
+      {error && <p className="error-message">{error}</p>}
+    </div></section>
+  </main>;
 }
 
-function SourceRow({ source, expanded = false }: { source: Source; expanded?: boolean }) {
-  const state = sourceState(source);
-  return (
-    <div className={`source-row ${expanded ? "expanded" : ""}`}>
-      <span className="source-name"><SourceIcon type={source.source_type} /><span><b>{source.name}</b><small>{source.platform || source.source_id}</small></span></span>
-      {expanded && <span><span className="kind-badge">{humanize(source.source_type)}</span></span>}
-      <span className="source-count"><b>{source.current_entities}</b><small>{source.stale_entities ? `${source.stale_entities} stale` : "current entities"}</small></span>
-      {expanded && <span className="collector-version">{source.collector_version || "—"}</span>}
-      {expanded && <span className="last-full">{source.last_full_at ? relative(source.last_full_at) : "Awaiting scan"}</span>}
-      <span className={`source-state ${state.tone}`}><i />{state.label}</span>
-      {!expanded && <time>{source.last_seen_at ? relative(source.last_seen_at) : "Never reported"}</time>}
-    </div>
-  );
-}
-
-function ChangePreview({ changes, entities }: { changes: Change[]; entities: Entity[] }) {
-  const names = new Map(entities.map((entity) => [entity.id, entity]));
-  return (
-    <div className="change-preview">
-      {changes.map((change) => {
-        const event = change.event_type.replace("entity.", "");
-        return <div key={change.id}><span className={`event-dot ${event}`} /><span><b>{names.get(change.entity_id)?.name ?? shortID(change.entity_id)}</b><small>{event} · {relative(change.changed_at)}</small></span></div>;
-      })}
-      {!changes.length && <EmptyState icon={History} title="No changes observed yet" detail="Changes appear after the first inventory reconciliation." compact />}
-    </div>
-  );
-}
-
-function ConfidenceBreakdown({ values, total }: { values: Record<string, number>; total: number }) {
-  const rows = [
-    ["confirmed", "Confirmed", "Authoritative descriptor or independent evidence"],
-    ["likely", "Likely", "One high-specificity evidence family"],
-    ["possible", "Possible", "State or lower-specificity evidence only"],
-  ];
-  return (
-    <div className="confidence-breakdown">
-      <div className="confidence-bar" aria-label="Confidence distribution">
-        {rows.map(([value]) => <span className={value} style={{ width: `${total ? ((values[value] ?? 0) / total) * 100 : 0}%` }} key={value} />)}
+function Shell({ api, signOut }: { api: API; signOut: () => void }) {
+  const [page, setPage] = useState<Page>("Overview");
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [about, setAbout] = useState(false);
+  const [revision, setRevision] = useState(0);
+  const copy = pageCopy[page];
+  return <div className="app-shell">
+    <aside className={menuOpen ? "sidebar open" : "sidebar"}>
+      <div className="sidebar-brand"><Brand /></div>
+      <nav className="main-nav"><p className="nav-heading">DISCOVERY</p>
+        {navigation.map(({ page: item, icon: Icon, detail }) => <button key={item} className={page === item ? "active" : ""} onClick={() => { setPage(item); setMenuOpen(false); }}>
+          <Icon size={17} /><span><b>{item}</b><small>{detail}</small></span>{page === item && <ChevronRight size={14} />}
+        </button>)}
+      </nav>
+      <div className="discover-boundary"><CircleDot size={14} /><span><b>Discover</b><small>Observe · correlate · report</small></span></div>
+      <div className="sidebar-footer">
+        <button onClick={() => setAbout(true)}><HelpCircle size={16} /> About Lens</button>
+        <button className="logout" onClick={signOut} aria-label="Sign out"><LogOut size={16} /></button>
       </div>
-      {rows.map(([value, label, detail]) => (
-        <div className="confidence-row" key={value}>
-          <span className={`confidence-swatch ${value}`} />
-          <span><b>{label}</b><small>{detail}</small></span>
-          <strong>{values[value] ?? 0}</strong>
-        </div>
-      ))}
+    </aside>
+    <main className="main-area">
+      <header className="topbar">
+        <button className="mobile-menu" aria-label={menuOpen ? "Close navigation" : "Open navigation"} onClick={() => setMenuOpen((value) => !value)}>{menuOpen ? <X size={20} /> : <Menu size={20} />}</button>
+        <span className="live-status"><i /> Discovery inventory live</span>
+        <div className="top-actions"><button className="icon-button" onClick={() => setRevision((value) => value + 1)} title="Refresh"><RefreshCw size={16} /></button><ExportMenu api={api} /></div>
+      </header>
+      <div className="workspace">
+        <header className="page-heading"><div><p className="eyebrow">{copy.eyebrow}</p><h1>{copy.title}</h1><p>{copy.detail}</p></div></header>
+        {page === "Overview" && <OverviewPage api={api} revision={revision} go={setPage} />}
+        {page === "Systems" && <SystemsPage api={api} revision={revision} />}
+        {page === "Coverage" && <CoveragePage api={api} revision={revision} />}
+        {page === "Changes" && <ChangesPage api={api} revision={revision} />}
+        {page === "Technical inventory" && <InventoryPage api={api} revision={revision} />}
+        {page === "Evidence graph" && <EvidenceGraphPage api={api} revision={revision} />}
+      </div>
+    </main>
+    {menuOpen && <button className="sidebar-scrim" onClick={() => setMenuOpen(false)} />}
+    {about && <About onClose={() => setAbout(false)} />}
+  </div>;
+}
+
+function OverviewPage({ api, revision, go }: { api: API; revision: number; go: (page: Page) => void }) {
+  const [window, setWindow] = useState("7d");
+  const remote = useRemote(() => api.overview(window), [api, revision, window]);
+  if (remote.loading) return <Loading />;
+  if (remote.error || !remote.data) return <Failure error={remote.error} retry={remote.reload} />;
+  const data = remote.data;
+  const systems = data.footprint.system_types;
+  const states = data.footprint.states;
+  const totalSystems = sum(Object.values(systems));
+  const attention = [
+    ["Newly discovered systems", data.attention.newly_discovered_systems, "In this reporting window"],
+    ["Non-loopback services", data.attention.non_loopback_services, "Network or externally reachable"],
+    ["Unattributed systems", data.attention.unattributed_systems, "No authoritative ownership evidence"],
+    ["Possible-only systems", data.attention.possible_only_systems, "Discovery evidence needs corroboration"],
+    ["Partial scans", data.attention.partial_scans, "Denied paths or detector failures"],
+    ["Stale targets", data.attention.stale_targets, "Outside surface freshness threshold"],
+    ["Identity diagnostics", data.attention.possible_duplicate_identities, "Same display name, distinct identities"],
+    ["Conflicting facts", data.attention.fact_conflicts, "Sources disagree on a scalar fact"],
+  ] as Array<[string, number, string]>;
+
+  return <div className="page-stack">
+    <div className="window-switch">{["24h", "7d", "30d"].map((item) => <button className={window === item ? "active" : ""} onClick={() => setWindow(item)} key={item}>{item}</button>)}</div>
+    <section className="executive-strip">
+      <Metric label="Autonomous agents" value={systems.autonomous_agent ?? 0} detail="Explicit agent definitions" icon={Bot} accent />
+      <Metric label="Agent-capable tools" value={systems.agent_tool ?? 0} detail="Developer tools with agent capability" icon={TerminalSquare} />
+      <Metric label="Model runtimes" value={systems.model_runtime ?? 0} detail="Inference and local model servers" icon={BrainCircuit} />
+      <Metric label="Distinct systems" value={totalSystems} detail="Cached models and dev runtimes excluded" icon={PackageSearch} />
+    </section>
+    <section className="coverage-cards">
+      {data.coverage.map((item) => <CoverageCard key={item.target_type} item={item} onClick={() => go("Coverage")} />)}
+    </section>
+    <div className="overview-layout">
+      <section className="panel state-panel"><PanelHeading title="Operating state" detail="The strongest factual state observed for each root system" />
+        <StateDistribution values={states} total={totalSystems} />
+      </section>
+      <section className="panel attention-panel"><PanelHeading title="Factual attention" detail="Discovery conditions worth understanding—not risk or remediation" count={sum(attention.map((item) => item[1]))} />
+        <div className="attention-list">{attention.map(([label, count, detail]) => <button key={label} onClick={() => label.includes("scan") || label.includes("target") || label.includes("Identity") ? go("Coverage") : go("Systems")}>
+          <span className={count ? "attention-count active" : "attention-count"}>{count}</span><span><b>{label}</b><small>{detail}</small></span><ChevronRight size={14} />
+        </button>)}</div>
+      </section>
+      <section className="panel change-panel"><PanelHeading title="Meaningful changes" detail={`Material discovery changes in the last ${window}`} action={<button className="text-button" onClick={() => go("Changes")}>View all <ArrowRight size={13} /></button>} />
+        <ChangeList items={data.changes} />
+      </section>
+      <section className="panel quality-panel"><PanelHeading title="Data integrity" detail="How much confidence to place in the current view" />
+        <Confidence data={data.data_quality.confidence} />
+        <div className="quality-notes"><p><ShieldCheck size={15} /><span><b>Confidence measures evidence strength.</b>{data.data_quality.confidence_note}</span></p><p><Radar size={15} /><span><b>Coverage has no invented denominator.</b>{data.data_quality.coverage_note}</span></p></div>
+      </section>
     </div>
-  );
+  </div>;
+}
+
+function SystemsPage({ api, revision }: { api: API; revision: number }) {
+  const [filters, setFilters] = useState<Record<string, string>>({ sort: "last_seen" });
+  const [cursor, setCursor] = useState("");
+  const [items, setItems] = useState<SystemItem[]>([]);
+  const [next, setNext] = useState("");
+  const [selected, setSelected] = useState<string>();
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setLoading(true); setError("");
+      api.systems({ ...filters, cursor }).then((result) => { setItems((current) => cursor ? [...current, ...result.items] : result.items); setNext(result.next_cursor ?? ""); }).catch((reason) => setError(String(reason))).finally(() => setLoading(false));
+    }, filters.search ? 220 : 0);
+    return () => clearTimeout(timer);
+  }, [api, revision, filters, cursor]);
+
+  const update = (key: string, value: string) => { setCursor(""); setItems([]); setFilters((current) => ({ ...current, [key]: value })); };
+  return <div className="page-stack">
+    <FilterBar search={filters.search ?? ""} setSearch={(value) => update("search", value)}>
+      <Select label="System type" value={filters.system_type} onChange={(value) => update("system_type", value)} options={{ "": "All root systems", autonomous_agent: "Autonomous agents", agent_tool: "Agent-capable tools", model_runtime: "Model runtimes" }} />
+      <Select label="State" value={filters.state} onChange={(value) => update("state", value)} options={{ "": "Any state", running: "Running", deployed: "Deployed", defined: "Defined", configured: "Configured", installed: "Installed", residual: "Residual", cached: "Cached" }} />
+      <Select label="Confidence" value={filters.confidence} onChange={(value) => update("confidence", value)} options={{ "": "Any confidence", confirmed: "Confirmed", likely: "Likely", possible: "Possible" }} />
+      <Select label="Network" value={filters.network_scope} onChange={(value) => update("network_scope", value)} options={{ "": "Any scope", external: "External", network: "Network", loopback: "Loopback", none: "None", unknown: "Unknown" }} />
+    </FilterBar>
+    <section className="panel data-panel"><div className="table-summary"><span><b>{items.length}</b> systems loaded</span><span>Supporting runtimes and cached artifacts are hidden here</span></div>
+      <div className="system-table table-scroll"><div className="system-row table-head"><span>System</span><span>Type</span><span>State</span><span>Target / surface</span><span>Attribution</span><span>Evidence</span><span /></div>
+        {items.map((item) => <button className="system-row" key={item.id} onClick={() => setSelected(item.id)}>
+          <Identity kind={item.kind} name={item.name} detail={item.product_id ?? item.id} />
+          <TypePill value={item.system_type} /><StatePill state={item.state} /><span className="stacked"><b>{item.target_name ?? "Unresolved target"}</b><small>{pretty(item.surface)}</small></span>
+          <span className={item.attributed ? "fact good" : "fact quiet"}>{item.attributed ? "Attributed" : "Unattributed"}</span><ConfidencePill value={item.confidence} /><ChevronRight size={15} />
+        </button>)}
+        {!loading && !items.length && <Empty icon={Bot} title="No systems match this view" detail="Supporting runtimes and cached artifacts are intentionally excluded from the executive systems view." />}
+      </div>
+      {error && <InlineError text={error} />}{loading && <InlineLoading />}{next && !loading && <button className="load-more" onClick={() => setCursor(next)}>Load more systems <ChevronDown size={15} /></button>}
+    </section>
+    {selected && <SystemDrawer api={api} id={selected} onClose={() => setSelected(undefined)} />}
+  </div>;
+}
+
+function CoveragePage({ api, revision }: { api: API; revision: number }) {
+  const [targetType, setTargetType] = useState("");
+  const overview = useRemote(() => api.overview("7d"), [api, revision]);
+  const targets = useRemote(() => api.targets({ target_type: targetType, limit: 100 }), [api, revision, targetType]);
+  const [expanded, setExpanded] = useState<string>();
+  const [enrollment, setEnrollment] = useState<{ code: string; expires_at: string }>();
+  const [enrollError, setEnrollError] = useState("");
+  if (overview.loading || targets.loading) return <Loading />;
+  if (overview.error || targets.error || !overview.data || !targets.data) return <Failure error={overview.error || targets.error} retry={() => { overview.reload(); targets.reload(); }} />;
+  return <div className="page-stack">
+    <section className="coverage-cards">{overview.data.coverage.map((item) => <CoverageCard key={item.target_type} item={item} active={targetType === item.target_type} onClick={() => setTargetType((value) => value === item.target_type ? "" : item.target_type)} />)}</section>
+    <section className="panel data-panel">
+      <PanelHeading title="Unique discovery targets" detail="One row per endpoint installation, repository, or cluster. Collector credentials are nested below the target." count={targets.data.items.length} />
+      <div className="target-table table-scroll"><div className="target-row table-head"><span>Target</span><span>Surface</span><span>Freshness</span><span>Last full scan</span><span>Data quality</span><span /></div>
+        {targets.data.items.map((target) => <div className="target-group" key={target.id}>
+          <button className="target-row" onClick={() => setExpanded((value) => value === target.id ? undefined : target.id)}>
+            <Identity kind={target.target_type === "kubernetes" ? "cluster" : target.target_type} name={target.name} detail={`${target.platform ?? target.target_type}${target.architecture ? ` · ${target.architecture}` : ""}`} />
+            <span className="kind-label">{pretty(target.target_type)}</span><Freshness value={target.freshness} partial={target.partial} /><span className="observed">{target.last_full_at ? relative(target.last_full_at) : "Never"}</span>
+            <span className="diagnostics">{target.possible_duplicate && <i>Possible duplicate</i>}{target.identity_quality === "legacy_identity" && <i>Legacy identity</i>}{!target.possible_duplicate && target.identity_quality === "persistent" && <small>Identity verified</small>}</span>
+            {expanded === target.id ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+          </button>
+          {expanded === target.id && <div className="collectors"><p>COLLECTORS FOR THIS TARGET</p>{target.collectors.map((collector) => <div className="collector-row" key={collector.source_id}>
+            <span><CircleDot size={13} /><b>{collector.name}</b><code>{collector.source_id}</code></span><span>v{collector.collector_version ?? "unknown"}</span><span>Sequence {collector.sequence ?? 0}</span><span className={collector.partial ? "partial" : "complete"}>{collector.partial ? `${collector.error_count} scan errors` : "Full coverage reported"}</span><time>{collector.last_seen_at ? relative(collector.last_seen_at) : "Never"}</time>
+          </div>)}</div>}
+        </div>)}
+      </div>
+    </section>
+    <CoverageBaseline api={api} coverage={overview.data.coverage} onSaved={() => overview.reload()} />
+    <section className="panel enrollment-panel"><div><p className="eyebrow">EXPAND COVERAGE</p><h2>Enroll a managed endpoint</h2><p>Generate a single-device code valid for ten minutes. The endpoint creates its own persistent signing identity and keeps it across credential rotation.</p></div>
+      <div className="enrollment-action">{enrollment ? <div className="enrollment-code"><span>{enrollment.code}</span><button onClick={() => navigator.clipboard.writeText(enrollment.code)}><Copy size={15} /> Copy</button><small>Expires {new Date(enrollment.expires_at).toLocaleTimeString()}</small></div> : <button className="button primary" onClick={() => { setEnrollError(""); api.enrollment().then(setEnrollment).catch((reason) => setEnrollError(String(reason))); }}>Generate enrollment code</button>}{enrollError && <InlineError text={enrollError} />}</div>
+    </section>
+  </div>;
+}
+
+function ChangesPage({ api, revision }: { api: API; revision: number }) {
+  const [filters, setFilters] = useState<Record<string, string>>({ window: "7d", system_role: "system" });
+  const [cursor, setCursor] = useState("");
+  const remote = useRemote(() => api.changes({ ...filters, cursor }), [api, revision, filters, cursor]);
+  const [items, setItems] = useState<Change[]>([]);
+  useEffect(() => { if (remote.data) setItems((current) => cursor ? [...current, ...remote.data!.items] : remote.data!.items); }, [remote.data, cursor]);
+  const update = (key: string, value: string) => { setCursor(""); setItems([]); setFilters((current) => ({ ...current, [key]: value })); };
+  return <div className="page-stack"><FilterBar hideSearch>
+    <Select label="Window" value={filters.window} onChange={(value) => update("window", value)} options={{ "24h": "Last 24 hours", "7d": "Last 7 days", "30d": "Last 30 days", "90d": "Last 90 days" }} />
+    <Select label="Category" value={filters.category} onChange={(value) => update("category", value)} options={{ "": "All material changes", state: "State", network_scope: "Network scope", attribution: "Attribution", capability: "Capability", confidence: "Confidence", identity: "Identity", freshness: "Freshness" }} />
+    <Select label="System type" value={filters.system_type} onChange={(value) => update("system_type", value)} options={{ "": "All systems", autonomous_agent: "Autonomous agent", agent_tool: "Agent-capable tool", model_runtime: "Model runtime" }} />
+    <Select label="Surface" value={filters.surface} onChange={(value) => update("surface", value)} options={{ "": "All surfaces", endpoint: "Endpoint", repository: "Repository", kubernetes: "Kubernetes" }} />
+  </FilterBar>
+    <section className="panel change-log"><PanelHeading title="System change history" detail="Changes to root systems and their connected capabilities; routine re-observation is suppressed" count={items.length} /><ChangeList items={items} expanded />
+      {remote.loading && <InlineLoading />}{remote.error && <InlineError text={remote.error} />}{remote.data?.next_cursor && !remote.loading && <button className="load-more" onClick={() => setCursor(remote.data!.next_cursor!)}>Load more changes <ChevronDown size={15} /></button>}
+    </section>
+  </div>;
+}
+
+function InventoryPage({ api, revision }: { api: API; revision: number }) {
+  const [filters, setFilters] = useState<Record<string, string>>({ sort: "last_seen" });
+  const [cursor, setCursor] = useState("");
+  const remote = useRemote(() => api.entities({ ...filters, cursor }), [api, revision, filters, cursor]);
+  const [items, setItems] = useState<Entity[]>([]);
+  const [selected, setSelected] = useState<string>();
+  useEffect(() => { if (remote.data) setItems((current) => cursor ? [...current, ...remote.data!.items] : remote.data!.items); }, [remote.data, cursor]);
+  const update = (key: string, value: string) => { setCursor(""); setItems([]); setFilters((current) => ({ ...current, [key]: value })); };
+  return <div className="page-stack"><FilterBar search={filters.search ?? ""} setSearch={(value) => update("search", value)}>
+    <Select label="Entity type" value={filters.kind} onChange={(value) => update("kind", value)} options={{ "": "All entity types", agent: "Agent", runtime: "Runtime", mcp_server: "MCP server", skill: "Skill", model: "Model", model_server: "Model server", framework: "Framework", repository: "Repository", workload: "Workload", api_service: "API service", workflow: "Workflow", user: "User" }} />
+    <Select label="Role" value={filters.system_role} onChange={(value) => update("system_role", value)} options={{ "": "Any graph role", system: "Root system", component: "Component", supporting: "Supporting runtime", artifact: "Artifact", target: "Discovery target" }} />
+    <Select label="State" value={filters.state} onChange={(value) => update("state", value)} options={{ "": "Any state", running: "Running", deployed: "Deployed", defined: "Defined", configured: "Configured", installed: "Installed", residual: "Residual", cached: "Cached", observed: "Observed" }} />
+    <Select label="Confidence" value={filters.confidence} onChange={(value) => update("confidence", value)} options={{ "": "Any confidence", confirmed: "Confirmed", likely: "Likely", possible: "Possible" }} />
+  </FilterBar>
+    <section className="panel data-panel"><div className="table-summary"><span><b>{items.length}</b> entities loaded</span><span>This technical view includes supporting and cached inventory</span></div>
+      <div className="inventory-table table-scroll"><div className="inventory-row table-head"><span>Entity</span><span>Graph role</span><span>State</span><span>Surface</span><span>Confidence</span><span>Last observed</span><span /></div>
+        {items.map((item) => <button className="inventory-row" key={item.id} onClick={() => setSelected(item.id)}><Identity kind={item.kind} name={item.name} detail={item.canonical_key ?? item.id} /><span className="kind-label">{pretty(item.posture?.system_role ?? item.kind)}</span><StatePill state={item.posture?.state ?? "observed"} /><span>{pretty(item.posture?.surface ?? "unknown")}</span><ConfidencePill value={item.confidence} /><span className="observed">{relative(item.last_seen_at)}</span><ChevronRight size={15} /></button>)}
+      </div>
+      {remote.loading && <InlineLoading />}{remote.error && <InlineError text={remote.error} />}{remote.data?.next_cursor && !remote.loading && <button className="load-more" onClick={() => setCursor(remote.data!.next_cursor!)}>Load more entities <ChevronDown size={15} /></button>}
+    </section>
+    {selected && <EntityDrawer api={api} id={selected} onClose={() => setSelected(undefined)} />}
+  </div>;
+}
+
+function EvidenceGraphPage({ api, revision }: { api: API; revision: number }) {
+  const systems = useRemote(() => api.systems({ limit: 50, sort: "name" }), [api, revision]);
+  const [selected, setSelected] = useState<string>();
+  const detail = useRemote(() => selected ? api.system(selected) : Promise.resolve(undefined), [api, selected]);
+  useEffect(() => { if (!selected && systems.data?.items[0]) setSelected(systems.data.items[0].id); }, [selected, systems.data]);
+  if (systems.loading) return <Loading />;
+  if (systems.error || !systems.data) return <Failure error={systems.error} retry={systems.reload} />;
+  return <div className="graph-layout">
+    <section className="panel graph-selector"><PanelHeading title="Choose a root system" detail="The graph is fetched on demand, one system at a time" />
+      <div className="graph-system-list">{systems.data.items.map((item) => <button className={selected === item.id ? "active" : ""} key={item.id} onClick={() => setSelected(item.id)}><Identity kind={item.kind} name={item.name} detail={pretty(item.system_type)} /><ChevronRight size={14} /></button>)}</div>
+    </section>
+    <section className="panel graph-canvas">{detail.loading ? <InlineLoading /> : detail.error ? <InlineError text={detail.error} /> : detail.data ? <SystemGraph detail={detail.data} /> : <Empty icon={Network} title="No system selected" detail="Choose a root system to inspect its evidence graph." />}</section>
+  </div>;
+}
+
+function SystemGraph({ detail }: { detail: SystemDetail }) {
+  const groups = groupConnections(detail.connections);
+  return <div><PanelHeading title={detail.name} detail={`${pretty(detail.system_type)} · ${pretty(detail.state)} · ${detail.target_name ?? "Unresolved target"}`} action={<ConfidencePill value={detail.confidence} />} />
+    <div className="graph-root"><Identity kind={detail.kind} name={detail.name} detail={detail.product_id ?? detail.id} /><span><StatePill state={detail.state} /><span className="network-pill">{pretty(detail.network_scope)}</span></span></div>
+    <div className="graph-branches">{Object.entries(groups).map(([label, connections]) => <div className="graph-branch" key={label}><div className="branch-line" /><p>{pretty(label)} <span>{connections.length}</span></p><div className="graph-nodes">{connections.map((connection) => <div className="graph-node" key={connection.relationship_id}><Identity kind={connection.entity.kind} name={connection.entity.name} detail={connection.label === "observed_user" ? "Observed user" : pretty(connection.relationship_kind)} /><ConfidencePill value={connection.confidence} /></div>)}</div></div>)}</div>
+    <div className="graph-evidence"><p>EVIDENCE FACTS <span>{detail.evidence.length}</span></p>{detail.evidence.slice(0, 12).map((evidence) => <div key={`${evidence.source_id}:${evidence.id}`}><span><b>{evidence.detector_id}</b><small>{evidence.family} · {evidence.method}{evidence.observations > 1 ? ` · ${evidence.observations} observations` : ""}</small></span><code>{evidence.locator ?? "sanitized locator unavailable"}</code><ConfidencePill value={evidence.specificity === "high" ? "confirmed" : evidence.specificity === "medium" ? "likely" : "possible"} /></div>)}</div>
+  </div>;
+}
+
+function SystemDrawer({ api, id, onClose }: { api: API; id: string; onClose: () => void }) {
+  const remote = useRemote(() => api.system(id), [api, id]);
+  return <Drawer onClose={onClose}>{remote.loading ? <Loading /> : remote.error || !remote.data ? <Failure error={remote.error} retry={remote.reload} /> : <SystemDetailView item={remote.data} />}</Drawer>;
+}
+
+function SystemDetailView({ item }: { item: SystemDetail }) {
+  const groups = groupConnections(item.connections);
+  return <><div className="drawer-title"><Identity kind={item.kind} name={item.name} detail={item.product_id ?? item.id} /><div><TypePill value={item.system_type} /><StatePill state={item.state} /><ConfidencePill value={item.confidence} /></div></div>
+    <div className="fact-grid"><Fact label="Target" value={item.target_name ?? "Unresolved"} /><Fact label="Surface" value={pretty(item.surface)} /><Fact label="Network scope" value={pretty(item.network_scope)} /><Fact label="Attribution" value={item.attributed ? "Authoritative" : "Not established"} /><Fact label="First discovered" value={relative(item.first_seen_at)} /><Fact label="Last observed" value={relative(item.last_seen_at)} /></div>
+    <section className="drawer-section"><h3>Connected inventory <span>{item.connections.length}</span></h3>{Object.entries(groups).map(([group, values]) => <div className="connection-group" key={group}><p>{pretty(group)}</p>{values.map((connection) => <ConnectionRow item={connection} key={connection.relationship_id} />)}</div>)}</section>
+    <section className="drawer-section"><h3>Evidence <span>{item.evidence.length}</span></h3>{item.evidence.map((evidence) => <div className="evidence-row" key={`${evidence.source_id}:${evidence.id}`}><span><b>{evidence.detector_id}</b><small>{evidence.family} · {evidence.specificity}</small></span><code>{evidence.locator ?? "No locator"}</code><time>{relative(evidence.observed_at)}{evidence.observations > 1 ? ` · ${evidence.observations}×` : ""}</time></div>)}</section>
+  </>;
+}
+
+function EntityDrawer({ api, id, onClose }: { api: API; id: string; onClose: () => void }) {
+  const remote = useRemote(() => api.entity(id), [api, id]);
+  return <Drawer onClose={onClose}>{remote.loading ? <Loading /> : remote.error || !remote.data ? <Failure error={remote.error} retry={remote.reload} /> : <EntityDetailView item={remote.data} />}</Drawer>;
+}
+
+function EntityDetailView({ item }: { item: EntityDetail }) {
+  return <><div className="drawer-title"><Identity kind={item.kind} name={item.name} detail={item.canonical_key ?? item.id} /><div><StatePill state={item.posture?.state ?? "observed"} /><ConfidencePill value={item.confidence} /></div></div>
+    <div className="fact-grid"><Fact label="Kind" value={pretty(item.kind)} /><Fact label="Graph role" value={pretty(item.posture?.system_role ?? "unknown")} /><Fact label="Surface" value={pretty(item.posture?.surface ?? "unknown")} /><Fact label="Network scope" value={pretty(item.posture?.network_scope ?? "unknown")} /><Fact label="First discovered" value={relative(item.first_seen_at)} /><Fact label="Last observed" value={relative(item.last_seen_at)} /></div>
+    <section className="drawer-section"><h3>Sanitized attributes</h3><pre>{JSON.stringify(item.attributes, null, 2)}</pre></section>
+    <section className="drawer-section"><h3>Evidence <span>{item.evidence?.length ?? 0}</span></h3>{item.evidence?.map((evidence) => <div className="evidence-row" key={`${evidence.source_id}:${evidence.id}`}><span><b>{evidence.detector_id}</b><small>{evidence.family} · {evidence.specificity}</small></span><code>{evidence.locator ?? "No locator"}</code><time>{relative(evidence.observed_at)}{evidence.observations > 1 ? ` · ${evidence.observations}×` : ""}</time></div>)}</section>
+  </>;
+}
+
+function CoverageBaseline({ api, coverage, onSaved }: { api: API; coverage: Overview["coverage"]; onSaved: () => void }) {
+  const initial = Object.fromEntries(coverage.map((item) => [item.target_type, item.expected_count === null ? "" : String(item.expected_count)]));
+  const [values, setValues] = useState<Record<string, string>>(initial);
+  const [editing, setEditing] = useState(false);
+  const [status, setStatus] = useState("");
+  const save = () => {
+    const baselines = ["endpoint", "repository", "kubernetes"].map((target_type) => ({ target_type, expected_count: values[target_type] === "" ? null : Number(values[target_type]) }));
+    api.setBaselines(baselines).then(() => { setStatus("Coverage baseline saved"); setEditing(false); onSaved(); }).catch((reason) => setStatus(String(reason)));
+  };
+  return <section className="panel baseline-panel"><div><p className="eyebrow">EXPECTED POPULATION</p><h2>Coverage denominator</h2><p>Optional manual baselines let Lens compare reporting targets with a known population. Blank values remain explicitly unknown.</p></div>
+    {editing ? <div className="baseline-form">{["endpoint", "repository", "kubernetes"].map((type) => <label key={type}>{pretty(type)}<input type="number" min="0" placeholder="Unknown" value={values[type] ?? ""} onChange={(event) => setValues((current) => ({ ...current, [type]: event.target.value }))} /></label>)}<button className="button primary" onClick={save}>Save baselines</button><button className="button subtle" onClick={() => setEditing(false)}>Cancel</button></div> : <button className="button subtle" onClick={() => setEditing(true)}><SlidersHorizontal size={15} /> Configure baselines</button>}
+    {status && <small className="form-status">{status}</small>}
+  </section>;
+}
+
+function CoverageCard({ item, onClick, active }: { item: Overview["coverage"][number]; onClick?: () => void; active?: boolean }) {
+  const Icon = item.target_type === "endpoint" ? Monitor : item.target_type === "repository" ? GitBranch : Container;
+  const label = ({ endpoint: "Endpoints", repository: "Repositories", kubernetes: "Kubernetes" } as Record<string, string>)[item.target_type] ?? pretty(item.target_type);
+  const body = <><span className="coverage-icon"><Icon size={19} /></span><div><p>{label}</p><strong>{item.reporting}</strong>{item.population_configured ? <span>of {item.expected_count} expected</span> : <span>Population not configured</span>}</div><div className="coverage-facts"><small><i className="fresh" />{item.fresh} fresh</small><small><i className={item.stale ? "stale" : "quiet"} />{item.stale} stale</small><small><i className={item.partial ? "partial" : "quiet"} />{item.partial} partial</small></div></>;
+  return onClick ? <button className={active ? "coverage-card active" : "coverage-card"} onClick={onClick}>{body}</button> : <div className="coverage-card">{body}</div>;
+}
+
+function ChangeList({ items, expanded = false }: { items: Change[]; expanded?: boolean }) {
+  if (!items.length) return <Empty icon={History} title="No material changes" detail="Identical scans and routine refreshes are intentionally suppressed." />;
+  return <div className={expanded ? "change-list expanded" : "change-list"}>{items.map((item) => <article key={item.id}><span className={`change-mark ${item.category}`}><Activity size={13} /></span><div><p><b>{item.entity_name ?? "Discovered system"}</b><span className="category-pill">{pretty(item.category)}</span></p><h3>{item.summary || pretty(item.event_type)}</h3><small>{pretty(item.system_type ?? item.surface ?? "inventory")} · {relative(item.changed_at)}</small>{expanded && item.details?.fields && <div className="field-diffs">{item.details.fields.slice(0, 5).map((field) => <span key={field.path}><code>{pretty(field.path.replace("attributes.", ""))}</code><i>{formatValue(field.before)}</i><ArrowRight size={12} /><b>{formatValue(field.after)}</b></span>)}</div>}</div></article>)}</div>;
+}
+
+function Confidence({ data }: { data: Record<string, number> }) {
+  const total = sum(Object.values(data));
+  return <div className="confidence"><div className="confidence-bar"><i className="confirmed" style={{ width: `${percent(data.confirmed ?? 0, total)}%` }} /><i className="likely" style={{ width: `${percent(data.likely ?? 0, total)}%` }} /><i className="possible" style={{ width: `${percent(data.possible ?? 0, total)}%` }} /></div>{["confirmed", "likely", "possible"].map((key) => <div key={key}><span><i className={key} /><b>{pretty(key)}</b></span><strong>{data[key] ?? 0}</strong></div>)}</div>;
+}
+
+function StateDistribution({ values, total }: { values: Record<string, number>; total: number }) {
+  const order = ["running", "deployed", "defined", "configured", "installed", "residual", "cached", "observed"];
+  return <div className="state-distribution"><div className="state-bar">{order.map((state) => values[state] ? <i key={state} className={state} style={{ width: `${percent(values[state], total)}%` }} title={`${pretty(state)} ${values[state]}`} /> : null)}</div><div className="state-legend">{order.map((state) => <div key={state}><span><i className={state} />{pretty(state)}</span><b>{values[state] ?? 0}</b><small>{percent(values[state] ?? 0, total)}%</small></div>)}</div></div>;
+}
+
+function FilterBar({ search, setSearch, hideSearch, children }: { search?: string; setSearch?: (value: string) => void; hideSearch?: boolean; children: ReactNode }) {
+  return <section className="filter-bar">{!hideSearch && <label className="search"><Search size={16} /><input value={search} onChange={(event) => setSearch?.(event.target.value)} placeholder="Search discovered systems" /></label>}<div className="filters">{children}</div></section>;
+}
+
+function Select({ label, value = "", onChange, options }: { label: string; value?: string; onChange: (value: string) => void; options: Record<string, string> }) {
+  return <label className="select"><span>{label}</span><select value={value} onChange={(event) => onChange(event.target.value)}>{Object.entries(options).map(([key, name]) => <option value={key} key={key}>{name}</option>)}</select><ChevronDown size={13} /></label>;
+}
+
+function Identity({ kind, name, detail }: { kind: string; name: string; detail: string }) {
+  const Icon = kindIcons[kind] ?? PackageSearch;
+  return <span className="identity"><i className={`entity-icon ${kind}`}><Icon size={17} /></i><span><b>{name}</b><small>{detail}</small></span></span>;
+}
+
+function TypePill({ value }: { value: string }) { return <span className={`type-pill ${value}`}>{pretty(value)}</span>; }
+function StatePill({ state }: { state: string }) { return <span className={`state-pill ${state}`}><i />{pretty(state)}</span>; }
+function ConfidencePill({ value }: { value: string }) { return <span className={`confidence-pill ${value}`}><i />{pretty(value)}</span>; }
+function Freshness({ value, partial }: { value: string; partial?: boolean }) { return <span className={`freshness ${value}`}><i />{pretty(value)}{partial && <small>Partial scan</small>}</span>; }
+function Fact({ label, value }: { label: string; value: string }) { return <div><span>{label}</span><b>{value}</b></div>; }
+
+function ConnectionRow({ item }: { item: Connection }) {
+  return <div className="connection-row"><Identity kind={item.entity.kind} name={item.entity.name} detail={item.label === "observed_user" ? "Observed user—not authoritative owner" : pretty(item.relationship_kind)} /><ConfidencePill value={item.confidence} /></div>;
+}
+
+function Metric({ label, value, detail, icon: Icon, accent }: { label: string; value: number; detail: string; icon: LucideIcon; accent?: boolean }) {
+  return <div className={accent ? "metric accent" : "metric"}><i><Icon size={19} /></i><span><small>{label}</small><b>{value.toLocaleString()}</b><p>{detail}</p></span></div>;
+}
+
+function PanelHeading({ title, detail, count, action }: { title: string; detail: string; count?: number; action?: ReactNode }) {
+  return <header className="panel-heading"><div><h2>{title}</h2><p>{detail}</p></div>{action ?? (count !== undefined && <span className="panel-count">{count}</span>)}</header>;
+}
+
+function Drawer({ children, onClose }: { children: ReactNode; onClose: () => void }) {
+  return <div className="drawer-overlay" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><aside className="drawer"><button className="drawer-close" onClick={onClose}><X size={18} /></button><div className="drawer-body">{children}</div></aside></div>;
 }
 
 function ExportMenu({ api }: { api: API }) {
   const [open, setOpen] = useState(false);
+  return <div className="export"><button className="button subtle" onClick={() => setOpen((value) => !value)}><Download size={15} /> Export <ChevronDown size={13} /></button>{open && <div>{(["lens", "ndjson", "cyclonedx"] as const).map((format) => <button key={format} onClick={() => { setOpen(false); api.downloadExport(format); }}>{format === "lens" ? "Lens JSON" : format === "ndjson" ? "NDJSON" : "CycloneDX 1.7"}</button>)}</div>}</div>;
+}
+
+function About({ onClose }: { onClose: () => void }) {
+  return <div className="modal-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="about-modal"><button onClick={onClose}><X size={18} /></button><Brand /><p className="eyebrow">PRODUCT BOUNDARY</p><h2>Lens is the discovery layer.</h2><p>It observes, normalizes, correlates, and reports factual inventory across endpoints, source repositories, and Kubernetes.</p><div className="boundary-grid"><span><CheckCircle2 size={15} /> Discovers systems and capabilities</span><span><CheckCircle2 size={15} /> Preserves sanitized evidence</span><span><CheckCircle2 size={15} /> Reports coverage and change</span><span><X size={15} /> No risk scores or grades</span><span><X size={15} /> No approval or remediation</span><span><X size={15} /> No blocking or governance</span></div><small>Raw Lens JSON remains the canonical discovery contract. Executive posture is a derived projection.</small></section></div>;
+}
+
+function Loading() { return <div className="loading"><Radar size={25} /><span>Resolving discovery posture…</span></div>; }
+function InlineLoading() { return <div className="inline-loading"><RefreshCw size={14} /> Loading…</div>; }
+function InlineError({ text }: { text: string }) { return <div className="inline-error"><AlertCircle size={15} />{text}</div>; }
+function Failure({ error, retry }: { error: string; retry: () => void }) { return <div className="failure"><AlertCircle size={24} /><h2>Lens could not load this view</h2><p>{error}</p><button className="button subtle" onClick={retry}>Try again</button></div>; }
+function Empty({ icon: Icon, title, detail }: { icon: LucideIcon; title: string; detail: string }) { return <div className="empty"><Icon size={23} /><b>{title}</b><p>{detail}</p></div>; }
+
+function Brand() { return <div className="brand"><span className="logo"><i /><i /><i /></span><span><b>BARRIKADE</b><small>LENS</small></span></div>; }
+
+function useRemote<T>(factory: () => Promise<T>, dependencies: unknown[]) {
+  const [data, setData] = useState<T>();
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const download = (format: "lens" | "ndjson" | "cyclonedx") => {
-    setOpen(false);
-    api.downloadExport(format).catch((reason) => setError(String(reason)));
-  };
-  return (
-    <div className="export-menu">
-      <button className="button subtle" onClick={() => setOpen((current) => !current)}><Download size={15} /> Export <ChevronDown size={13} /></button>
-      {open && <div className="export-popover"><button onClick={() => download("lens")}><b>Lens JSON</b><small>Canonical discovery graph</small></button><button onClick={() => download("ndjson")}><b>NDJSON</b><small>Streaming and forwarding</small></button><button onClick={() => download("cyclonedx")}><b>CycloneDX 1.7</b><small>Software and AI BOM</small></button></div>}
-      {error && <div className="export-error">{error}</div>}
-    </div>
-  );
+  const [revision, setRevision] = useState(0);
+  useEffect(() => {
+    let active = true;
+    setLoading(true); setError("");
+    factory().then((value) => { if (active) setData(value); }).catch((reason) => { if (active) setError(String(reason)); }).finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+    // The caller owns a stable API instance or explicitly lists its dependencies.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [...dependencies, revision]);
+  return { data, loading, error, reload: () => setRevision((value) => value + 1) };
 }
 
-function Brand({ lockup }: { lockup?: string }) {
-  return (
-    <div className="brand-lockup">
-      <LogoMark />
-      <span><b>BARRIKADE</b>{lockup && <small>{lockup}</small>}</span>
-    </div>
-  );
-}
-
-function LogoMark() {
-  return <span className="logo-mark" aria-hidden="true"><i className="logo-left" /><i className="logo-slash" /><i className="logo-right" /></span>;
-}
-
-function Kpi({ icon: Icon, label, value, detail, tone = "default" }: { icon: LucideIcon; label: string; value: number | string; detail: string; tone?: "default" | "attention" }) {
-  return <div className={`kpi-card ${tone}`}><span className="kpi-icon"><Icon size={18} /></span><div><span>{label}</span><b>{typeof value === "number" ? value.toLocaleString() : value}</b><small>{detail}</small></div></div>;
-}
-
-function PanelTitle({ title, detail, action }: { title: string; detail: string; action?: ReactNode }) {
-  return <div className="panel-title"><div><h2>{title}</h2><p>{detail}</p></div>{action && <div className="panel-action">{action}</div>}</div>;
-}
-
-function ConfidencePill({ value }: { value: string }) {
-  return <span className={`confidence-pill ${value}`}><i />{value}</span>;
-}
-
-function KindIcon({ kind, large = false }: { kind: string; large?: boolean }) {
-  const Icon = kindConfig[kind]?.icon ?? CircleDot;
-  return <span className={`kind-icon ${kindConfig[kind]?.family ?? "source"} ${large ? "large" : ""}`}><Icon size={large ? 21 : 16} /></span>;
-}
-
-function SourceIcon({ type }: { type: string }) {
-  const Icon = type === "repository" ? GitBranch : type === "kubernetes" ? Container : Monitor;
-  return <span className={`source-icon ${type}`}><Icon size={16} /></span>;
-}
-
-function CopyButton({ value }: { value: string }) {
-  const [copied, setCopied] = useState(false);
-  const copy = async () => {
-    await navigator.clipboard.writeText(value);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 1500);
-  };
-  return <button className="copy-button" onClick={copy} aria-label="Copy to clipboard">{copied ? <Check size={14} /> : <Copy size={14} />}</button>;
-}
-
-function EmptyState({ icon: Icon, title, detail, compact = false }: { icon: LucideIcon; title: string; detail: string; compact?: boolean }) {
-  return <div className={`empty-state ${compact ? "compact" : ""}`}><Icon size={compact ? 18 : 24} /><b>{title}</b><span>{detail}</span></div>;
-}
-
-function LoadingState() {
-  return <div className="loading-grid"><div /><div /><div /><div className="wide" /><div className="wide" /></div>;
-}
-
-function ErrorState({ detail, retry }: { detail: string; retry: () => void }) {
-  return <section className="panel error-state"><span><X size={20} /></span><h2>Lens Hub is unavailable</h2><p>{detail}</p><button className="button secondary" onClick={retry}><RefreshCw size={15} /> Try again</button></section>;
-}
-
-function countBy<T extends Record<string, unknown>>(items: T[], key: keyof T) {
-  return items.reduce<Record<string, number>>((result, item) => {
-    const value = String(item[key]);
-    result[value] = (result[value] ?? 0) + 1;
-    return result;
+function groupConnections(items: Connection[]) {
+  return items.reduce<Record<string, Connection[]>>((groups, item) => {
+    const key = item.label === "observed_user" ? "observed_users" : item.entity.kind;
+    (groups[key] ??= []).push(item);
+    return groups;
   }, {});
 }
 
-function kindLabel(kind: string) {
-  return kindConfig[kind]?.label ?? humanize(kind);
-}
-
-function humanize(value: string) {
-  return value.replaceAll("_", " ").replaceAll("-", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
-}
-
-function postureFacts(entity: Entity) {
-  const labels: Array<[string, string]> = [
-    ["running_at_scan", "Running"], ["installed", "Installed"], ["configured", "Configured"],
-    ["enabled", "Enabled"], ["cached", "Cached"], ["state_present", "State present"],
-    ["deployment_reference", "Declared"], ["agent_card", "Agent card"], ["listener_process_verified", "Socket verified"],
-  ];
-  return labels.filter(([key]) => entity.attributes[key] === true).map(([, label]) => label);
-}
-
-function compactIdentifier(entity: Entity) {
-  if (typeof entity.attributes.host === "string") return entity.attributes.host;
-  if (typeof entity.attributes.locator === "string") return entity.attributes.locator;
-  if (typeof entity.attributes.repository_url === "string") return entity.attributes.repository_url;
-  return shortID(entity.id);
-}
-
-function attributeRank(key: string) {
-  const priority = ["running_at_scan", "installed", "configured", "enabled", "state_present", "cached", "transport", "binding", "port", "host"];
-  const index = priority.indexOf(key);
-  return index < 0 ? 100 : index;
-}
-
-function displayValue(value: unknown): string {
-  if (typeof value === "boolean") return value ? "Yes" : "No";
-  if (Array.isArray(value)) return value.map(String).join(", ");
-  if (value && typeof value === "object") return Object.entries(value as Record<string, unknown>).map(([key, item]) => `${humanize(key)}: ${String(item)}`).join(" · ");
-  return String(value);
-}
-
-function sourceState(source: Source) {
-  if (!source.last_seen_at) return { label: "Awaiting scan", tone: "pending" };
-  if (source.stale_entities > 0) return { label: "Has stale data", tone: "attention" };
-  return { label: "Reporting", tone: "healthy" };
-}
-
-function shortID(value: string) {
-  const plain = value.replace("urn:lens:", "");
-  return plain.length > 18 ? `${plain.slice(0, 10)}…${plain.slice(-6)}` : plain;
-}
-
-function relative(value: string, future = false) {
-  const seconds = Math.round((Date.now() - new Date(value).getTime()) / 1000);
-  const absolute = Math.abs(seconds);
-  const suffix = future || seconds < 0 ? "from now" : "ago";
-  if (absolute < 60) return `${absolute}s ${suffix}`;
-  if (absolute < 3600) return `${Math.floor(absolute / 60)}m ${suffix}`;
-  if (absolute < 86400) return `${Math.floor(absolute / 3600)}h ${suffix}`;
-  return `${Math.floor(absolute / 86400)}d ${suffix}`;
-}
-
-function formatDate(value: string) {
-  return new Date(value).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
-}
-
-function newestTimestamp(values: Array<string | undefined>) {
-  const valid = values.filter(Boolean) as string[];
-  return valid.sort((left, right) => new Date(right).getTime() - new Date(left).getTime())[0];
-}
-
-function base64URL(data: Uint8Array) {
-  let binary = "";
-  data.forEach((byte) => { binary += String.fromCharCode(byte); });
-  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/g, "");
-}
-
-function randomURLSafe(length: number) {
-  const data = new Uint8Array(length);
-  crypto.getRandomValues(data);
-  return base64URL(data);
-}
+function pretty(value: string) { return value.replace(/[._-]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase()); }
+function sum(values: number[]) { return values.reduce((total, value) => total + value, 0); }
+function percent(value: number, total: number) { return total ? Math.round((value / total) * 100) : 0; }
+function formatValue(value: unknown) { if (value === undefined || value === null || value === "") return "Not observed"; if (typeof value === "boolean") return value ? "Yes" : "No"; if (Array.isArray(value)) return value.join(", "); if (typeof value === "object") return "Structured value"; return String(value); }
+function relative(value: string) { const time = new Date(value).getTime(); if (!Number.isFinite(time)) return "Unknown"; const seconds = Math.max(0, Math.floor((Date.now() - time) / 1000)); if (seconds < 60) return "Just now"; if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`; if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`; return `${Math.floor(seconds / 86400)}d ago`; }
+function randomURLSafe(length: number) { const bytes = crypto.getRandomValues(new Uint8Array(length)); return base64URL(bytes).slice(0, length); }
+function base64URL(bytes: Uint8Array) { let value = ""; bytes.forEach((byte) => { value += String.fromCharCode(byte); }); return btoa(value).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); }

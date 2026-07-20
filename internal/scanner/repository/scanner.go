@@ -40,6 +40,7 @@ var (
 type Options struct {
 	OrganizationID string
 	SourceID       string
+	TargetID       string
 	Root           string
 	RepositoryURL  string
 	CommitSHA      string
@@ -79,11 +80,14 @@ func Scan(ctx context.Context, options Options) (discovery.Snapshot, error) {
 	if canonical == "" {
 		canonical = discovery.HashLocator(options.OrganizationID, root)
 	}
+	if options.TargetID == "" {
+		options.TargetID = discovery.StableID(options.OrganizationID, discovery.KindRepository, canonical)
+	}
 	if options.SourceID == "" {
-		options.SourceID = discovery.StableID(options.OrganizationID, discovery.KindRepository, canonical)
+		options.SourceID = options.TargetID
 	}
 
-	snapshot := discovery.NewSnapshot(options.OrganizationID, options.SourceID, discovery.SourceRepository, discovery.Collector{
+	snapshot := discovery.NewTargetSnapshot(options.OrganizationID, options.SourceID, options.TargetID, discovery.SourceRepository, discovery.Collector{
 		ID: "barrikade-lens", Name: "Barrikade Lens", Version: Version, Mode: "repository",
 	})
 	snapshot.Scope = discovery.Scope{Name: filepath.Base(root)}
@@ -92,7 +96,7 @@ func Scan(ctx context.Context, options Options) (discovery.Snapshot, error) {
 		DetectorID: "lens.repository", DetectorVersion: Version, Method: "descriptor", Family: "repository", Specificity: "high",
 		Locator: canonical,
 	})
-	attributes := map[string]any{}
+	attributes := map[string]any{"source_surface": "repository"}
 	if options.RepositoryURL != "" {
 		attributes["repository_url"] = options.RepositoryURL
 	}
@@ -221,10 +225,10 @@ var agentInstructionNames = map[string]bool{"agents.md": true, "claude.md": true
 
 func (s *scanState) agent(ref string) string {
 	if s.agentID == "" {
-		s.agentID = s.builder.AddEntity(discovery.KindAgent, "repository:"+s.options.SourceID+":application", filepath.Base(s.options.Root), map[string]any{"defined": true}, ref)
+		s.agentID = s.builder.AddEntity(discovery.KindAgent, "target:"+s.options.TargetID+":application", filepath.Base(s.options.Root), map[string]any{"defined": true, "source_surface": "repository"}, ref)
 		s.builder.AddRelationship(discovery.RelationshipDefinedIn, s.agentID, s.repositoryID, nil, ref)
 	} else {
-		s.builder.AddEntity(discovery.KindAgent, "repository:"+s.options.SourceID+":application", filepath.Base(s.options.Root), nil, ref)
+		s.builder.AddEntity(discovery.KindAgent, "target:"+s.options.TargetID+":application", filepath.Base(s.options.Root), nil, ref)
 	}
 	return s.agentID
 }
@@ -268,7 +272,7 @@ func (s *scanState) detectAgent(locator string, data []byte, ref string) {
 	if name == "" || len(name) > 200 {
 		name = strings.TrimSuffix(filepath.Base(locator), filepath.Ext(locator))
 	}
-	id := s.builder.AddEntity(discovery.KindAgent, "repository:"+s.options.SourceID+":agent:"+locator, name, map[string]any{"defined": true, "descriptor": locator}, ref)
+	id := s.builder.AddEntity(discovery.KindAgent, "target:"+s.options.TargetID+":agent:"+locator, name, map[string]any{"defined": true, "descriptor": locator, "source_surface": "repository"}, ref)
 	s.builder.AddRelationship(discovery.RelationshipDefinedIn, id, s.repositoryID, nil, ref)
 }
 
@@ -283,8 +287,8 @@ func (s *scanState) detectMCP(locator string, data []byte, ref string) {
 		if !ok {
 			continue
 		}
-		attributes := map[string]any{"configured": true, "transport": "stdio", "descriptor": locator}
-		canonical := "repository:" + s.options.SourceID + ":mcp:" + name
+		attributes := map[string]any{"configured": true, "transport": "stdio", "descriptor": locator, "source_surface": "repository"}
+		canonical := "target:" + s.options.TargetID + ":mcp:" + name
 		if rawURL := firstString(config, "url", "endpoint", "serverUrl"); rawURL != "" {
 			sanitized, err := discovery.SanitizeURL(rawURL)
 			if err != nil {
@@ -293,7 +297,7 @@ func (s *scanState) detectMCP(locator string, data []byte, ref string) {
 			attributes["endpoint"] = sanitized
 			attributes["host"] = discovery.URLHost(sanitized)
 			attributes["transport"] = "http"
-			canonical = "repository:" + s.options.SourceID + ":mcp-url:" + sanitized
+			canonical = "target:" + s.options.TargetID + ":mcp-url:" + sanitized
 		}
 		id := s.builder.AddEntity(discovery.KindMCPServer, canonical, name, attributes, ref)
 		s.builder.AddRelationship(discovery.RelationshipConfiguredBy, id, s.repositoryID, nil, ref)
@@ -330,7 +334,7 @@ func (s *scanState) detectOpenAPI(locator string, data []byte, ref string) {
 			}
 		}
 	}
-	canonical := "repository:" + s.options.SourceID + ":api:" + locator
+	canonical := "target:" + s.options.TargetID + ":api:" + locator
 	if host != "" {
 		canonical = "api-host:" + host
 	}
@@ -374,7 +378,7 @@ func (s *scanState) detectArazzo(locator string, data []byte, ref string) {
 		if name == "" {
 			name = fmt.Sprintf("workflow-%d", index+1)
 		}
-		id := s.builder.AddEntity(discovery.KindWorkflow, "repository:"+s.options.SourceID+":workflow:"+locator+":"+name, name, map[string]any{"document": locator, "arazzo_version": version}, ref)
+		id := s.builder.AddEntity(discovery.KindWorkflow, "target:"+s.options.TargetID+":workflow:"+locator+":"+name, name, map[string]any{"document": locator, "arazzo_version": version, "source_surface": "repository"}, ref)
 		s.builder.AddRelationship(discovery.RelationshipDefinedIn, id, s.repositoryID, nil, ref)
 	}
 }
@@ -389,7 +393,7 @@ func (s *scanState) detectA2A(locator string, data []byte, ref string) {
 		name = "A2A agent at " + locator
 	}
 	attributes := map[string]any{"defined": true, "protocol": "a2a", "agent_card": true, "descriptor": locator}
-	canonical := "repository:" + s.options.SourceID + ":a2a:" + locator
+	canonical := "target:" + s.options.TargetID + ":a2a:" + locator
 	if endpoint := firstString(document, "url"); endpoint != "" {
 		if sanitized, sanitizeErr := discovery.SanitizeURL(endpoint); sanitizeErr == nil {
 			attributes["endpoint"] = sanitized
@@ -420,7 +424,7 @@ func (s *scanState) detectDeployment(locator, base string, data []byte, ref stri
 				name = declared
 			}
 		}
-		id := s.builder.AddEntity(discovery.KindWorkflow, "repository:"+s.options.SourceID+":ci:"+locator, name, map[string]any{"declared": true, "workflow_type": "ci", "locator": locator}, ref)
+		id := s.builder.AddEntity(discovery.KindWorkflow, "target:"+s.options.TargetID+":ci:"+locator, name, map[string]any{"declared": true, "workflow_type": "ci", "locator": locator, "source_surface": "repository"}, ref)
 		s.builder.AddRelationship(discovery.RelationshipDefinedIn, id, s.repositoryID, nil, ref)
 		return
 	}
@@ -432,7 +436,7 @@ func (s *scanState) detectDeployment(locator, base string, data []byte, ref stri
 					if strings.TrimSpace(name) == "" || len(name) > 200 {
 						continue
 					}
-					id := s.builder.AddEntity(discovery.KindWorkload, "repository:"+s.options.SourceID+":compose:"+locator+":"+name, name, map[string]any{"deployment_reference": true, "type": "compose_service", "locator": locator}, ref)
+					id := s.builder.AddEntity(discovery.KindWorkload, "target:"+s.options.TargetID+":compose:"+locator+":"+name, name, map[string]any{"deployment_reference": true, "type": "compose_service", "locator": locator, "source_surface": "repository"}, ref)
 					s.builder.AddRelationship(discovery.RelationshipDefinedIn, id, s.repositoryID, nil, ref)
 				}
 			}
@@ -453,7 +457,7 @@ func (s *scanState) detectDeployment(locator, base string, data []byte, ref stri
 		}
 		workloadIndex++
 		name := strings.ToUpper(kind[:1]) + kind[1:] + " at " + filepath.Base(locator)
-		id := s.builder.AddEntity(discovery.KindWorkload, fmt.Sprintf("repository:%s:deployment:%s:%s:%d", s.options.SourceID, locator, kind, workloadIndex), name, map[string]any{"deployment_reference": true, "type": "kubernetes_" + kind, "locator": locator}, ref)
+		id := s.builder.AddEntity(discovery.KindWorkload, fmt.Sprintf("target:%s:deployment:%s:%s:%d", s.options.TargetID, locator, kind, workloadIndex), name, map[string]any{"deployment_reference": true, "type": "kubernetes_" + kind, "locator": locator, "source_surface": "repository"}, ref)
 		s.builder.AddRelationship(discovery.RelationshipDefinedIn, id, s.repositoryID, nil, ref)
 	}
 	s.markRepositoryDeployment(ref, "deployment_configuration_present")
@@ -480,7 +484,7 @@ func (s *scanState) detectOwners(data []byte, ref string) {
 	}
 	for owner := range owners {
 		ownerID := s.builder.AddEntity(discovery.KindUser, "scm-owner:"+strings.ToLower(owner), owner, map[string]any{"scm_owner": true}, ref)
-		s.builder.AddRelationship(discovery.RelationshipOwnedBy, s.repositoryID, ownerID, nil, ref)
+		s.builder.AddRelationship(discovery.RelationshipOwnedBy, s.repositoryID, ownerID, map[string]any{"attribution": "observed_scm_namespace", "authoritative": false}, ref)
 	}
 }
 

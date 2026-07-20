@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Barrikade Lens Hub API
-  version: 1.0.0
+  version: 2.0.0
   description: Open ingestion and query API for evidence-backed autonomous-agent discovery. Lens exposes inventory facts; it does not register, approve, protect, or govern agents.
 servers: [{url: /}]
 security: [{bearerAuth: []}]
@@ -20,11 +20,16 @@ paths:
     post: {operationId: createEnrollmentCode, requestBody: {content: {application/json: {schema: {type: object, additionalProperties: false, properties: {expires_in_seconds: {type: integer, minimum: 60, maximum: 86400, default: 600}, uses: {type: integer, minimum: 1, maximum: 10000, default: 1}, source_type: {enum: [endpoint, repository, kubernetes], default: endpoint}}}}}}, responses: {'201': {description: Expiring use-limited enrollment code}}}
   /v1/admin/sources/{id}:
     delete: {operationId: revokeDiscoverySource, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'204': {description: Source credentials revoked and its current observations removed}, '404': {description: Source not found}}}
+  /v1/admin/coverage/baselines:
+    put:
+      operationId: setCoverageBaselines
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/CoverageBaselineRequest'}}}}
+      responses: {'200': {description: Manual expected-population baselines updated}, '403': {description: Administrator access required}}
   /v1/discovery/snapshots:
     post:
       operationId: submitDiscoverySnapshot
       requestBody: {required: true, content: {application/json: {schema: {$ref: './schema/discovery-snapshot-v1.json'}}}}
-      responses: {'202': {description: Snapshot accepted into the PostgreSQL ingestion queue}, '422': {description: Snapshot failed schema or privacy validation}}
+      responses: {'202': {description: Snapshot accepted into the PostgreSQL ingestion queue}, '422': {description: Snapshot failed schema or privacy validation}, '426': {description: Collector must upgrade to DiscoverySnapshot 1.1}}
   /v1/discovery/jobs/{id}:
     get:
       operationId: getDiscoveryJob
@@ -33,14 +38,24 @@ paths:
   /v1/entities:
     get:
       operationId: listEntities
-      parameters: [{name: kind, in: query, schema: {type: string}}, {name: confidence, in: query, schema: {enum: [confirmed, likely, possible]}}, {$ref: '#/components/parameters/Limit'}]
+      parameters: [{name: kind, in: query, schema: {type: string}}, {name: confidence, in: query, schema: {enum: [confirmed, likely, possible]}}, {name: state, in: query, schema: {type: string}}, {name: surface, in: query, schema: {type: string}}, {name: target_id, in: query, schema: {type: string}}, {name: system_role, in: query, schema: {type: string}}, {name: system_type, in: query, schema: {type: string}}, {name: network_scope, in: query, schema: {type: string}}, {name: search, in: query, schema: {type: string}}, {name: sort, in: query, schema: {enum: [last_seen, name]}}, {$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
       responses: {'200': {description: Current evidence-backed entity inventory}}
   /v1/entities/{id}:
     get: {operationId: getEntity, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Entity and retained evidence}, '404': {description: Entity not found}}}
   /v1/relationships:
-    get: {operationId: listRelationships, parameters: [{name: kind, in: query, schema: {type: string}}, {name: entity_id, in: query, schema: {type: string}}, {$ref: '#/components/parameters/Limit'}], responses: {'200': {description: Current discovery graph edges}}}
+    get: {operationId: listRelationships, parameters: [{name: kind, in: query, schema: {type: string}}, {name: entity_id, in: query, schema: {type: string}}, {name: search, in: query, schema: {type: string}}, {$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}], responses: {'200': {description: Current discovery graph edges}}}
   /v1/changes:
-    get: {operationId: listChanges, parameters: [{$ref: '#/components/parameters/Limit'}], responses: {'200': {description: Entity discovery and lifecycle changes}}}
+    get: {operationId: listChanges, parameters: [{name: category, in: query, schema: {enum: [state, network_scope, attribution, capability, confidence, identity, freshness, metadata]}}, {name: target_id, in: query, schema: {type: string}}, {name: system_type, in: query, schema: {type: string}}, {name: system_role, in: query, schema: {enum: [system, supporting, component, artifact, target]}}, {name: surface, in: query, schema: {type: string}}, {name: window, in: query, schema: {enum: [24h, 7d, 30d, 90d]}}, {$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}], responses: {'200': {description: Material discovery changes with safe field-level differences}}}
+  /v1/overview:
+    get: {operationId: getDiscoveryOverview, parameters: [{name: window, in: query, schema: {enum: [24h, 7d, 30d, 90d], default: 7d}}], responses: {'200': {description: Server-computed discovery posture, coverage, factual attention, data quality, and changes}}}
+  /v1/systems:
+    get: {operationId: listSystems, parameters: [{name: system_type, in: query, schema: {enum: [autonomous_agent, agent_tool, model_runtime]}}, {name: state, in: query, schema: {type: string}}, {name: surface, in: query, schema: {type: string}}, {name: target_id, in: query, schema: {type: string}}, {name: confidence, in: query, schema: {enum: [confirmed, likely, possible]}}, {name: attribution, in: query, schema: {enum: [attributed, unattributed]}}, {name: network_scope, in: query, schema: {type: string}}, {name: search, in: query, schema: {type: string}}, {name: sort, in: query, schema: {enum: [last_seen, name]}}, {$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}], responses: {'200': {description: Root autonomous agents, agent tools, and model runtimes}}}
+  /v1/systems/{id}:
+    get: {operationId: getSystem, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Root system posture, connected inventory, and evidence}, '404': {description: System not found}}}
+  /v1/targets:
+    get: {operationId: listTargets, parameters: [{name: target_type, in: query, schema: {enum: [endpoint, repository, kubernetes]}}, {name: search, in: query, schema: {type: string}}, {$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}], responses: {'200': {description: Unique discovery targets with nested active collectors}}}
+  /v1/targets/{id}:
+    get: {operationId: getTarget, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Discovery target, freshness, scan coverage, and collectors}, '404': {description: Target not found}}}
   /v1/coverage:
     get: {operationId: getCoverage, responses: {'200': {description: Source coverage and freshness}}}
   /v1/exports:
@@ -55,9 +70,26 @@ components:
   parameters:
     ID: {name: id, in: path, required: true, schema: {type: string}}
     Limit: {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 1000, default: 100}}
+    Cursor: {name: cursor, in: query, schema: {type: string}, description: Opaque seek-pagination cursor returned by the previous page}
   schemas:
     Enrollment:
       type: object
       additionalProperties: false
-      required: [code, hostname, platform, architecture, collector_version]
-      properties: {code: {type: string}, hostname: {type: string}, platform: {type: string}, architecture: {type: string}, collector_version: {type: string}}
+      required: [code, hostname, platform, architecture, collector_version, identity_public_key, identity_proof]
+      properties: {code: {type: string}, hostname: {type: string}, platform: {type: string}, architecture: {type: string}, collector_version: {type: string}, identity_public_key: {type: string, description: Base64url-encoded Ed25519 public key}, identity_proof: {type: string, description: Ed25519 signature over the enrollment request}}
+    CoverageBaselineRequest:
+      type: object
+      additionalProperties: false
+      required: [baselines]
+      properties:
+        baselines:
+          type: array
+          minItems: 1
+          maxItems: 3
+          items:
+            type: object
+            additionalProperties: false
+            required: [target_type, expected_count]
+            properties:
+              target_type: {enum: [endpoint, repository, kubernetes]}
+              expected_count: {type: [integer, 'null'], minimum: 0}

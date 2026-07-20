@@ -41,7 +41,7 @@ docker compose up --build
 
 Open `http://localhost:8080` and use the quickstart token `lens-local-admin`. The compose credentials are deliberately development-only; use [the self-hosting guide](docs/self-hosting.md) for a real deployment.
 
-From the Hub’s Sources page, create a ten-minute enrollment code and run the one short command it provides:
+From the Hub’s Coverage page, create a ten-minute enrollment code and run the one short command it provides:
 
 ```sh
 npx barrikade-lens enroll ABCDE-FGHIJ --hub https://lens.example.com
@@ -73,7 +73,7 @@ flowchart LR
 - Go powers the detector engine, collectors, CLI/TUI, Kubernetes controller, Hub API, and PostgreSQL workers.
 - TypeScript powers the no-download npm launcher and React Hub UI.
 - PostgreSQL stores relational entities/edges plus JSONB attributes and is also the horizontally scalable job queue. There is no graph database or external queue.
-- The canonical contract is [Discovery Snapshot v1](api/schema/discovery-snapshot-v1.json); [OpenAPI](api/openapi.yaml) describes the Hub.
+- The canonical contract is [Discovery Snapshot 1.1](api/schema/discovery-snapshot-v1.json); [OpenAPI](api/openapi.yaml) describes the Hub.
 - Detector signatures are declarative, checksummed YAML with no executable code.
 - Catalog enrichment happens only at Hub. The bundled adapter reads a compact OAK-compatible manifest and lazily fetches only matched documents.
 
@@ -95,7 +95,7 @@ flowchart LR
 
 Lens accepts useful organizational identity—hostnames, OS users, repository/workload names, relative repository paths, and sanitized endpoint hosts—but rejects private content. Absolute paths become organization-salted hashes. URLs lose userinfo, query strings, and fragments. Configuration bodies, prompts, environment values, credentials, secret values, and full command arguments are forbidden by validation and property tests.
 
-Read [privacy and evidence](docs/privacy.md), [architecture](docs/architecture.md), and the [threat model](docs/threat-model.md) before extending a detector.
+Read [privacy and evidence](docs/privacy.md), [data integrity and executive posture](docs/data-integrity.md), [architecture](docs/architecture.md), and the [threat model](docs/threat-model.md) before extending a detector.
 
 ## Build and test
 

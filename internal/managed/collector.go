@@ -40,6 +40,9 @@ func (r Runner) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("load managed collector configuration: %w", err)
 	}
+	if cfg.ConfigVersion != 2 || cfg.TargetID == "" {
+		return fmt.Errorf("managed collector configuration is from an older Lens version; re-enroll this endpoint")
+	}
 	pack, err := detector.Builtin()
 	if err != nil {
 		return err
@@ -58,7 +61,7 @@ func (r Runner) Run(ctx context.Context) error {
 			return err
 		}
 		profiles := managedProfiles(home)
-		snapshot, scanErr := scanProfiles(ctx, cfg.OrganizationID, cfg.SourceID, pack, profiles, r.Version)
+		snapshot, scanErr := scanProfiles(ctx, cfg.OrganizationID, cfg.SourceID, cfg.TargetID, pack, profiles, r.Version)
 		if scanErr != nil {
 			return scanErr
 		}
@@ -180,13 +183,13 @@ type profile struct {
 	Username string
 }
 
-func scanProfiles(ctx context.Context, organizationID, sourceID string, pack detector.Pack, profiles []profile, version string) (discovery.Snapshot, error) {
+func scanProfiles(ctx context.Context, organizationID, sourceID, targetID string, pack detector.Pack, profiles []profile, version string) (discovery.Snapshot, error) {
 	var combined discovery.Snapshot
 	var firstError error
 	scanned := 0
 	for _, candidate := range profiles {
 		snapshot, err := endpoint.Scan(ctx, endpoint.Options{
-			OrganizationID: organizationID, SourceID: sourceID, HomeDir: candidate.Home, Username: candidate.Username, Pack: pack,
+			OrganizationID: organizationID, SourceID: sourceID, TargetID: targetID, HomeDir: candidate.Home, Username: candidate.Username, Pack: pack,
 		})
 		if err != nil {
 			if firstError == nil {

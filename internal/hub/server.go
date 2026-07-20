@@ -3,6 +3,7 @@ package hub
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/barrikadelabs/barrikade-lens/internal/githubapp"
+	"github.com/barrikadelabs/barrikade-lens/internal/identity"
 	"github.com/barrikadelabs/barrikade-lens/pkg/discovery"
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/google/uuid"
@@ -110,6 +112,12 @@ func (s *Server) routes() {
 	authenticated.HandleFunc("GET /v1/discovery/jobs/{id}", s.getJob)
 	authenticated.HandleFunc("GET /v1/entities", s.listEntities)
 	authenticated.HandleFunc("GET /v1/entities/{id}", s.getEntity)
+	authenticated.HandleFunc("GET /v1/overview", s.overview)
+	authenticated.HandleFunc("GET /v1/systems", s.listSystems)
+	authenticated.HandleFunc("GET /v1/systems/{id}", s.getSystem)
+	authenticated.HandleFunc("GET /v1/targets", s.listTargets)
+	authenticated.HandleFunc("GET /v1/targets/{id}", s.getTarget)
+	authenticated.HandleFunc("PUT /v1/admin/coverage/baselines", s.putCoverageBaselines)
 	authenticated.HandleFunc("GET /v1/relationships", s.listRelationships)
 	authenticated.HandleFunc("GET /v1/changes", s.listChanges)
 	authenticated.HandleFunc("GET /v1/coverage", s.coverage)
@@ -171,17 +179,28 @@ func (s *Server) createEnrollmentCode(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) exchangeEnrollment(w http.ResponseWriter, r *http.Request) {
 	var request struct {
-		Code             string `json:"code"`
-		Hostname         string `json:"hostname"`
-		Platform         string `json:"platform"`
-		Architecture     string `json:"architecture"`
-		CollectorVersion string `json:"collector_version"`
+		Code              string `json:"code"`
+		Hostname          string `json:"hostname"`
+		Platform          string `json:"platform"`
+		Architecture      string `json:"architecture"`
+		CollectorVersion  string `json:"collector_version"`
+		IdentityPublicKey string `json:"identity_public_key"`
+		IdentityProof     string `json:"identity_proof"`
 	}
 	if err := decodeJSON(w, r, &request, 64<<10); err != nil {
 		return
 	}
-	if request.Code == "" || request.Hostname == "" {
-		writeError(w, 400, "invalid_enrollment", "Code and hostname are required")
+	if request.Code == "" || request.Hostname == "" || request.IdentityPublicKey == "" || request.IdentityProof == "" {
+		writeError(w, 400, "invalid_enrollment", "Code, hostname, and endpoint identity proof are required; upgrade the Lens collector if identity fields are unavailable")
+		return
+	}
+	if err := identity.Verify(request.IdentityPublicKey, request.IdentityProof, request.Code, request.Hostname, request.Platform, request.Architecture, request.CollectorVersion); err != nil {
+		writeError(w, 401, "invalid_endpoint_identity", "The endpoint identity proof is invalid")
+		return
+	}
+	fingerprint, err := identity.Fingerprint(request.IdentityPublicKey)
+	if err != nil {
+		writeError(w, 400, "invalid_endpoint_identity", "The endpoint identity is invalid")
 		return
 	}
 	tx, err := s.config.Pool.BeginTx(r.Context(), pgx.TxOptions{})
@@ -202,14 +221,35 @@ func (s *Server) exchangeEnrollment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "database_error", "Could not validate enrollment code")
 		return
 	}
-	sourceUUID, err := uuid.NewV7()
+	targetID := discovery.StableID(orgID, discovery.KindEndpoint, "installation-key:"+fingerprint)
+	publicKey, _ := base64.RawURLEncoding.DecodeString(request.IdentityPublicKey)
+	err = tx.QueryRow(r.Context(), `INSERT INTO discovery_targets(organization_id,id,target_type,identity_fingerprint,identity_public_key,identity_quality,name,platform,architecture)
+		VALUES($1,$2,$3,$4,$5,'persistent',$6,$7,$8)
+		ON CONFLICT(organization_id,identity_fingerprint) WHERE identity_fingerprint IS NOT NULL
+		DO UPDATE SET name=EXCLUDED.name,platform=EXCLUDED.platform,architecture=EXCLUDED.architecture,current=true
+		RETURNING id`, orgID, targetID, sourceType, fingerprint, publicKey, request.Hostname, request.Platform, request.Architecture).Scan(&targetID)
 	if err != nil {
-		sourceUUID = uuid.New()
+		writeError(w, 500, "database_error", "Could not create discovery target")
+		return
 	}
-	sourceID := "source:" + sourceUUID.String()
-	_, err = tx.Exec(r.Context(), `INSERT INTO sources(organization_id,id,source_type,name,platform,collector_version) VALUES($1,$2,$3,$4,$5,$6)`, orgID, sourceID, sourceType, request.Hostname, request.Platform, request.CollectorVersion)
+	var sourceID string
+	var lastSequence uint64
+	err = tx.QueryRow(r.Context(), `SELECT id,last_sequence FROM sources WHERE organization_id=$1 AND target_id=$2 AND source_type=$3 AND revoked_at IS NULL FOR UPDATE`, orgID, targetID, sourceType).Scan(&sourceID, &lastSequence)
+	if errors.Is(err, pgx.ErrNoRows) {
+		sourceUUID, idErr := uuid.NewV7()
+		if idErr != nil {
+			sourceUUID = uuid.New()
+		}
+		sourceID = "source:" + sourceUUID.String()
+		_, err = tx.Exec(r.Context(), `INSERT INTO sources(organization_id,id,target_id,source_type,name,platform,architecture,collector_version) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, orgID, sourceID, targetID, sourceType, request.Hostname, request.Platform, request.Architecture, request.CollectorVersion)
+	} else if err == nil {
+		_, err = tx.Exec(r.Context(), `UPDATE sources SET name=$4,platform=$5,architecture=$6,collector_version=$7 WHERE organization_id=$1 AND id=$2 AND target_id=$3`, orgID, sourceID, targetID, request.Hostname, request.Platform, request.Architecture, request.CollectorVersion)
+		if err == nil {
+			_, err = tx.Exec(r.Context(), `DELETE FROM collector_refresh_tokens WHERE organization_id=$1 AND source_id=$2`, orgID, sourceID)
+		}
+	}
 	if err != nil {
-		writeError(w, 500, "database_error", "Could not create source")
+		writeError(w, 500, "database_error", "Could not create or rotate discovery source")
 		return
 	}
 	if uses <= 1 {
@@ -241,7 +281,7 @@ func (s *Server) exchangeEnrollment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "internal_error", "Could not sign access token")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"hub_url": s.config.PublicURL, "organization_id": orgID, "source_id": sourceID, "access_token": access, "access_token_expires_at": accessExpiry.Format(time.RFC3339), "refresh_token": refresh})
+	writeJSON(w, http.StatusOK, map[string]any{"hub_url": s.config.PublicURL, "organization_id": orgID, "source_id": sourceID, "target_id": targetID, "sequence": lastSequence, "access_token": access, "access_token_expires_at": accessExpiry.Format(time.RFC3339), "refresh_token": refresh})
 }
 
 func (s *Server) rotateCollectorToken(w http.ResponseWriter, r *http.Request) {
@@ -305,6 +345,10 @@ func (s *Server) submitSnapshot(w http.ResponseWriter, r *http.Request) {
 	if err := decodeJSON(w, r, &snapshot, 32<<20); err != nil {
 		return
 	}
+	if snapshot.SchemaVersion != discovery.SchemaVersion {
+		writeError(w, http.StatusUpgradeRequired, "collector_upgrade_required", "This Lens Hub requires DiscoverySnapshot schema "+discovery.SchemaVersion)
+		return
+	}
 	if err := snapshot.Validate(); err != nil {
 		writeError(w, 422, "invalid_snapshot", err.Error())
 		return
@@ -314,13 +358,17 @@ func (s *Server) submitSnapshot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var revokedAt *time.Time
-	var expectedSourceType string
-	if err := s.config.Pool.QueryRow(r.Context(), `SELECT source_type,revoked_at FROM sources WHERE organization_id=$1 AND id=$2`, snapshot.OrganizationID, snapshot.SourceID).Scan(&expectedSourceType, &revokedAt); err != nil || revokedAt != nil {
+	var expectedSourceType, expectedTargetID string
+	if err := s.config.Pool.QueryRow(r.Context(), `SELECT source_type,target_id,revoked_at FROM sources WHERE organization_id=$1 AND id=$2`, snapshot.OrganizationID, snapshot.SourceID).Scan(&expectedSourceType, &expectedTargetID, &revokedAt); err != nil || revokedAt != nil {
 		writeError(w, 403, "source_revoked", "The discovery source is unknown or revoked")
 		return
 	}
 	if expectedSourceType != string(snapshot.SourceType) {
 		writeError(w, 403, "source_type_mismatch", "Snapshot source type does not match the enrolled source")
+		return
+	}
+	if expectedTargetID != snapshot.TargetID {
+		writeError(w, 403, "target_mismatch", "Snapshot target must match the enrolled discovery target")
 		return
 	}
 	payload, err := json.Marshal(snapshot)
@@ -351,6 +399,33 @@ func (s *Server) revokeSource(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(r.Context())
+	entityRows, err := tx.Query(r.Context(), `SELECT entity_id FROM source_entities WHERE organization_id=$1 AND source_id=$2 AND current=true`, principal.OrganizationID, r.PathValue("id"))
+	if err != nil {
+		writeError(w, 500, "database_error", "Could not load source observations")
+		return
+	}
+	entityIDs := []string{}
+	for entityRows.Next() {
+		var id string
+		if entityRows.Scan(&id) == nil {
+			entityIDs = append(entityIDs, id)
+		}
+	}
+	entityRows.Close()
+	relationRows, err := tx.Query(r.Context(), `SELECT sr.relationship_id,r.from_entity,r.to_entity FROM source_relationships sr JOIN relationships r ON r.organization_id=sr.organization_id AND r.id=sr.relationship_id WHERE sr.organization_id=$1 AND sr.source_id=$2 AND sr.current=true`, principal.OrganizationID, r.PathValue("id"))
+	if err != nil {
+		writeError(w, 500, "database_error", "Could not load source relationships")
+		return
+	}
+	type affectedRelationship struct{ ID, From, To string }
+	relationIDs := []affectedRelationship{}
+	for relationRows.Next() {
+		var item affectedRelationship
+		if relationRows.Scan(&item.ID, &item.From, &item.To) == nil {
+			relationIDs = append(relationIDs, item)
+		}
+	}
+	relationRows.Close()
 	tag, err := tx.Exec(r.Context(), `UPDATE sources SET revoked_at=now() WHERE organization_id=$1 AND id=$2 AND revoked_at IS NULL`, principal.OrganizationID, r.PathValue("id"))
 	if err != nil {
 		writeError(w, 500, "database_error", "Could not revoke source")
@@ -363,8 +438,25 @@ func (s *Server) revokeSource(w http.ResponseWriter, r *http.Request) {
 	_, _ = tx.Exec(r.Context(), `DELETE FROM collector_refresh_tokens WHERE organization_id=$1 AND source_id=$2`, principal.OrganizationID, r.PathValue("id"))
 	_, _ = tx.Exec(r.Context(), `UPDATE source_entities SET current=false,stale=true WHERE organization_id=$1 AND source_id=$2`, principal.OrganizationID, r.PathValue("id"))
 	_, _ = tx.Exec(r.Context(), `UPDATE source_relationships SET current=false,stale=true WHERE organization_id=$1 AND source_id=$2`, principal.OrganizationID, r.PathValue("id"))
-	_, _ = tx.Exec(r.Context(), `UPDATE entities e SET current=EXISTS(SELECT 1 FROM source_entities se WHERE se.organization_id=e.organization_id AND se.entity_id=e.id AND se.current),stale=NOT EXISTS(SELECT 1 FROM source_entities se WHERE se.organization_id=e.organization_id AND se.entity_id=e.id AND se.current AND NOT se.stale) WHERE organization_id=$1`, principal.OrganizationID)
-	_, _ = tx.Exec(r.Context(), `UPDATE relationships rel SET current=EXISTS(SELECT 1 FROM source_relationships sr WHERE sr.organization_id=rel.organization_id AND sr.relationship_id=rel.id AND sr.current),stale=NOT EXISTS(SELECT 1 FROM source_relationships sr WHERE sr.organization_id=rel.organization_id AND sr.relationship_id=rel.id AND sr.current AND NOT sr.stale) WHERE organization_id=$1`, principal.OrganizationID)
+	for _, entityID := range entityIDs {
+		if _, err := recomputeEntityFromCurrentObservations(r.Context(), tx, principal.OrganizationID, entityID); err != nil {
+			writeError(w, 500, "database_error", "Could not reconcile source entities")
+			return
+		}
+	}
+	for _, relationship := range relationIDs {
+		if _, err := recomputeRelationshipFromCurrentObservations(r.Context(), tx, principal.OrganizationID, relationship.ID); err != nil {
+			writeError(w, 500, "database_error", "Could not reconcile source relationships")
+			return
+		}
+		for _, entityID := range []string{relationship.From, relationship.To} {
+			if err := refreshEntityPosture(r.Context(), tx, principal.OrganizationID, entityID); err != nil {
+				writeError(w, 500, "database_error", "Could not reconcile entity posture")
+				return
+			}
+		}
+	}
+	_, _ = tx.Exec(r.Context(), `UPDATE discovery_targets t SET current=EXISTS(SELECT 1 FROM sources s WHERE s.organization_id=t.organization_id AND s.target_id=t.id AND s.revoked_at IS NULL) WHERE organization_id=$1 AND id=(SELECT target_id FROM sources WHERE organization_id=$1 AND id=$2)`, principal.OrganizationID, r.PathValue("id"))
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, 500, "database_error", "Could not revoke source")
 		return

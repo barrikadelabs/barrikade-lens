@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 )
 
-const SchemaVersion = "1.0"
+const SchemaVersion = "1.1"
 
 type SourceType string
 
@@ -129,6 +129,7 @@ type Snapshot struct {
 	SnapshotID     string         `json:"snapshot_id"`
 	OrganizationID string         `json:"organization_id"`
 	SourceID       string         `json:"source_id"`
+	TargetID       string         `json:"target_id"`
 	SourceType     SourceType     `json:"source_type"`
 	Collector      Collector      `json:"collector"`
 	ObservedAt     string         `json:"observed_at"`
@@ -143,6 +144,10 @@ type Snapshot struct {
 }
 
 func NewSnapshot(orgID, sourceID string, sourceType SourceType, collector Collector) Snapshot {
+	return NewTargetSnapshot(orgID, sourceID, sourceID, sourceType, collector)
+}
+
+func NewTargetSnapshot(orgID, sourceID, targetID string, sourceType SourceType, collector Collector) Snapshot {
 	id, err := uuid.NewV7()
 	if err != nil {
 		id = uuid.New()
@@ -152,6 +157,7 @@ func NewSnapshot(orgID, sourceID string, sourceType SourceType, collector Collec
 		SnapshotID:     id.String(),
 		OrganizationID: orgID,
 		SourceID:       sourceID,
+		TargetID:       targetID,
 		SourceType:     sourceType,
 		Collector:      collector,
 		ObservedAt:     time.Now().UTC().Format(time.RFC3339Nano),

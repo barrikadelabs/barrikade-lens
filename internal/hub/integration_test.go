@@ -34,6 +34,14 @@ func integrationPool(t *testing.T) (context.Context, *pgxpool.Pool) {
 	return ctx, pool
 }
 
+func insertTestSource(ctx context.Context, pool *pgxpool.Pool, organizationID, sourceID, sourceType, name string) error {
+	if _, err := pool.Exec(ctx, `INSERT INTO discovery_targets(organization_id,id,target_type,name,identity_quality) VALUES($1,$2,$3,$4,'persistent')`, organizationID, sourceID, sourceType, name); err != nil {
+		return err
+	}
+	_, err := pool.Exec(ctx, `INSERT INTO sources(organization_id,id,target_id,source_type,name) VALUES($1,$2,$2,$3,$4)`, organizationID, sourceID, sourceType, name)
+	return err
+}
+
 type fixtureCatalogProvider struct{}
 
 func (fixtureCatalogProvider) ID() string          { return "fixture-catalog" }
@@ -91,8 +99,7 @@ func TestFullSnapshotStaleAndRemovalLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = pool.Exec(ctx, `INSERT INTO sources(organization_id,id,source_type,name) VALUES($1,$2,'endpoint','fixture')`, org, source)
-	if err != nil {
+	if err := insertTestSource(ctx, pool, org, source, "endpoint", "fixture"); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM organizations WHERE id=$1`, org) })
@@ -152,9 +159,10 @@ func TestRemovingGitHubRepositoryRevokesItsDiscoverySource(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM organizations WHERE id=$1`, org) })
-	if _, err := pool.Exec(ctx, `INSERT INTO sources(organization_id,id,source_type,name,last_seen_at) VALUES($1,$2,'repository','acme/agents',now())`, org, source); err != nil {
+	if err := insertTestSource(ctx, pool, org, source, "repository", "acme/agents"); err != nil {
 		t.Fatal(err)
 	}
+	_, _ = pool.Exec(ctx, `UPDATE sources SET last_seen_at=now() WHERE organization_id=$1 AND id=$2`, org, source)
 	if _, err := pool.Exec(ctx, `INSERT INTO github_installations(installation_id,organization_id,account_login) VALUES($1,$2,'acme')`, installationID, org); err != nil {
 		t.Fatal(err)
 	}
@@ -210,7 +218,21 @@ func TestHubQueriesAreOrganizationScopedAndCollectorsCannotReadInventory(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = pool.Exec(ctx, `INSERT INTO sources(organization_id,id,source_type,name) VALUES($1,'source-a','endpoint','source')`, orgA)
+	if err := insertTestSource(ctx, pool, orgA, "source-a", "endpoint", "Visible Endpoint"); err != nil {
+		t.Fatal(err)
+	}
+	if err := insertTestSource(ctx, pool, orgB, "source-b", "endpoint", "Other Tenant Endpoint"); err != nil {
+		t.Fatal(err)
+	}
+	_, err = pool.Exec(ctx, `INSERT INTO entity_posture(organization_id,entity_id,target_id,surface,system_role,system_type,product_id,product_category,discovery_state,network_scope,attributed,confidence,current,first_seen_at,last_seen_at,material_digest)
+		VALUES($1,'entity-a','source-a','endpoint','system','autonomous_agent','visible-agent','agent','defined','none',false,'likely',true,$3,$3,'a'),
+		($2,'entity-b','source-b','endpoint','system','autonomous_agent','other-agent','agent','defined','none',false,'likely',true,$3,$3,'b')`, orgA, orgB, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = pool.Exec(ctx, `INSERT INTO changes(id,organization_id,source_id,entity_id,event_type,snapshot_id,details,category,summary,changed_at)
+		VALUES(gen_random_uuid(),$1,'source-a','entity-a','entity.discovered',gen_random_uuid(),'{}','identity','Visible Agent discovered',$3),
+		(gen_random_uuid(),$2,'source-b','entity-b','entity.discovered',gen_random_uuid(),'{}','identity','Other Tenant Agent discovered',$3)`, orgA, orgB, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,25 +240,65 @@ func TestHubQueriesAreOrganizationScopedAndCollectorsCannotReadInventory(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := httptest.NewRequest(http.MethodGet, "/v1/entities", nil)
-	request.Header.Set("Authorization", "Bearer admin-a")
-	response := httptest.NewRecorder()
-	server.Handler().ServeHTTP(response, request)
-	if response.Code != 200 {
-		t.Fatalf("unexpected status %d", response.Code)
+	adminRequest := func(method, path, body string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(method, path, strings.NewReader(body))
+		request.Header.Set("Authorization", "Bearer admin-a")
+		if body != "" {
+			request.Header.Set("Content-Type", "application/json")
+		}
+		response := httptest.NewRecorder()
+		server.Handler().ServeHTTP(response, request)
+		return response
 	}
-	if strings.Contains(response.Body.String(), "Other Tenant Agent") || !strings.Contains(response.Body.String(), "Visible Agent") {
-		t.Fatalf("tenant isolation failure: %s", response.Body.String())
+	for _, path := range []string{"/v1/entities", "/v1/systems", "/v1/overview?window=7d", "/v1/targets", "/v1/changes?system_role=system", "/v1/coverage", "/v1/relationships"} {
+		response := adminRequest(http.MethodGet, path, "")
+		if response.Code != http.StatusOK {
+			t.Fatalf("%s returned %d: %s", path, response.Code, response.Body.String())
+		}
+		if strings.Contains(response.Body.String(), "Other Tenant") || strings.Contains(response.Body.String(), "entity-b") || strings.Contains(response.Body.String(), "source-b") {
+			t.Fatalf("tenant isolation failure on %s: %s", path, response.Body.String())
+		}
+	}
+	for _, path := range []string{"/v1/systems/entity-a", "/v1/targets/source-a"} {
+		if response := adminRequest(http.MethodGet, path, ""); response.Code != http.StatusOK {
+			t.Fatalf("own detail %s returned %d", path, response.Code)
+		}
+	}
+	for _, path := range []string{"/v1/systems/entity-b", "/v1/targets/source-b"} {
+		if response := adminRequest(http.MethodGet, path, ""); response.Code != http.StatusNotFound {
+			t.Fatalf("cross-tenant detail %s returned %d", path, response.Code)
+		}
+	}
+	baselineBody := `{"baselines":[{"target_type":"endpoint","expected_count":12},{"target_type":"repository","expected_count":null},{"target_type":"kubernetes","expected_count":null}]}`
+	if response := adminRequest(http.MethodPut, "/v1/admin/coverage/baselines", baselineBody); response.Code != http.StatusOK {
+		t.Fatalf("baseline update returned %d: %s", response.Code, response.Body.String())
+	}
+	var baselinesA, baselinesB int
+	if err := pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM coverage_baselines WHERE organization_id=$1),(SELECT count(*) FROM coverage_baselines WHERE organization_id=$2)`, orgA, orgB).Scan(&baselinesA, &baselinesB); err != nil {
+		t.Fatal(err)
+	}
+	if baselinesA != 1 || baselinesB != 0 {
+		t.Fatalf("coverage baseline escaped organization scope: orgA=%d orgB=%d", baselinesA, baselinesB)
 	}
 	collector, _, err := server.auth.issueAccessToken(orgA, "source-a", []string{"discovery:write", "jobs:read"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	request = httptest.NewRequest(http.MethodGet, "/v1/entities", nil)
+	for _, path := range []string{"/v1/entities", "/v1/systems", "/v1/overview", "/v1/targets", "/v1/changes", "/v1/coverage", "/v1/relationships", "/v1/exports?format=lens"} {
+		request := httptest.NewRequest(http.MethodGet, path, nil)
+		request.Header.Set("Authorization", "Bearer "+collector)
+		response := httptest.NewRecorder()
+		server.Handler().ServeHTTP(response, request)
+		if response.Code != http.StatusForbidden {
+			t.Fatalf("collector read %s should be forbidden, got %d", path, response.Code)
+		}
+	}
+	request := httptest.NewRequest(http.MethodPost, "/v1/discovery/snapshots", strings.NewReader(`{"schema_version":"1.0"}`))
 	request.Header.Set("Authorization", "Bearer "+collector)
-	response = httptest.NewRecorder()
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, request)
-	if response.Code != http.StatusForbidden {
-		t.Fatalf("collector read should be forbidden, got %d", response.Code)
+	if response.Code != http.StatusUpgradeRequired || !strings.Contains(response.Body.String(), "collector_upgrade_required") {
+		t.Fatalf("schema 1.0 did not receive an explicit collector upgrade response: status=%d body=%s", response.Code, response.Body.String())
 	}
 }

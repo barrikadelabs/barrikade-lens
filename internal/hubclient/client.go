@@ -9,11 +9,13 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
 
 	lensconfig "github.com/barrikadelabs/barrikade-lens/internal/config"
+	"github.com/barrikadelabs/barrikade-lens/internal/identity"
 	"github.com/barrikadelabs/barrikade-lens/pkg/discovery"
 )
 
@@ -28,11 +30,15 @@ type EnrollmentRequest struct {
 	Platform         string `json:"platform"`
 	Architecture     string `json:"architecture"`
 	CollectorVersion string `json:"collector_version"`
+	IdentityPublicKey string `json:"identity_public_key"`
+	IdentityProof     string `json:"identity_proof"`
 }
 type EnrollmentResponse struct {
 	HubURL               string `json:"hub_url"`
 	OrganizationID       string `json:"organization_id"`
 	SourceID             string `json:"source_id"`
+	TargetID             string `json:"target_id"`
+	Sequence             uint64 `json:"sequence"`
 	AccessToken          string `json:"access_token"`
 	AccessTokenExpiresAt string `json:"access_token_expires_at"`
 	RefreshToken         string `json:"refresh_token"`
@@ -46,24 +52,38 @@ func New(version string) *Client {
 	return &Client{HTTP: &http.Client{Timeout: 20 * time.Second}, Version: version}
 }
 
-func (c *Client) Enroll(ctx context.Context, hubURL, code string) (lensconfig.Config, error) {
+func (c *Client) Enroll(ctx context.Context, hubURL, code, configPath string) (lensconfig.Config, error) {
 	base, err := validateHubURL(hubURL)
 	if err != nil {
 		return lensconfig.Config{}, err
 	}
 	hostname, _ := os.Hostname()
-	request := EnrollmentRequest{Code: strings.TrimSpace(code), Hostname: hostname, Platform: runtime.GOOS, Architecture: runtime.GOARCH, CollectorVersion: c.Version}
+	if configPath == "" {
+		configPath, err = lensconfig.Path()
+		if err != nil {
+			return lensconfig.Config{}, err
+		}
+	}
+	state, err := identity.LoadOrCreate(identity.Path(filepath.Clean(configPath)), base)
+	if err != nil {
+		return lensconfig.Config{}, err
+	}
+	proof, err := state.Sign(code, hostname, runtime.GOOS, runtime.GOARCH, c.Version)
+	if err != nil {
+		return lensconfig.Config{}, err
+	}
+	request := EnrollmentRequest{Code: strings.TrimSpace(code), Hostname: hostname, Platform: runtime.GOOS, Architecture: runtime.GOARCH, CollectorVersion: c.Version, IdentityPublicKey: state.PublicKey, IdentityProof: proof}
 	var response EnrollmentResponse
 	if err := c.doJSON(ctx, http.MethodPost, base+"/v1/enrollment/exchange", "", request, &response); err != nil {
 		return lensconfig.Config{}, err
 	}
-	if response.OrganizationID == "" || response.SourceID == "" || response.RefreshToken == "" {
+	if response.OrganizationID == "" || response.SourceID == "" || response.TargetID == "" || response.RefreshToken == "" {
 		return lensconfig.Config{}, fmt.Errorf("Hub returned an incomplete enrollment response")
 	}
 	if response.HubURL == "" {
 		response.HubURL = base
 	}
-	return lensconfig.Config{HubURL: response.HubURL, OrganizationID: response.OrganizationID, SourceID: response.SourceID, AccessToken: response.AccessToken, AccessTokenExpiresAt: response.AccessTokenExpiresAt, RefreshToken: response.RefreshToken}, nil
+	return lensconfig.Config{ConfigVersion: 2, HubURL: response.HubURL, OrganizationID: response.OrganizationID, SourceID: response.SourceID, TargetID: response.TargetID, AccessToken: response.AccessToken, AccessTokenExpiresAt: response.AccessTokenExpiresAt, RefreshToken: response.RefreshToken, Sequence: response.Sequence}, nil
 }
 
 func (c *Client) Upload(ctx context.Context, configPath string, cfg *lensconfig.Config, snapshot discovery.Snapshot) (IngestionJob, error) {

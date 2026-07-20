@@ -9,9 +9,11 @@ import (
 )
 
 type Config struct {
+	ConfigVersion        int    `json:"config_version"`
 	HubURL               string `json:"hub_url"`
 	OrganizationID       string `json:"organization_id"`
 	SourceID             string `json:"source_id"`
+	TargetID             string `json:"target_id"`
 	AccessToken          string `json:"access_token,omitempty"`
 	AccessTokenExpiresAt string `json:"access_token_expires_at,omitempty"`
 	RefreshToken         string `json:"refresh_token,omitempty"`

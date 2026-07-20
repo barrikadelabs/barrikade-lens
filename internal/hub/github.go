@@ -265,18 +265,36 @@ func removeGitHubSource(ctx context.Context, tx pgx.Tx, item githubRepositorySou
 	if err != nil {
 		return err
 	}
+	relationRows, err := tx.Query(ctx, `SELECT sr.relationship_id,r.from_entity,r.to_entity FROM source_relationships sr JOIN relationships r ON r.organization_id=sr.organization_id AND r.id=sr.relationship_id WHERE sr.organization_id=$1 AND sr.source_id=$2 AND sr.current=true`, item.organizationID, item.sourceID)
+	if err != nil {
+		return err
+	}
+	type affectedRelationship struct{ ID, From, To string }
+	relations := []affectedRelationship{}
+	for relationRows.Next() {
+		var relation affectedRelationship
+		if err := relationRows.Scan(&relation.ID, &relation.From, &relation.To); err != nil {
+			relationRows.Close()
+			return err
+		}
+		relations = append(relations, relation)
+	}
+	if err := relationRows.Err(); err != nil {
+		relationRows.Close()
+		return err
+	}
+	relationRows.Close()
 	if _, err = tx.Exec(ctx, `UPDATE source_entities SET current=false,stale=true,consecutive_full_misses=3 WHERE organization_id=$1 AND source_id=$2`, item.organizationID, item.sourceID); err != nil {
 		return err
 	}
 	snapshot := discovery.Snapshot{SnapshotID: uuid.NewString(), OrganizationID: item.organizationID, SourceID: item.sourceID}
 	for _, entityID := range entityIDs {
-		var current bool
-		err = tx.QueryRow(ctx, `UPDATE entities e SET current=EXISTS(SELECT 1 FROM source_entities se WHERE se.organization_id=e.organization_id AND se.entity_id=e.id AND se.current),stale=NOT EXISTS(SELECT 1 FROM source_entities se WHERE se.organization_id=e.organization_id AND se.entity_id=e.id AND se.current AND NOT se.stale) WHERE organization_id=$1 AND id=$2 RETURNING current`, item.organizationID, entityID).Scan(&current)
+		current, err := recomputeEntityFromCurrentObservations(ctx, tx, item.organizationID, entityID)
 		if err != nil {
 			return err
 		}
 		if !current {
-			if err := recordChange(ctx, tx, snapshot, "entity.removed", entityID); err != nil {
+			if err := recordChange(ctx, tx, snapshot, "entity.removed", entityID, &changeMetadata{Category: "freshness", Summary: "System removed from current inventory"}); err != nil {
 				return err
 			}
 		}
@@ -284,12 +302,20 @@ func removeGitHubSource(ctx context.Context, tx pgx.Tx, item githubRepositorySou
 	if _, err = tx.Exec(ctx, `UPDATE source_relationships SET current=false,stale=true,consecutive_full_misses=3 WHERE organization_id=$1 AND source_id=$2`, item.organizationID, item.sourceID); err != nil {
 		return err
 	}
-	if _, err = tx.Exec(ctx, `UPDATE relationships r SET current=EXISTS(SELECT 1 FROM source_relationships sr WHERE sr.organization_id=r.organization_id AND sr.relationship_id=r.id AND sr.current),stale=NOT EXISTS(SELECT 1 FROM source_relationships sr WHERE sr.organization_id=r.organization_id AND sr.relationship_id=r.id AND sr.current AND NOT sr.stale) WHERE r.organization_id=$1`, item.organizationID); err != nil {
-		return err
+	for _, relation := range relations {
+		if _, err := recomputeRelationshipFromCurrentObservations(ctx, tx, item.organizationID, relation.ID); err != nil {
+			return err
+		}
+		for _, entityID := range []string{relation.From, relation.To} {
+			if err := refreshEntityPosture(ctx, tx, item.organizationID, entityID); err != nil {
+				return err
+			}
+		}
 	}
 	if _, err = tx.Exec(ctx, `UPDATE sources SET revoked_at=now() WHERE organization_id=$1 AND id=$2`, item.organizationID, item.sourceID); err != nil {
 		return err
 	}
+	_, _ = tx.Exec(ctx, `UPDATE discovery_targets SET current=false WHERE organization_id=$1 AND id=(SELECT target_id FROM sources WHERE organization_id=$1 AND id=$2)`, item.organizationID, item.sourceID)
 	_, err = tx.Exec(ctx, `DELETE FROM github_repositories WHERE organization_id=$1 AND source_id=$2`, item.organizationID, item.sourceID)
 	return err
 }
@@ -485,7 +511,12 @@ func (w RepositoryWorker) scan(ctx context.Context, orgID string, installationID
 	}
 	repositoryURL := "https://github.com/" + owner + "/" + repository
 	sourceID := discovery.StableID(orgID, discovery.KindRepository, repositoryURL)
-	_, err = w.Pool.Exec(ctx, `INSERT INTO sources(organization_id,id,source_type,name,last_sequence,last_full_sequence) VALUES($1,$2,'repository',$3,0,0) ON CONFLICT(organization_id,id) DO UPDATE SET name=EXCLUDED.name,revoked_at=NULL`, orgID, sourceID, owner+"/"+repository)
+	targetID := sourceID
+	_, err = w.Pool.Exec(ctx, `INSERT INTO discovery_targets(organization_id,id,target_type,identity_quality,name) VALUES($1,$2,'repository','persistent',$3) ON CONFLICT(organization_id,id) DO UPDATE SET name=EXCLUDED.name,current=true`, orgID, targetID, owner+"/"+repository)
+	if err != nil {
+		return err
+	}
+	_, err = w.Pool.Exec(ctx, `INSERT INTO sources(organization_id,id,target_id,source_type,name,last_sequence,last_full_sequence) VALUES($1,$2,$2,'repository',$3,0,0) ON CONFLICT(organization_id,id) DO UPDATE SET name=EXCLUDED.name,revoked_at=NULL,target_id=EXCLUDED.target_id`, orgID, sourceID, owner+"/"+repository)
 	if err != nil {
 		return err
 	}
@@ -493,7 +524,7 @@ func (w RepositoryWorker) scan(ctx context.Context, orgID string, installationID
 	if err != nil {
 		return err
 	}
-	snapshot, err := repositoryscanner.Scan(ctx, repositoryscanner.Options{OrganizationID: orgID, SourceID: sourceID, Root: temporary, RepositoryURL: repositoryURL, CommitSHA: commit})
+	snapshot, err := repositoryscanner.Scan(ctx, repositoryscanner.Options{OrganizationID: orgID, SourceID: sourceID, TargetID: targetID, Root: temporary, RepositoryURL: repositoryURL, CommitSHA: commit})
 	if err != nil {
 		return err
 	}

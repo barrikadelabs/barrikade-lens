@@ -12,8 +12,8 @@ func (s *Snapshot) Validate() error {
 	if s.SchemaVersion != SchemaVersion {
 		return fmt.Errorf("schema_version must be %q", SchemaVersion)
 	}
-	if s.SnapshotID == "" || s.OrganizationID == "" || s.SourceID == "" {
-		return fmt.Errorf("snapshot_id, organization_id, and source_id are required")
+	if s.SnapshotID == "" || s.OrganizationID == "" || s.SourceID == "" || s.TargetID == "" {
+		return fmt.Errorf("snapshot_id, organization_id, source_id, and target_id are required")
 	}
 	if s.SourceType != SourceEndpoint && s.SourceType != SourceRepository && s.SourceType != SourceKubernetes {
 		return fmt.Errorf("unsupported source_type %q", s.SourceType)

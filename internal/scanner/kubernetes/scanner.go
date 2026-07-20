@@ -61,6 +61,7 @@ type CRD struct {
 type Options struct {
 	OrganizationID string
 	SourceID       string
+	TargetID       string
 	Full           bool
 	Sequence       uint64
 	Pack           detector.Pack
@@ -81,16 +82,19 @@ func Scan(options Options) (discovery.Snapshot, error) {
 	if options.Inventory.ClusterID == "" {
 		return discovery.Snapshot{}, fmt.Errorf("cluster ID is required")
 	}
-	if options.SourceID == "" {
-		options.SourceID = discovery.StableID(options.OrganizationID, discovery.KindCluster, options.Inventory.ClusterID)
+	if options.TargetID == "" {
+		options.TargetID = discovery.StableID(options.OrganizationID, discovery.KindCluster, options.Inventory.ClusterID)
 	}
-	snapshot := discovery.NewSnapshot(options.OrganizationID, options.SourceID, discovery.SourceKubernetes, discovery.Collector{ID: "barrikade-lens-k8s", Name: "Barrikade Lens Kubernetes", Version: Version, Mode: "controller"})
+	if options.SourceID == "" {
+		options.SourceID = options.TargetID
+	}
+	snapshot := discovery.NewTargetSnapshot(options.OrganizationID, options.SourceID, options.TargetID, discovery.SourceKubernetes, discovery.Collector{ID: "barrikade-lens-k8s", Name: "Barrikade Lens Kubernetes", Version: Version, Mode: "controller"})
 	snapshot.Full = options.Full
 	snapshot.Sequence = options.Sequence
 	snapshot.Scope = discovery.Scope{Name: options.Inventory.ClusterName}
 	b := builder.New(snapshot)
 	clusterEvidence := b.AddEvidence(builder.Observation{DetectorID: "kubernetes.cluster", DetectorVersion: Version, Method: "workload_uid", Family: "cluster_identity", Specificity: "high", Locator: discovery.HashLocator(options.OrganizationID, options.Inventory.ClusterID)})
-	clusterID := b.AddEntity(discovery.KindCluster, "cluster:"+options.Inventory.ClusterID, options.Inventory.ClusterName, map[string]any{"connected": true}, clusterEvidence)
+	clusterID := b.AddEntity(discovery.KindCluster, "cluster:"+options.Inventory.ClusterID, options.Inventory.ClusterName, map[string]any{"connected": true, "source_surface": "kubernetes"}, clusterEvidence)
 	workloadIDs := map[string]string{}
 	for _, workload := range options.Inventory.Workloads {
 		ref := b.AddEvidence(builder.Observation{DetectorID: "kubernetes.workload", DetectorVersion: Version, Method: "workload_uid", Family: "deployment", Specificity: "high", Locator: discovery.HashLocator(options.OrganizationID, workload.UID)})
@@ -129,12 +133,12 @@ func Scan(options Options) (discovery.Snapshot, error) {
 					refsByRuntime[detection.Signature.ID] = append(refsByRuntime[detection.Signature.ID], detectionRef)
 				}
 			}
-			agentID := b.AddEntity(discovery.KindAgent, "kubernetes:"+options.Inventory.ClusterID+":agent:"+workload.UID, workload.Name, map[string]any{"deployed": true, "namespace": workload.Namespace}, detectionRefs...)
+			agentID := b.AddEntity(discovery.KindAgent, "kubernetes:"+options.Inventory.ClusterID+":agent:"+workload.UID, workload.Name, map[string]any{"deployed": true, "running_at_scan": workload.Running, "namespace": workload.Namespace, "source_surface": "kubernetes"}, detectionRefs...)
 			b.AddRelationship(discovery.RelationshipDeployedAs, agentID, id, nil, detectionRefs...)
 			for _, detection := range matched {
 				runtimeRefs := refsByRuntime[detection.Signature.ID]
-				runtimeID := b.AddEntity(discovery.KindRuntime, "runtime:"+detection.Signature.ID, detection.Signature.Name, map[string]any{"running_at_scan": workload.Running}, runtimeRefs...)
-				b.AddRelationship(discovery.RelationshipUses, agentID, runtimeID, nil, runtimeRefs...)
+				runtimeID := b.AddEntity(discovery.KindRuntime, "runtime:"+detection.Signature.ID, detection.Signature.Name, map[string]any{"product_id": detection.Signature.ID, "product_category": detection.Signature.Category}, runtimeRefs...)
+				b.AddRelationship(discovery.RelationshipUses, agentID, runtimeID, map[string]any{"running_at_scan": workload.Running, "source_surface": "kubernetes"}, runtimeRefs...)
 			}
 			scanReferencedConfigMaps(b, options, workload, agentID, ref)
 		}

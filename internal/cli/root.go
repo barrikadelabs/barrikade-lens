@@ -187,7 +187,7 @@ func newEnrollCommand(dependencies Dependencies) *cobra.Command {
 			if hubURL == "" {
 				return fmt.Errorf("--hub is required")
 			}
-			cfg, err := hubclient.New(Version).Enroll(command.Context(), hubURL, code)
+			cfg, err := hubclient.New(Version).Enroll(command.Context(), hubURL, code, configPath)
 			if err != nil {
 				return err
 			}

@@ -24,6 +24,7 @@ type Pack struct {
 type RuntimeSignature struct {
 	ID              string   `yaml:"id" json:"id"`
 	Name            string   `yaml:"name" json:"name"`
+	Category        string   `yaml:"category" json:"category"`
 	Processes       []string `yaml:"processes,omitempty" json:"processes,omitempty"`
 	Images          []string `yaml:"images,omitempty" json:"images,omitempty"`
 	EnvironmentKeys []string `yaml:"environment_keys,omitempty" json:"environment_keys,omitempty"`
@@ -85,13 +86,13 @@ func Load(path string) (Pack, error) {
 }
 
 func (p Pack) Validate() error {
-	if p.SchemaVersion != "1" || p.ID == "" || p.Version == "" {
-		return fmt.Errorf("detector pack schema_version=1, id, and version are required")
+	if p.SchemaVersion != "2" || p.ID == "" || p.Version == "" {
+		return fmt.Errorf("detector pack schema_version=2, id, and version are required")
 	}
 	seen := map[string]struct{}{}
 	for _, runtime := range p.Runtimes {
-		if runtime.ID == "" || runtime.Name == "" {
-			return fmt.Errorf("runtime id and name are required")
+		if runtime.ID == "" || runtime.Name == "" || !runtimeCategory(runtime.Category) {
+			return fmt.Errorf("runtime id, name, and a supported category are required")
 		}
 		if _, exists := seen[runtime.ID]; exists {
 			return fmt.Errorf("duplicate detector id %q", runtime.ID)
@@ -148,6 +149,15 @@ func (p Pack) Validate() error {
 		return fmt.Errorf("detector pack checksum does not match its contents")
 	}
 	return nil
+}
+
+func runtimeCategory(value string) bool {
+	switch value {
+	case "agent_tool", "model_runtime", "host_application", "development_runtime", "unclassified":
+		return true
+	default:
+		return false
+	}
 }
 
 func (p Pack) CalculatedChecksum() string {
