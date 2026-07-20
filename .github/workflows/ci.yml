@@ -61,12 +61,12 @@ jobs:
           mkdir -p "$package/bin" smoke/packages
           go build -o "$package/bin/barrikade-lens$suffix" ./cmd/barrikade-lens
           cp LICENSE NOTICE THIRD_PARTY_NOTICES.md "$package/"
-          npm pack "$package" --pack-destination smoke/packages
+          npm pack "./$package" --pack-destination smoke/packages
           npm run build -w barrikade-lens
-          npm pack npm/launcher --pack-destination smoke/packages
+          npm pack ./npm/launcher --pack-destination smoke/packages
           cd smoke
           npm init -y >/dev/null
-          npm install --ignore-scripts packages/*.tgz
+          npm install --ignore-scripts ./packages/*.tgz
           ./node_modules/.bin/barrikade-lens doctor
   kubernetes-rbac:
     runs-on: ubuntu-latest

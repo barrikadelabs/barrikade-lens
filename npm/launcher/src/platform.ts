@@ -14,7 +14,7 @@ export function platformPackage(platform = process.platform, architecture = proc
   if (!supported.has(target)) {
     throw new Error(`Barrikade Lens does not provide a native binary for ${target}.`);
   }
-  return `@barrikade-lens/${target}`;
+  return `@barrikade/lens-${target}`;
 }
 
 export function binaryPath(platform = process.platform, architecture = process.arch): string {

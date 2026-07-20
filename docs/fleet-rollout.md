@@ -6,11 +6,11 @@ On first enrollment, the endpoint creates a per-Hub Ed25519 installation identit
 
 ## macOS
 
-Deploy the signed and notarized universal pkg, then run `packaging/macos/jamf-install.sh` with protected `LENS_ENROLLMENT_CODE` and `LENS_HUB_URL` variables. When run as root, `service install` creates a LaunchDaemon and the managed collector scans eligible profiles under `/Users`; when run as a user, it creates a private LaunchAgent for that profile.
+During the MVP, deploy the architecture-appropriate native binary from the verified GitHub release or npm package to `/usr/local/bin/barrikade-lens`, then run `packaging/macos/jamf-install.sh` with protected `LENS_ENROLLMENT_CODE` and `LENS_HUB_URL` variables. When run as root, `service install` creates a LaunchDaemon and the managed collector scans eligible profiles under `/Users`; when run as a user, it creates a private LaunchAgent for that profile. Apple-signed and notarized packages are deferred until production hardening.
 
 ## Windows
 
-Deploy the signed architecture-appropriate MSI. Run `packaging/windows/intune-enroll.ps1` with protected `BARRIKADE_LENS_ENROLLMENT_CODE` and `BARRIKADE_LENS_HUB` environment values. Enrollment writes the rotating collector credential under `%ProgramData%\Barrikade\Lens` with private permissions and starts the Windows service. The system service scans eligible profiles under `C:\Users` without reading secret values.
+During the MVP, deploy the architecture-appropriate native binary from the verified GitHub release or npm package to `%ProgramFiles%\Barrikade Lens\barrikade-lens.exe`. Run `packaging/windows/intune-enroll.ps1` as an administrator with protected `BARRIKADE_LENS_ENROLLMENT_CODE` and `BARRIKADE_LENS_HUB` environment values. Enrollment writes the rotating collector credential under `%ProgramData%\Barrikade\Lens` with private permissions and installs the Windows service. The system service scans eligible profiles under `C:\Users` without reading secret values. Authenticode-signed MSI packages are deferred until production hardening.
 
 ## Linux
 

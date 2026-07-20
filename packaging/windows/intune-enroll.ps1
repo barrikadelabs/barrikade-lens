@@ -14,5 +14,5 @@ $acl.AddAccessRule([System.Security.AccessControl.FileSystemAccessRule]::new("BU
 Set-Acl -Path $configurationDirectory -AclObject $acl
 & $binary enroll $env:BARRIKADE_LENS_ENROLLMENT_CODE --hub $env:BARRIKADE_LENS_HUB --config $configuration
 if ($LASTEXITCODE -ne 0) { throw "Barrikade Lens enrollment failed" }
-Set-Service -Name BarrikadeLens -StartupType Automatic
-Start-Service -Name BarrikadeLens
+& $binary service install --config $configuration
+if ($LASTEXITCODE -ne 0) { throw "Barrikade Lens service installation failed" }

@@ -3,6 +3,14 @@
   "version": "2.0.0",
   "description": "Local-first autonomous agent discovery for endpoints, repositories, and organizations",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/barrikadelabs/barrikade-lens.git",
+    "directory": "npm/launcher"
+  },
+  "homepage": "https://github.com/barrikadelabs/barrikade-lens#readme",
+  "bugs": "https://github.com/barrikadelabs/barrikade-lens/issues",
+  "publishConfig": {"access": "public"},
   "type": "module",
   "bin": {"barrikade-lens": "dist/cli.js"},
   "files": ["dist", "README.md"],
@@ -10,11 +18,11 @@
   "scripts": {"build": "tsc -p tsconfig.json && node scripts/postbuild.mjs", "test": "npm run build && node --test dist/*.test.js"},
   "devDependencies": {"@types/node": "^24.0.0", "typescript": "^5.9.0"},
   "optionalDependencies": {
-    "@barrikade-lens/darwin-arm64": "2.0.0",
-    "@barrikade-lens/darwin-x64": "2.0.0",
-    "@barrikade-lens/linux-arm64": "2.0.0",
-    "@barrikade-lens/linux-x64": "2.0.0",
-    "@barrikade-lens/win32-arm64": "2.0.0",
-    "@barrikade-lens/win32-x64": "2.0.0"
+    "@barrikade/lens-darwin-arm64": "2.0.0",
+    "@barrikade/lens-darwin-x64": "2.0.0",
+    "@barrikade/lens-linux-arm64": "2.0.0",
+    "@barrikade/lens-linux-x64": "2.0.0",
+    "@barrikade/lens-win32-arm64": "2.0.0",
+    "@barrikade/lens-win32-x64": "2.0.0"
   }
 }
