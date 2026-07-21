@@ -49,6 +49,7 @@ jobs:
         with: {go-version: '1.26.x'}
       - uses: actions/setup-node@v6
         with: {node-version: 24}
+      - run: npm ci --ignore-scripts
       - name: Stage the runner's native package
         shell: bash
         run: |
