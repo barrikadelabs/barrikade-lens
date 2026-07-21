@@ -42,12 +42,27 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with: {fetch-depth: 0}
+
       - uses: actions/setup-go@v6
         with: {go-version: '1.26.x', cache: true}
+
+      - name: Install Syft
+        uses: anchore/sbom-action/download-syft@v0
+        with:
+          syft-version: v1.44.0
+
+      - name: Verify Syft
+        run: syft version
+
       - uses: sigstore/cosign-installer@v3
+
       - uses: goreleaser/goreleaser-action@v7
-        with: {distribution: goreleaser, version: latest, args: release --clean}
-        env: {GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'}
+        with:
+          distribution: goreleaser
+          version: v2.17.0
+          args: release --clean
+        env:
+          GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
 
   linux-native:
     needs: goreleaser
