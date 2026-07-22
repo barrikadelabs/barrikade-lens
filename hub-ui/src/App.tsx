@@ -130,7 +130,6 @@ function Shell({ api, signOut }: { api: API; signOut: () => void }) {
     <main className="main-area">
       <header className="topbar">
         <button className="mobile-menu" aria-label={menuOpen ? "Close navigation" : "Open navigation"} onClick={() => setMenuOpen((value) => !value)}>{menuOpen ? <X size={20} /> : <Menu size={20} />}</button>
-        <span className="live-status"><i /> Discovery inventory live</span>
         <div className="top-actions"><button className="icon-button" onClick={() => setRevision((value) => value + 1)} title="Refresh"><RefreshCw size={16} /></button><ExportMenu api={api} /></div>
       </header>
       <div className="workspace">

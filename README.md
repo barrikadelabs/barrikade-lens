@@ -12,6 +12,18 @@ npx barrikade-lens
 
 The no-argument command opens a guided terminal interface in a TTY and emits canonical Lens JSON in automation. It works without signup or network access. Local scans do not send telemetry.
 
+The local interface is organized for both executive review and engineering follow-up:
+
+- **Overview** separates autonomous agents, agent-capable tools, and model runtimes; summarizes primary state; and surfaces factual conditions that need context.
+- **Systems** shows root systems first, with supporting host applications and development runtimes clearly excluded from executive totals.
+- **Capabilities** groups MCP servers, models, skills, tools, APIs, and workflows without expanding every API operation into the main view.
+- **Coverage** explains what was checked, what failed or was unavailable, and how strong the collected evidence is.
+- **Evidence graph** exposes sanitized evidence samples, human-readable relationships, and export guidance for deeper engineering analysis.
+
+Use `1`–`5` or the left/right arrows to switch views, the up/down arrows or `j`/`k` to scroll, and `q` to leave. The layout adapts at 60, 80, and 140 columns and honors `NO_COLOR`.
+
+“Attention” in Lens is a factual discovery queue, not a risk score. A possible-only or residual finding means the evidence needs corroboration; it does not mean the product is installed, running, vulnerable, or approved.
+
 ```sh
 barrikade-lens scan --scope endpoint --format human
 barrikade-lens scan --scope repo --path . --format ndjson --output lens.ndjson
