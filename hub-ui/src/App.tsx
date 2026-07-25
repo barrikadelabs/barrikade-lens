@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Activity, AlertCircle, ArrowRight, Bot, Boxes, BrainCircuit, CheckCircle2, ChevronDown,
-  ChevronRight, CircleDot, Clock3, Container, Copy, Database, Download, ExternalLink,
-  GitBranch, HelpCircle, History, LayoutDashboard, Link2, LogOut, Menu, Monitor, Network,
-  PackageSearch, PlugZap, Radar, RefreshCw, Search, Server, ShieldCheck, SlidersHorizontal,
+  ChevronRight, CircleDot, Container, Copy, Database, Download, GitBranch, History,
+  LayoutDashboard, Link2, LogOut, Menu, Monitor, Network, PackageSearch, PlugZap, Radar,
+  RefreshCw, Search, Server, SlidersHorizontal,
   TerminalSquare, UserRound, Workflow, X, type LucideIcon,
 } from "lucide-react";
 import {
@@ -23,12 +23,12 @@ const navigation: Array<{ page: Page; icon: LucideIcon; detail: string }> = [
 ];
 
 const pageCopy: Record<Page, { eyebrow: string; title: string; detail: string }> = {
-  Overview: { eyebrow: "DISCOVERY POSTURE", title: "Know what is operating across your organization", detail: "Distinct systems, collection coverage, factual attention, and meaningful change—grounded in discovery evidence." },
-  Systems: { eyebrow: "SYSTEM INVESTIGATION", title: "Autonomous systems in context", detail: "Agent systems, agent-capable tools, and model runtimes with their state, target, capabilities, and evidence." },
-  Coverage: { eyebrow: "COLLECTION COVERAGE", title: "See where Lens can—and cannot—see", detail: "Unique endpoints, repositories, and clusters with source freshness, scan gaps, and collector identity diagnostics." },
-  Changes: { eyebrow: "MATERIAL CHANGE", title: "What actually changed", detail: "State, exposure, attribution, capability, confidence, identity, and freshness changes. Routine re-observation is suppressed." },
-  "Technical inventory": { eyebrow: "CANONICAL INVENTORY", title: "Inspect every discovered entity", detail: "The complete evidence-backed graph, including supporting runtimes, cached artifacts, users, APIs, and workloads." },
-  "Evidence graph": { eyebrow: "EVIDENCE GRAPH", title: "Trace every conclusion to its source", detail: "Explore a system’s connected capabilities, deployment surfaces, observed users, and sanitized evidence without loading the fleet graph." },
+  Overview: { eyebrow: "DISCOVERY", title: "Overview", detail: "A current, evidence-backed view of your autonomous system footprint." },
+  Systems: { eyebrow: "INVENTORY", title: "Systems", detail: "Agents, agent-capable tools, and model runtimes—without supporting software or cached artifacts." },
+  Coverage: { eyebrow: "VISIBILITY", title: "Coverage", detail: "Where Lens is reporting, where data is stale, and where expected population is unknown." },
+  Changes: { eyebrow: "HISTORY", title: "Changes", detail: "Material inventory changes. Routine scan refreshes are suppressed." },
+  "Technical inventory": { eyebrow: "TECHNICAL", title: "Technical inventory", detail: "Every discovered entity, including supporting runtimes, cached artifacts, users, APIs, and workloads." },
+  "Evidence graph": { eyebrow: "EVIDENCE", title: "Evidence graph", detail: "Trace a system to its capabilities, deployment surfaces, observed users, and sanitized evidence." },
 };
 
 const kindIcons: Record<string, LucideIcon> = {
@@ -116,24 +116,23 @@ function Shell({ api, signOut }: { api: API; signOut: () => void }) {
   return <div className="app-shell">
     <aside className={menuOpen ? "sidebar open" : "sidebar"}>
       <div className="sidebar-brand"><Brand /></div>
-      <nav className="main-nav"><p className="nav-heading">DISCOVERY</p>
+      <nav className="main-nav">
         {navigation.map(({ page: item, icon: Icon, detail }) => <button key={item} className={page === item ? "active" : ""} onClick={() => { setPage(item); setMenuOpen(false); }}>
           <Icon size={17} /><span><b>{item}</b><small>{detail}</small></span>{page === item && <ChevronRight size={14} />}
         </button>)}
       </nav>
-      <div className="discover-boundary"><CircleDot size={14} /><span><b>Discover</b><small>Observe · correlate · report</small></span></div>
       <div className="sidebar-footer">
-        <button onClick={() => setAbout(true)}><HelpCircle size={16} /> About Lens</button>
+        <button onClick={() => setAbout(true)}><CircleDot size={14} /> Discover only</button>
         <button className="logout" onClick={signOut} aria-label="Sign out"><LogOut size={16} /></button>
       </div>
     </aside>
     <main className="main-area">
-      <header className="topbar">
-        <button className="mobile-menu" aria-label={menuOpen ? "Close navigation" : "Open navigation"} onClick={() => setMenuOpen((value) => !value)}>{menuOpen ? <X size={20} /> : <Menu size={20} />}</button>
-        <div className="top-actions"><button className="icon-button" onClick={() => setRevision((value) => value + 1)} title="Refresh"><RefreshCw size={16} /></button><ExportMenu api={api} /></div>
-      </header>
       <div className="workspace">
-        <header className="page-heading"><div><p className="eyebrow">{copy.eyebrow}</p><h1>{copy.title}</h1><p>{copy.detail}</p></div></header>
+        <header className="page-heading">
+          <button className="mobile-menu" aria-label={menuOpen ? "Close navigation" : "Open navigation"} onClick={() => setMenuOpen((value) => !value)}>{menuOpen ? <X size={20} /> : <Menu size={20} />}</button>
+          <div><p className="eyebrow">{copy.eyebrow}</p><h1>{copy.title}</h1><p>{copy.detail}</p></div>
+          <div className="page-actions"><button className="icon-button" onClick={() => setRevision((value) => value + 1)} title="Refresh"><RefreshCw size={16} /></button><ExportMenu api={api} /></div>
+        </header>
         {page === "Overview" && <OverviewPage api={api} revision={revision} go={setPage} />}
         {page === "Systems" && <SystemsPage api={api} revision={revision} />}
         {page === "Coverage" && <CoveragePage api={api} revision={revision} />}
@@ -157,42 +156,45 @@ function OverviewPage({ api, revision, go }: { api: API; revision: number; go: (
   const states = data.footprint.states;
   const totalSystems = sum(Object.values(systems));
   const attention = [
-    ["Newly discovered systems", data.attention.newly_discovered_systems, "In this reporting window"],
-    ["Non-loopback services", data.attention.non_loopback_services, "Network or externally reachable"],
-    ["Unattributed systems", data.attention.unattributed_systems, "No authoritative ownership evidence"],
-    ["Possible-only systems", data.attention.possible_only_systems, "Discovery evidence needs corroboration"],
-    ["Partial scans", data.attention.partial_scans, "Denied paths or detector failures"],
-    ["Stale targets", data.attention.stale_targets, "Outside surface freshness threshold"],
-    ["Identity diagnostics", data.attention.possible_duplicate_identities, "Same display name, distinct identities"],
-    ["Conflicting facts", data.attention.fact_conflicts, "Sources disagree on a scalar fact"],
-  ] as Array<[string, number, string]>;
+    ["Non-loopback services", data.attention.non_loopback_services, "Observed beyond a loopback interface", "Systems"],
+    ["Possible-only systems", data.attention.possible_only_systems, "Evidence needs corroboration", "Systems"],
+    ["Ownership not established", data.attention.unattributed_systems, "No authoritative ownership evidence", "Systems"],
+    ["Partial scans", data.attention.partial_scans, "Some locations or detectors were unavailable", "Coverage"],
+    ["Stale targets", data.attention.stale_targets, "Outside the freshness threshold", "Coverage"],
+    ["Identity diagnostics", data.attention.possible_duplicate_identities, "Distinct identities share a display name", "Coverage"],
+    ["Conflicting facts", data.attention.fact_conflicts, "Sources disagree on a material fact", "Systems"],
+  ].filter((item) => Number(item[1]) > 0) as Array<[string, number, string, Page]>;
+  const reportingTargets = sum(data.coverage.map((item) => item.reporting));
+  const staleTargets = sum(data.coverage.map((item) => item.stale));
+  const running = states.running ?? 0;
 
   return <div className="page-stack">
-    <div className="window-switch">{["24h", "7d", "30d"].map((item) => <button className={window === item ? "active" : ""} onClick={() => setWindow(item)} key={item}>{item}</button>)}</div>
-    <section className="executive-strip">
-      <Metric label="Autonomous agents" value={systems.autonomous_agent ?? 0} detail="Explicit agent definitions" icon={Bot} accent />
-      <Metric label="Agent-capable tools" value={systems.agent_tool ?? 0} detail="Developer tools with agent capability" icon={TerminalSquare} />
-      <Metric label="Model runtimes" value={systems.model_runtime ?? 0} detail="Inference and local model servers" icon={BrainCircuit} />
-      <Metric label="Distinct systems" value={totalSystems} detail="Cached models and dev runtimes excluded" icon={PackageSearch} />
+    <div className="overview-toolbar"><span>Updated {relative(data.generated_at)}</span><div className="window-switch">{["24h", "7d", "30d"].map((item) => <button className={window === item ? "active" : ""} onClick={() => setWindow(item)} key={item}>{item}</button>)}</div></div>
+    <section className="posture-summary">
+      <div className="posture-total"><span>CURRENT FOOTPRINT</span><p><strong>{totalSystems.toLocaleString()}</strong> distinct systems</p><small>{running} running now · {reportingTargets} reporting {reportingTargets === 1 ? "target" : "targets"}{staleTargets ? ` · ${staleTargets} stale` : ""}</small></div>
+      <div className="system-breakdown">
+        <button onClick={() => go("Systems")}><Bot size={17} /><span><b>{systems.autonomous_agent ?? 0}</b><small>Autonomous agents</small></span></button>
+        <button onClick={() => go("Systems")}><TerminalSquare size={17} /><span><b>{systems.agent_tool ?? 0}</b><small>Agent-capable tools</small></span></button>
+        <button onClick={() => go("Systems")}><BrainCircuit size={17} /><span><b>{systems.model_runtime ?? 0}</b><small>Model runtimes</small></span></button>
+      </div>
     </section>
-    <section className="coverage-cards">
-      {data.coverage.map((item) => <CoverageCard key={item.target_type} item={item} onClick={() => go("Coverage")} />)}
-    </section>
-    <div className="overview-layout">
-      <section className="panel state-panel"><PanelHeading title="Operating state" detail="The strongest factual state observed for each root system" />
+    <div className="overview-primary">
+      <section className="panel state-panel"><PanelHeading title="Operating state" detail="Strongest state observed for each system" />
         <StateDistribution values={states} total={totalSystems} />
+        <ConfidenceSummary data={data.data_quality.confidence} />
       </section>
-      <section className="panel attention-panel"><PanelHeading title="Factual attention" detail="Discovery conditions worth understanding—not risk or remediation" count={sum(attention.map((item) => item[1]))} />
-        <div className="attention-list">{attention.map(([label, count, detail]) => <button key={label} onClick={() => label.includes("scan") || label.includes("target") || label.includes("Identity") ? go("Coverage") : go("Systems")}>
+      <section className="panel attention-panel"><PanelHeading title="Review queue" detail="Facts that need context—not a risk score" />
+        {attention.length ? <div className="attention-list">{attention.map(([label, count, detail, destination]) => <button key={label} onClick={() => go(destination)}>
           <span className={count ? "attention-count active" : "attention-count"}>{count}</span><span><b>{label}</b><small>{detail}</small></span><ChevronRight size={14} />
-        </button>)}</div>
+        </button>)}</div> : <Empty icon={CheckCircle2} title="Nothing needs review" detail="No stale, partial, conflicting, or possible-only findings in this window." />}
       </section>
-      <section className="panel change-panel"><PanelHeading title="Meaningful changes" detail={`Material discovery changes in the last ${window}`} action={<button className="text-button" onClick={() => go("Changes")}>View all <ArrowRight size={13} /></button>} />
-        <ChangeList items={data.changes} />
+    </div>
+    <div className="overview-secondary">
+      <section className="panel overview-coverage"><PanelHeading title="Coverage" detail="Reporting targets by discovery surface" action={<button className="text-button" onClick={() => go("Coverage")}>Open coverage <ArrowRight size={13} /></button>} />
+        <div className="coverage-summary-list">{data.coverage.map((item) => <CoverageSummaryRow item={item} key={item.target_type} onClick={() => go("Coverage")} />)}</div>
       </section>
-      <section className="panel quality-panel"><PanelHeading title="Data integrity" detail="How much confidence to place in the current view" />
-        <Confidence data={data.data_quality.confidence} />
-        <div className="quality-notes"><p><ShieldCheck size={15} /><span><b>Confidence measures evidence strength.</b>{data.data_quality.confidence_note}</span></p><p><Radar size={15} /><span><b>Coverage has no invented denominator.</b>{data.data_quality.coverage_note}</span></p></div>
+      <section className="panel change-panel"><PanelHeading title="Meaningful changes" detail={`Material changes in the last ${window}`} action={<button className="text-button" onClick={() => go("Changes")}>View all <ArrowRight size={13} /></button>} />
+        <ChangeList items={data.changes.slice(0, 4)} />
       </section>
     </div>
   </div>;
@@ -223,7 +225,7 @@ function SystemsPage({ api, revision }: { api: API; revision: number }) {
       <Select label="Confidence" value={filters.confidence} onChange={(value) => update("confidence", value)} options={{ "": "Any confidence", confirmed: "Confirmed", likely: "Likely", possible: "Possible" }} />
       <Select label="Network" value={filters.network_scope} onChange={(value) => update("network_scope", value)} options={{ "": "Any scope", external: "External", network: "Network", loopback: "Loopback", none: "None", unknown: "Unknown" }} />
     </FilterBar>
-    <section className="panel data-panel"><div className="table-summary"><span><b>{items.length}</b> systems loaded</span><span>Supporting runtimes and cached artifacts are hidden here</span></div>
+    <section className="panel data-panel"><div className="table-summary"><span><b>{items.length}</b> systems</span></div>
       <div className="system-table table-scroll"><div className="system-row table-head"><span>System</span><span>Type</span><span>State</span><span>Target / surface</span><span>Attribution</span><span>Evidence</span><span /></div>
         {items.map((item) => <button className="system-row" key={item.id} onClick={() => setSelected(item.id)}>
           <Identity kind={item.kind} name={item.name} detail={item.product_id ?? item.id} />
@@ -384,8 +386,17 @@ function CoverageBaseline({ api, coverage, onSaved }: { api: API; coverage: Over
 function CoverageCard({ item, onClick, active }: { item: Overview["coverage"][number]; onClick?: () => void; active?: boolean }) {
   const Icon = item.target_type === "endpoint" ? Monitor : item.target_type === "repository" ? GitBranch : Container;
   const label = ({ endpoint: "Endpoints", repository: "Repositories", kubernetes: "Kubernetes" } as Record<string, string>)[item.target_type] ?? pretty(item.target_type);
-  const body = <><span className="coverage-icon"><Icon size={19} /></span><div><p>{label}</p><strong>{item.reporting}</strong>{item.population_configured ? <span>of {item.expected_count} expected</span> : <span>Population not configured</span>}</div><div className="coverage-facts"><small><i className="fresh" />{item.fresh} fresh</small><small><i className={item.stale ? "stale" : "quiet"} />{item.stale} stale</small><small><i className={item.partial ? "partial" : "quiet"} />{item.partial} partial</small></div></>;
+  const status = item.reporting === 0 ? "Not reporting" : [item.fresh ? `${item.fresh} fresh` : "", item.stale ? `${item.stale} stale` : "", item.partial ? `${item.partial} partial` : ""].filter(Boolean).join(" · ");
+  const body = <><span className="coverage-icon"><Icon size={19} /></span><div><p>{label}</p><strong>{item.reporting}</strong><span>{item.population_configured ? `of ${item.expected_count} expected` : "reporting targets"}</span></div><div className={item.stale || item.partial ? "coverage-card-status needs-review" : item.reporting ? "coverage-card-status reporting" : "coverage-card-status quiet"}><b>{status}</b><small>{item.population_configured ? "Manual baseline" : "Expected population unknown"}</small></div></>;
   return onClick ? <button className={active ? "coverage-card active" : "coverage-card"} onClick={onClick}>{body}</button> : <div className="coverage-card">{body}</div>;
+}
+
+function CoverageSummaryRow({ item, onClick }: { item: Overview["coverage"][number]; onClick: () => void }) {
+  const Icon = item.target_type === "endpoint" ? Monitor : item.target_type === "repository" ? GitBranch : Container;
+  const label = ({ endpoint: "Endpoints", repository: "Repositories", kubernetes: "Kubernetes" } as Record<string, string>)[item.target_type] ?? pretty(item.target_type);
+  const statusText = item.reporting === 0 ? "Not reporting" : `${item.reporting} reporting${item.stale ? ` · ${item.stale} stale` : ""}${item.partial ? ` · ${item.partial} partial` : ""}`;
+  const baseline = item.population_configured ? `${item.expected_count} expected` : "Expected population unknown";
+  return <button className="coverage-summary-row" onClick={onClick}><span className="coverage-summary-icon"><Icon size={16} /></span><span><b>{label}</b><small>{baseline}</small></span><span className={item.stale || item.partial ? "coverage-status needs-review" : item.reporting ? "coverage-status reporting" : "coverage-status quiet"}>{statusText}</span><ChevronRight size={14} /></button>;
 }
 
 function ChangeList({ items, expanded = false }: { items: Change[]; expanded?: boolean }) {
@@ -393,18 +404,18 @@ function ChangeList({ items, expanded = false }: { items: Change[]; expanded?: b
   return <div className={expanded ? "change-list expanded" : "change-list"}>{items.map((item) => <article key={item.id}><span className={`change-mark ${item.category}`}><Activity size={13} /></span><div><p><b>{item.entity_name ?? "Discovered system"}</b><span className="category-pill">{pretty(item.category)}</span></p><h3>{item.summary || pretty(item.event_type)}</h3><small>{pretty(item.system_type ?? item.surface ?? "inventory")} · {relative(item.changed_at)}</small>{expanded && item.details?.fields && <div className="field-diffs">{item.details.fields.slice(0, 5).map((field) => <span key={field.path}><code>{pretty(field.path.replace("attributes.", ""))}</code><i>{formatValue(field.before)}</i><ArrowRight size={12} /><b>{formatValue(field.after)}</b></span>)}</div>}</div></article>)}</div>;
 }
 
-function Confidence({ data }: { data: Record<string, number> }) {
-  const total = sum(Object.values(data));
-  return <div className="confidence"><div className="confidence-bar"><i className="confirmed" style={{ width: `${percent(data.confirmed ?? 0, total)}%` }} /><i className="likely" style={{ width: `${percent(data.likely ?? 0, total)}%` }} /><i className="possible" style={{ width: `${percent(data.possible ?? 0, total)}%` }} /></div>{["confirmed", "likely", "possible"].map((key) => <div key={key}><span><i className={key} /><b>{pretty(key)}</b></span><strong>{data[key] ?? 0}</strong></div>)}</div>;
+function ConfidenceSummary({ data }: { data: Record<string, number> }) {
+  return <div className="confidence-summary"><span>Evidence confidence</span><div><b><i className="confirmed" />{data.confirmed ?? 0} confirmed</b><b><i className="likely" />{data.likely ?? 0} likely</b><b><i className="possible" />{data.possible ?? 0} possible</b></div></div>;
 }
 
 function StateDistribution({ values, total }: { values: Record<string, number>; total: number }) {
   const order = ["running", "deployed", "defined", "configured", "installed", "residual", "cached", "observed"];
-  return <div className="state-distribution"><div className="state-bar">{order.map((state) => values[state] ? <i key={state} className={state} style={{ width: `${percent(values[state], total)}%` }} title={`${pretty(state)} ${values[state]}`} /> : null)}</div><div className="state-legend">{order.map((state) => <div key={state}><span><i className={state} />{pretty(state)}</span><b>{values[state] ?? 0}</b><small>{percent(values[state] ?? 0, total)}%</small></div>)}</div></div>;
+  const observed = order.filter((state) => (values[state] ?? 0) > 0);
+  return <div className="state-distribution"><div className="state-bar">{observed.map((state) => <i key={state} className={state} style={{ width: `${percent(values[state], total)}%` }} title={`${pretty(state)} ${values[state]}`} />)}</div><div className="state-legend">{observed.map((state) => <div key={state}><span><i className={state} />{pretty(state)}</span><b>{values[state]}</b><small>{percent(values[state], total)}%</small></div>)}</div></div>;
 }
 
 function FilterBar({ search, setSearch, hideSearch, children }: { search?: string; setSearch?: (value: string) => void; hideSearch?: boolean; children: ReactNode }) {
-  return <section className="filter-bar">{!hideSearch && <label className="search"><Search size={16} /><input value={search} onChange={(event) => setSearch?.(event.target.value)} placeholder="Search discovered systems" /></label>}<div className="filters">{children}</div></section>;
+  return <section className={hideSearch ? "filter-bar filters-only" : "filter-bar"}>{!hideSearch && <label className="search"><Search size={16} /><input value={search} onChange={(event) => setSearch?.(event.target.value)} placeholder="Search discovered systems" /></label>}<div className="filters">{children}</div></section>;
 }
 
 function Select({ label, value = "", onChange, options }: { label: string; value?: string; onChange: (value: string) => void; options: Record<string, string> }) {
@@ -424,10 +435,6 @@ function Fact({ label, value }: { label: string; value: string }) { return <div>
 
 function ConnectionRow({ item }: { item: Connection }) {
   return <div className="connection-row"><Identity kind={item.entity.kind} name={item.entity.name} detail={item.label === "observed_user" ? "Observed user—not authoritative owner" : pretty(item.relationship_kind)} /><ConfidencePill value={item.confidence} /></div>;
-}
-
-function Metric({ label, value, detail, icon: Icon, accent }: { label: string; value: number; detail: string; icon: LucideIcon; accent?: boolean }) {
-  return <div className={accent ? "metric accent" : "metric"}><i><Icon size={19} /></i><span><small>{label}</small><b>{value.toLocaleString()}</b><p>{detail}</p></span></div>;
 }
 
 function PanelHeading({ title, detail, count, action }: { title: string; detail: string; count?: number; action?: ReactNode }) {
