@@ -8,6 +8,7 @@ runtimes:
     processes: [claude]
     images: [claude-code, anthropic/claude]
     environment_keys: [CLAUDE_CODE_ENTRYPOINT]
+    extension_ids: [anthropic.claude-code]
     install_paths: ["~/.vscode/extensions/anthropic.claude-code-*", "~/.cursor/extensions/anthropic.claude-code-*"]
     paths: ["~/.claude", "~/.config/claude"]
     configs:
@@ -17,6 +18,7 @@ runtimes:
       - {path: "~/.config/Claude/claude_desktop_config.json", format: json, scope: user}
       - {path: "%APPDATA%/Claude/claude_desktop_config.json", format: json, scope: user}
     skill_roots: ["~/.claude/skills"]
+    agent_roots: ["~/.claude/agents"]
   - id: codex
     name: OpenAI Codex
     category: agent_tool
@@ -41,9 +43,11 @@ runtimes:
   - id: copilot
     name: GitHub Copilot
     category: agent_tool
-    processes: [copilot-language-server, github-copilot]
+    processes: [copilot, copilot-language-server, github-copilot]
+    extension_ids: [github.copilot, github.copilot-chat]
     install_paths: ["~/.vscode/extensions/github.copilot-*", "~/.cursor/extensions/github.copilot-*"]
     paths: ["~/.config/github-copilot", "~/.copilot"]
+    agent_roots: ["~/.copilot/agents"]
   - id: vscode
     name: Visual Studio Code
     category: host_application
@@ -58,14 +62,21 @@ runtimes:
       - {path: "~/.config/Code/User/settings.json", format: jsonc, scope: user}
       - {path: "%APPDATA%/Code/User/settings.json", format: jsonc, scope: user}
   - id: gemini
-    name: Gemini CLI and Antigravity
+    name: Gemini CLI
     category: agent_tool
-    processes: [gemini, antigravity, "Antigravity IDE"]
-    install_paths: ["/Applications/Antigravity IDE.app", "/Applications/Antigravity.app"]
-    paths: ["~/.gemini", "~/.antigravity"]
+    processes: [gemini]
+    paths: ["~/.gemini"]
     configs:
       - {path: "~/.gemini/settings.json", format: json, scope: user}
     skill_roots: ["~/.gemini/skills"]
+  - id: antigravity
+    name: Antigravity
+    category: agent_tool
+    processes: [antigravity, antigravity-cli, "Antigravity IDE"]
+    install_paths: ["/Applications/Antigravity IDE.app", "/Applications/Antigravity.app"]
+    paths: ["~/.antigravity"]
+    configs:
+      - {path: "~/.gemini/config/hooks.json", format: json, scope: user}
   - id: windsurf
     name: Windsurf
     category: agent_tool
@@ -84,6 +95,7 @@ runtimes:
     name: Cline
     category: agent_tool
     processes: [cline]
+    extension_ids: [saoudrizwan.claude-dev]
     install_paths: ["~/.vscode/extensions/saoudrizwan.claude-dev-*", "~/.cursor/extensions/saoudrizwan.claude-dev-*"]
     paths: ["~/.cline"]
     configs:
@@ -98,6 +110,7 @@ runtimes:
     name: Roo Code
     category: agent_tool
     processes: [roo]
+    extension_ids: [rooveterinaryinc.roo-cline]
     install_paths: ["~/.vscode/extensions/rooveterinaryinc.roo-cline-*", "~/.cursor/extensions/rooveterinaryinc.roo-cline-*"]
     paths: ["~/.roo"]
     configs:
@@ -122,6 +135,7 @@ runtimes:
     name: Continue
     category: agent_tool
     processes: [continue]
+    extension_ids: [continue.continue]
     install_paths: ["~/.vscode/extensions/continue.continue-*", "~/.cursor/extensions/continue.continue-*"]
     paths: ["~/.continue"]
     configs:
@@ -271,20 +285,116 @@ runtimes:
     category: development_runtime
     processes: [uv]
 frameworks:
-  - {id: langchain, name: LangChain, packages: [langchain, "@langchain/core"], imports: [langchain]}
-  - {id: langgraph, name: LangGraph, packages: [langgraph, "@langchain/langgraph"], imports: [langgraph]}
-  - {id: llamaindex, name: LlamaIndex, packages: [llama-index, llama_index], imports: [llama_index]}
-  - {id: crewai, name: CrewAI, packages: [crewai], imports: [crewai]}
-  - {id: autogen, name: AutoGen, packages: [autogen-agentchat, pyautogen], imports: [autogen]}
-  - {id: agents-sdk, name: OpenAI Agents SDK, packages: [openai-agents, "@openai/agents"], imports: [agents]}
-  - {id: google-adk, name: Google Agent Development Kit, packages: [google-adk], imports: [google.adk]}
-  - {id: semantic-kernel, name: Semantic Kernel, packages: [semantic-kernel, microsoft-semantic-kernel], imports: [semantic_kernel]}
-  - {id: mastra, name: Mastra, packages: ["@mastra/core"], imports: [mastra]}
-  - {id: pydantic-ai, name: PydanticAI, packages: [pydantic-ai], imports: [pydantic_ai]}
-  - {id: smolagents, name: smolagents, packages: [smolagents], imports: [smolagents]}
-  - {id: haystack, name: Haystack, packages: [haystack-ai], imports: [haystack]}
-  - {id: vercel-ai, name: Vercel AI SDK, packages: [ai, "@ai-sdk/openai"], imports: [ai]}
-  - {id: voltagent, name: VoltAgent, packages: [voltagent, "@voltagent/core"], imports: [voltagent]}
+  - id: langchain
+    name: LangChain
+    language_packages:
+      python: [langchain]
+      javascript: [langchain, "@langchain/core"]
+    language_imports:
+      python: [langchain]
+      javascript: [langchain, "@langchain/core"]
+  - id: langgraph
+    name: LangGraph
+    language_packages:
+      python: [langgraph]
+      javascript: ["@langchain/langgraph"]
+    language_imports:
+      python: [langgraph]
+      javascript: ["@langchain/langgraph"]
+  - id: llamaindex
+    name: LlamaIndex
+    language_packages:
+      python: [llama-index, llama_index]
+    language_imports:
+      python: [llama_index]
+  - id: crewai
+    name: CrewAI
+    language_packages:
+      python: [crewai]
+    language_imports:
+      python: [crewai]
+  - id: autogen
+    name: AutoGen
+    language_packages:
+      python: [autogen-agentchat, pyautogen]
+    language_imports:
+      python: [autogen]
+  - id: agents-sdk
+    name: OpenAI Agents SDK
+    language_packages:
+      python: [openai-agents]
+      javascript: ["@openai/agents"]
+    language_imports:
+      python: [agents]
+      javascript: ["@openai/agents"]
+  - id: google-adk
+    name: Google Agent Development Kit
+    language_packages:
+      python: [google-adk]
+    language_imports:
+      python: [google.adk]
+  - id: semantic-kernel
+    name: Semantic Kernel
+    language_packages:
+      python: [semantic-kernel]
+      dotnet: [Microsoft.SemanticKernel]
+    language_imports:
+      python: [semantic_kernel]
+      dotnet: [Microsoft.SemanticKernel]
+  - id: mastra
+    name: Mastra
+    language_packages:
+      javascript: ["@mastra/core"]
+    language_imports:
+      javascript: ["@mastra/core"]
+  - id: pydantic-ai
+    name: PydanticAI
+    language_packages:
+      python: [pydantic-ai]
+    language_imports:
+      python: [pydantic_ai]
+  - id: smolagents
+    name: smolagents
+    language_packages:
+      python: [smolagents]
+    language_imports:
+      python: [smolagents]
+  - id: haystack
+    name: Haystack
+    language_packages:
+      python: [haystack-ai]
+    language_imports:
+      python: [haystack]
+  - id: vercel-ai
+    name: Vercel AI SDK
+    language_packages:
+      javascript: [ai, "@ai-sdk/openai"]
+    language_imports:
+      javascript: [ai, "@ai-sdk/openai"]
+  - id: voltagent
+    name: VoltAgent
+    language_packages:
+      javascript: [voltagent, "@voltagent/core"]
+    language_imports:
+      javascript: [voltagent, "@voltagent/core"]
+  - id: claude-agent-sdk
+    name: Claude Agent SDK
+    language_packages:
+      python: [claude-agent-sdk]
+      javascript: ["@anthropic-ai/claude-agent-sdk"]
+    language_imports:
+      python: [claude_agent_sdk]
+      javascript: ["@anthropic-ai/claude-agent-sdk"]
+skill_roots:
+  - id: portable-agent-skills
+    name: Portable Agent Skills
+    scope: user
+    paths: ["~/.agents/skills", "~/.config/agent-skills", "%USERPROFILE%/.agents/skills"]
+extension_roots:
+  - "~/.vscode/extensions"
+  - "~/.cursor/extensions"
+  - "~/.windsurf/extensions"
+  - "%USERPROFILE%/.vscode/extensions"
 model_caches:
   - id: huggingface-cache
     name: Hugging Face Hub Cache

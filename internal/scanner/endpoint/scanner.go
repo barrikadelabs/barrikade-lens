@@ -13,12 +13,13 @@ import (
 	"os/user"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/barrikadelabs/barrikade-lens/internal/detector"
 	"github.com/barrikadelabs/barrikade-lens/internal/scanner/builder"
+	"github.com/barrikadelabs/barrikade-lens/internal/scanner/mcpconfig"
+	"github.com/barrikadelabs/barrikade-lens/internal/scanner/skillconfig"
 	"github.com/barrikadelabs/barrikade-lens/pkg/discovery"
 	"github.com/pelletier/go-toml/v2"
 	"gopkg.in/yaml.v3"
@@ -110,7 +111,8 @@ func Scan(ctx context.Context, options Options) (discovery.Snapshot, error) {
 
 	systemEvidence := b.AddEvidence(builder.Observation{
 		DetectorID: "lens.endpoint", DetectorVersion: Version, Method: "system", Family: "identity", Specificity: "high",
-		Locator: discovery.HashLocator(options.OrganizationID, options.TargetID),
+		Locator:       discovery.HashLocator(options.OrganizationID, options.TargetID),
+		Authoritative: true,
 	})
 	endpointID := b.AddEntity(discovery.KindEndpoint, options.TargetID, options.Hostname, map[string]any{
 		"hostname": options.Hostname, "os": options.Platform, "architecture": runtime.GOARCH, "source_surface": "endpoint",
@@ -132,6 +134,14 @@ func Scan(ctx context.Context, options Options) (discovery.Snapshot, error) {
 		b.Snapshot.Coverage.DetectorsRun++
 		scanRuntime(b, options, signature, endpointID, userID)
 	}
+	if len(options.Pack.ExtensionRoots) > 0 {
+		b.Snapshot.Coverage.DetectorsRun++
+		scanIDEExtensions(b, options, endpointID, userID)
+	}
+	for _, root := range options.Pack.SkillRoots {
+		b.Snapshot.Coverage.DetectorsRun++
+		scanPortableSkills(b, options, root, endpointID, userID)
+	}
 	for _, cache := range options.Pack.ModelCaches {
 		b.Snapshot.Coverage.DetectorsRun++
 		scanModelCache(ctx, b, options, cache, endpointID)
@@ -141,6 +151,208 @@ func Scan(ctx context.Context, options Options) (discovery.Snapshot, error) {
 		scanKnownListener(b, options, listener, endpointID)
 	}
 	return b.Finish()
+}
+
+type extensionManifest struct {
+	Name        string                     `json:"name"`
+	Publisher   string                     `json:"publisher"`
+	DisplayName string                     `json:"displayName"`
+	Contributes map[string]json.RawMessage `json:"contributes"`
+}
+
+func scanIDEExtensions(b *builder.Builder, options Options, endpointID, userID string) {
+	known := map[string]detector.RuntimeSignature{}
+	for _, signature := range options.Pack.Runtimes {
+		for _, extensionID := range signature.ExtensionIDs {
+			if normalized := normalizeExtensionID(extensionID); normalized != "" {
+				known[normalized] = signature
+			}
+		}
+	}
+	seenRoots := map[string]struct{}{}
+	seenManifests := 0
+	incomplete := false
+	for _, configuredRoot := range options.Pack.ExtensionRoots {
+		root := expandPath(configuredRoot, options.HomeDir)
+		if root == "" {
+			continue
+		}
+		root = filepath.Clean(root)
+		if _, exists := seenRoots[root]; exists {
+			continue
+		}
+		seenRoots[root] = struct{}{}
+		b.Snapshot.Coverage.LocationsChecked++
+		entries, err := os.ReadDir(root)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			if errors.Is(err, os.ErrPermission) {
+				b.Snapshot.Coverage.LocationsDenied++
+			}
+			incomplete = true
+			continue
+		}
+		for _, entry := range entries {
+			if seenManifests >= 5000 {
+				incomplete = true
+				break
+			}
+			info, statErr := entry.Info()
+			if statErr != nil || !info.IsDir() {
+				continue
+			}
+			manifestPath := filepath.Join(root, entry.Name(), "package.json")
+			data, readErr := readLimited(manifestPath, maxConfigSize)
+			if errors.Is(readErr, os.ErrNotExist) {
+				continue
+			}
+			if readErr != nil {
+				if errors.Is(readErr, os.ErrPermission) {
+					b.Snapshot.Coverage.LocationsDenied++
+				}
+				incomplete = true
+				continue
+			}
+			seenManifests++
+			b.Snapshot.Coverage.LocationsChecked++
+			var manifest extensionManifest
+			if json.Unmarshal(data, &manifest) != nil {
+				incomplete = true
+				continue
+			}
+			extensionID := normalizeExtensionID(manifest.Publisher + "." + manifest.Name)
+			if extensionID == "" {
+				continue
+			}
+			capabilities := extensionCapabilities(manifest.Contributes)
+			signature, isKnown := known[extensionID]
+			if !isKnown && len(capabilities) == 0 {
+				continue
+			}
+			name := strings.TrimSpace(manifest.DisplayName)
+			if !validDescriptorName(name) || strings.HasPrefix(name, "%") && strings.HasSuffix(name, "%") {
+				name = extensionID
+			}
+			attributes := map[string]any{
+				"installed": true, "installation_methods": []string{"ide_extension_manifest"},
+				"source_surface": "endpoint", "discovery_surface": "ide_extension",
+			}
+			if isKnown {
+				attributes["extension_ids"] = []string{extensionID}
+				attributes["product_id"] = signature.ID
+				attributes["product_category"] = signature.Category
+			} else {
+				attributes["extension_id"] = extensionID
+				attributes["tool_category"] = "ide_extension"
+			}
+			if len(capabilities) > 0 {
+				attributes["agent_capabilities"] = capabilities
+			}
+			ref := b.AddEvidence(builder.Observation{
+				DetectorID: "ide-extension." + extensionID, DetectorVersion: options.Pack.Version,
+				Method: "extension_manifest", Family: "installation", Specificity: "high",
+				Locator:     discovery.SafeLocator(options.OrganizationID, "", manifestPath),
+				ContentHash: discovery.ContentHash(data), Authoritative: true,
+			})
+			kind := discovery.KindTool
+			canonical := "target:" + options.TargetID + ":ide-extension:" + extensionID
+			if isKnown {
+				kind = discovery.KindRuntime
+				canonical = "target:" + options.TargetID + ":runtime:" + signature.ID
+				name = signature.Name
+			}
+			entityID := b.AddEntity(kind, canonical, name, attributes, ref)
+			b.AddRelationship(discovery.RelationshipRunsOn, entityID, endpointID, nil, ref)
+			if userID != "" {
+				b.AddRelationship(discovery.RelationshipOwnedBy, entityID, userID, map[string]any{"scope": "user", "attribution": "observed_user", "authoritative": false}, ref)
+			}
+		}
+	}
+	if incomplete {
+		b.Error("ide-extensions", "extension_inventory_partial", "One or more IDE extension manifests could not be inspected", false)
+	}
+}
+
+func normalizeExtensionID(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if value == "" || len(value) > 200 || strings.HasPrefix(value, ".") || strings.HasSuffix(value, ".") {
+		return ""
+	}
+	for _, character := range value {
+		if (character < 'a' || character > 'z') && (character < '0' || character > '9') && character != '.' && character != '-' && character != '_' {
+			return ""
+		}
+	}
+	return value
+}
+
+func extensionCapabilities(contributes map[string]json.RawMessage) []string {
+	present := map[string]bool{}
+	for key, value := range contributes {
+		trimmed := strings.TrimSpace(string(value))
+		if trimmed == "" || trimmed == "null" || trimmed == "[]" || trimmed == "{}" {
+			continue
+		}
+		normalized := strings.ToLower(strings.NewReplacer("_", "", "-", "").Replace(key))
+		switch normalized {
+		case "chatparticipants":
+			present["chat_participant"] = true
+		case "languagemodeltools":
+			present["language_model_tool"] = true
+		case "mcpserverdefinitionproviders":
+			present["mcp_server_provider"] = true
+		}
+	}
+	result := []string{}
+	for _, capability := range []string{"chat_participant", "language_model_tool", "mcp_server_provider"} {
+		if present[capability] {
+			result = append(result, capability)
+		}
+	}
+	return result
+}
+
+func scanPortableSkills(b *builder.Builder, options Options, signature detector.SkillRoot, endpointID, userID string) {
+	for _, configuredRoot := range signature.Paths {
+		root := expandPath(configuredRoot, options.HomeDir)
+		if root == "" {
+			continue
+		}
+		b.Snapshot.Coverage.LocationsChecked++
+		descriptors, denied, truncated, err := discoverSkillDescriptors(root)
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			b.Snapshot.Coverage.Partial = true
+			continue
+		}
+		b.Snapshot.Coverage.LocationsDenied += denied
+		b.Snapshot.Coverage.Partial = b.Snapshot.Coverage.Partial || denied > 0 || truncated
+		for _, descriptor := range descriptors {
+			metadata := skillconfig.Parse(descriptor.Data, descriptor.Directory)
+			if !metadata.Valid {
+				continue
+			}
+			ref := b.AddEvidence(builder.Observation{
+				DetectorID: signature.ID, DetectorVersion: options.Pack.Version, Method: "skill_descriptor",
+				Family: "skill", Specificity: "high", Locator: discovery.SafeLocator(options.OrganizationID, "", descriptor.Path),
+				ContentHash: discovery.ContentHash(descriptor.Data), Authoritative: true,
+			})
+			attributes := map[string]any{
+				"state_present": true, "descriptor_valid": true, "skill_scope": signature.Scope,
+				"skill_root_id": signature.ID, "source_surface": "endpoint",
+				"configured": true,
+			}
+			skillID := b.AddEntity(discovery.KindSkill, "target:"+options.TargetID+":portable-skill:"+signature.ID+":"+strings.ToLower(descriptor.Relative), metadata.Name, attributes, ref)
+			b.AddRelationship(discovery.RelationshipRunsOn, skillID, endpointID, nil, ref)
+			if userID != "" && signature.Scope == "user" {
+				b.AddRelationship(discovery.RelationshipOwnedBy, skillID, userID, map[string]any{"scope": "user", "attribution": "observed_user", "authoritative": false}, ref)
+			}
+		}
+	}
 }
 
 func scanRuntime(b *builder.Builder, options Options, signature detector.RuntimeSignature, endpointID, userID string) {
@@ -227,17 +439,32 @@ func scanRuntime(b *builder.Builder, options Options, signature detector.Runtime
 			b.Error(signature.ID, "config_unreadable", "A known configuration path could not be inspected", false)
 			continue
 		}
-		ref := b.AddEvidence(builder.Observation{
-			DetectorID: signature.ID, DetectorVersion: options.Pack.Version, Method: "descriptor",
-			Family: "configuration", Specificity: "high", Locator: discovery.SafeLocator(options.OrganizationID, "", path),
-			ContentHash: discovery.ContentHash(data),
-		})
-		currentRuntimeID := addRuntime(map[string]any{"configured": true, "configuration_scope": config.Scope}, ref)
 		document, err := parseConfig(config.Format, data)
 		if err != nil {
+			ref := b.AddEvidence(builder.Observation{
+				DetectorID: signature.ID, DetectorVersion: options.Pack.Version, Method: "config_file",
+				Family: "runtime_state", Specificity: "low", Locator: discovery.SafeLocator(options.OrganizationID, "", path),
+				ContentHash: discovery.ContentHash(data),
+			})
+			addRuntime(map[string]any{"state_present": true}, ref)
 			b.Error(signature.ID, "config_malformed", "A known configuration file was present but malformed", false)
 			continue
 		}
+		if !hasConfigurationContent(document) {
+			ref := b.AddEvidence(builder.Observation{
+				DetectorID: signature.ID, DetectorVersion: options.Pack.Version, Method: "config_file",
+				Family: "runtime_state", Specificity: "low", Locator: discovery.SafeLocator(options.OrganizationID, "", path),
+				ContentHash: discovery.ContentHash(data),
+			})
+			addRuntime(map[string]any{"state_present": true}, ref)
+			continue
+		}
+		ref := b.AddEvidence(builder.Observation{
+			DetectorID: signature.ID, DetectorVersion: options.Pack.Version, Method: "config_shape",
+			Family: "configuration", Specificity: "high", Locator: discovery.SafeLocator(options.OrganizationID, "", path),
+			ContentHash: discovery.ContentHash(data), Authoritative: true,
+		})
+		currentRuntimeID := addRuntime(map[string]any{"configured": true, "configuration_scope": config.Scope}, ref)
 		addMCPServers(b, options, signature, currentRuntimeID, document, ref)
 		addModels(b, options, currentRuntimeID, document, ref)
 	}
@@ -246,6 +473,12 @@ func scanRuntime(b *builder.Builder, options Options, signature detector.Runtime
 		path := expandPath(root, options.HomeDir)
 		if path != "" {
 			scanSkills(b, options, signature, addRuntime, path)
+		}
+	}
+	for _, root := range signature.AgentRoots {
+		path := expandPath(root, options.HomeDir)
+		if path != "" {
+			scanAgentDefinitions(b, options, signature, addRuntime, endpointID, userID, path)
 		}
 	}
 
@@ -318,38 +551,238 @@ func scanKnownListener(b *builder.Builder, options Options, listener detector.Li
 
 func scanSkills(b *builder.Builder, options Options, signature detector.RuntimeSignature, addRuntime func(map[string]any, string) string, root string) {
 	b.Snapshot.Coverage.LocationsChecked++
-	entries, err := os.ReadDir(root)
+	descriptors, denied, truncated, err := discoverSkillDescriptors(root)
 	if errors.Is(err, os.ErrNotExist) {
 		return
 	}
 	if err != nil {
-		b.Snapshot.Coverage.LocationsDenied++
 		b.Snapshot.Coverage.Partial = true
 		return
 	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
+	b.Snapshot.Coverage.LocationsDenied += denied
+	b.Snapshot.Coverage.Partial = b.Snapshot.Coverage.Partial || denied > 0 || truncated
+	for _, descriptor := range descriptors {
+		metadata := skillconfig.Parse(descriptor.Data, descriptor.Directory)
+		if !metadata.Valid {
 			continue
 		}
-		descriptor := filepath.Join(root, entry.Name(), "SKILL.md")
-		data, err := readLimited(descriptor, maxConfigSize)
-		method := "path"
-		contentHash := ""
-		if err == nil {
-			method = "descriptor"
-			contentHash = discovery.ContentHash(data)
-		}
 		ref := b.AddEvidence(builder.Observation{
-			DetectorID: signature.ID + ".skills", DetectorVersion: options.Pack.Version, Method: method,
-			Family: "skill", Specificity: "high", Locator: discovery.SafeLocator(options.OrganizationID, "", filepath.Join(root, entry.Name())),
-			ContentHash: contentHash,
+			DetectorID: signature.ID + ".skills", DetectorVersion: options.Pack.Version, Method: "skill_descriptor",
+			Family: "skill", Specificity: "high", Locator: discovery.SafeLocator(options.OrganizationID, "", descriptor.Path),
+			ContentHash: discovery.ContentHash(descriptor.Data), Authoritative: true,
 		})
-		runtimeID := addRuntime(map[string]any{"skills_configured": true}, ref)
-		skillID := b.AddEntity(discovery.KindSkill, "target:"+options.TargetID+":skill:"+strings.ToLower(options.Username)+":"+signature.ID+":"+entry.Name(), entry.Name(), map[string]any{
-			"configured": true, "source_surface": "endpoint",
-		}, ref)
+		runtimeAttributes := map[string]any{"skill_state_present": true, "skills_configured": true}
+		skillAttributes := map[string]any{"state_present": true, "descriptor_valid": true, "source_surface": "endpoint", "configured": true}
+		runtimeID := addRuntime(runtimeAttributes, ref)
+		skillID := b.AddEntity(discovery.KindSkill, "target:"+options.TargetID+":skill:"+strings.ToLower(options.Username)+":"+signature.ID+":"+strings.ToLower(descriptor.Relative), metadata.Name, skillAttributes, ref)
 		b.AddRelationship(discovery.RelationshipProvides, runtimeID, skillID, nil, ref)
 	}
+}
+
+type skillDescriptor struct {
+	Path      string
+	Relative  string
+	Directory string
+	Data      []byte
+}
+
+func discoverSkillDescriptors(root string) (items []skillDescriptor, denied int, truncated bool, err error) {
+	const maxSkillsPerRoot = 1000
+	appendDescriptor := func(path, relative, directory string) error {
+		data, readErr := readLimited(path, maxConfigSize)
+		if readErr != nil {
+			if errors.Is(readErr, os.ErrPermission) {
+				denied++
+			}
+			return nil
+		}
+		items = append(items, skillDescriptor{Path: path, Relative: filepath.ToSlash(relative), Directory: directory, Data: data})
+		if len(items) >= maxSkillsPerRoot {
+			truncated = true
+			return filepath.SkipAll
+		}
+		return nil
+	}
+	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			if errors.Is(walkErr, os.ErrPermission) {
+				denied++
+				if entry != nil && entry.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			return walkErr
+		}
+		relative, relativeErr := filepath.Rel(root, path)
+		if relativeErr != nil {
+			return nil
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			info, statErr := os.Stat(path)
+			if statErr != nil {
+				if errors.Is(statErr, os.ErrPermission) {
+					denied++
+				}
+				return nil
+			}
+			parts := strings.Split(filepath.ToSlash(relative), "/")
+			if info.IsDir() && len(parts) >= 1 && len(parts) <= 2 {
+				descriptorPath := filepath.Join(path, "SKILL.md")
+				if _, descriptorErr := os.Stat(descriptorPath); descriptorErr == nil {
+					return appendDescriptor(descriptorPath, relative, filepath.Base(path))
+				} else if errors.Is(descriptorErr, os.ErrPermission) {
+					denied++
+				}
+			} else if !info.IsDir() && strings.EqualFold(entry.Name(), "SKILL.md") && len(parts) >= 2 && len(parts) <= 3 {
+				return appendDescriptor(path, filepath.Dir(relative), filepath.Base(filepath.Dir(path)))
+			}
+			return nil
+		}
+		if entry.IsDir() {
+			if relative != "." && len(strings.Split(filepath.ToSlash(relative), "/")) > 2 {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.EqualFold(entry.Name(), "SKILL.md") {
+			return nil
+		}
+		parts := strings.Split(filepath.ToSlash(relative), "/")
+		if len(parts) < 2 || len(parts) > 3 {
+			return nil
+		}
+		return appendDescriptor(path, filepath.Dir(relative), filepath.Base(filepath.Dir(path)))
+	})
+	return items, denied, truncated, err
+}
+
+func scanAgentDefinitions(
+	b *builder.Builder,
+	options Options,
+	signature detector.RuntimeSignature,
+	addRuntime func(map[string]any, string) string,
+	endpointID, userID, root string,
+) {
+	b.Snapshot.Coverage.LocationsChecked++
+	descriptors, denied, truncated, err := discoverAgentDescriptors(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return
+	}
+	if err != nil {
+		b.Snapshot.Coverage.Partial = true
+		return
+	}
+	b.Snapshot.Coverage.LocationsDenied += denied
+	b.Snapshot.Coverage.Partial = b.Snapshot.Coverage.Partial || denied > 0 || truncated
+	for _, descriptor := range descriptors {
+		name, valid := parseAgentDescriptor(descriptor.Data, descriptor.Path)
+		if !valid {
+			continue
+		}
+		ref := b.AddEvidence(builder.Observation{
+			DetectorID: signature.ID + ".agents", DetectorVersion: options.Pack.Version, Method: "agent_descriptor",
+			Family: "agent_definition", Specificity: "high", Locator: discovery.SafeLocator(options.OrganizationID, "", descriptor.Path),
+			ContentHash: discovery.ContentHash(descriptor.Data), Authoritative: true,
+		})
+		runtimeAttributes := map[string]any{"agent_definition_state_present": true, "agent_definitions_configured": true}
+		agentAttributes := map[string]any{
+			"state_present": true, "descriptor_valid": true, "definition_format": "agent_markdown",
+			"source_surface": "endpoint", "product_id": signature.ID, "defined": true,
+		}
+		runtimeID := addRuntime(runtimeAttributes, ref)
+		agentID := b.AddEntity(
+			discovery.KindAgent,
+			"target:"+options.TargetID+":agent-definition:"+signature.ID+":"+strings.ToLower(descriptor.Relative),
+			name,
+			agentAttributes,
+			ref,
+		)
+		b.AddRelationship(discovery.RelationshipProvides, runtimeID, agentID, nil, ref)
+		b.AddRelationship(discovery.RelationshipRunsOn, agentID, endpointID, nil, ref)
+		if userID != "" {
+			b.AddRelationship(discovery.RelationshipOwnedBy, agentID, userID, map[string]any{"scope": "user", "attribution": "observed_user", "authoritative": false}, ref)
+		}
+	}
+}
+
+type agentDescriptor struct {
+	Path     string
+	Relative string
+	Data     []byte
+}
+
+func discoverAgentDescriptors(root string) (items []agentDescriptor, denied int, truncated bool, err error) {
+	const maxAgentsPerRoot = 1000
+	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			if errors.Is(walkErr, os.ErrPermission) {
+				denied++
+				if entry != nil && entry.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
+			}
+			return walkErr
+		}
+		relative, relativeErr := filepath.Rel(root, path)
+		if relativeErr != nil {
+			return nil
+		}
+		depth := len(strings.Split(filepath.ToSlash(relative), "/"))
+		if entry.IsDir() {
+			if relative != "." && depth > 2 {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if entry.Type()&os.ModeSymlink != 0 || !strings.HasSuffix(strings.ToLower(entry.Name()), ".md") || depth > 3 {
+			return nil
+		}
+		data, readErr := readLimited(path, maxConfigSize)
+		if readErr != nil {
+			if errors.Is(readErr, os.ErrPermission) {
+				denied++
+			}
+			return nil
+		}
+		items = append(items, agentDescriptor{Path: path, Relative: filepath.ToSlash(relative), Data: data})
+		if len(items) >= maxAgentsPerRoot {
+			truncated = true
+			return filepath.SkipAll
+		}
+		return nil
+	})
+	return items, denied, truncated, err
+}
+
+func parseAgentDescriptor(data []byte, path string) (string, bool) {
+	normalized := strings.ReplaceAll(string(data), "\r\n", "\n")
+	body := strings.TrimSpace(normalized)
+	name := ""
+	if strings.HasPrefix(normalized, "---\n") {
+		end := strings.Index(normalized[4:], "\n---")
+		if end < 0 {
+			return filepath.Base(path), false
+		}
+		var metadata map[string]any
+		if yaml.Unmarshal([]byte(normalized[4:4+end]), &metadata) != nil {
+			return filepath.Base(path), false
+		}
+		name, _ = metadata["name"].(string)
+		name = strings.TrimSpace(name)
+		body = strings.TrimSpace(normalized[4+end+4:])
+	}
+	if !validDescriptorName(name) {
+		base := filepath.Base(path)
+		name = strings.TrimSuffix(strings.TrimSuffix(base, ".agent.md"), filepath.Ext(base))
+	}
+	return name, validDescriptorName(name) && body != ""
+}
+
+func validDescriptorName(name string) bool {
+	name = strings.TrimSpace(name)
+	return name != "" && len(name) <= 200 && !strings.ContainsAny(name, "\r\n\x00")
 }
 
 func scanModelCache(ctx context.Context, b *builder.Builder, options Options, cache detector.ModelCache, endpointID string) {
@@ -456,17 +889,8 @@ func modelCacheName(layout, relative string, directory bool) (string, bool) {
 	}
 }
 
-type mcpServer struct {
-	Name              string
-	Transport         string
-	URL               string
-	Enabled           *bool
-	EnvironmentKeys   []string
-	CredentialPresent bool
-}
-
 func addMCPServers(b *builder.Builder, options Options, signature detector.RuntimeSignature, runtimeID string, document any, ref string) {
-	for _, server := range findMCPServers(document) {
+	for _, server := range mcpconfig.Find(document) {
 		attributes := map[string]any{"configured": true, "transport": server.Transport, "source_surface": "endpoint"}
 		canonical := "target:" + options.TargetID + ":mcp:" + strings.ToLower(options.Username) + ":" + signature.ID + ":" + server.Name
 		if server.URL != "" {
@@ -490,64 +914,6 @@ func addMCPServers(b *builder.Builder, options Options, signature detector.Runti
 		serverID := b.AddEntity(discovery.KindMCPServer, canonical, server.Name, attributes, ref)
 		b.AddRelationship(discovery.RelationshipConnectsTo, runtimeID, serverID, nil, ref)
 	}
-}
-
-func findMCPServers(document any) []mcpServer {
-	result := []mcpServer{}
-	var walk func(any)
-	walk = func(value any) {
-		object, ok := value.(map[string]any)
-		if !ok {
-			if list, ok := value.([]any); ok {
-				for _, item := range list {
-					walk(item)
-				}
-			}
-			return
-		}
-		for key, child := range object {
-			normalized := strings.ToLower(strings.ReplaceAll(key, "_", ""))
-			if normalized == "mcpservers" {
-				if servers, ok := child.(map[string]any); ok {
-					for name, raw := range servers {
-						config, ok := raw.(map[string]any)
-						if !ok {
-							continue
-						}
-						server := mcpServer{Name: name, Transport: "stdio"}
-						if endpoint, ok := stringValue(config, "url", "endpoint", "serverUrl"); ok {
-							server.URL = endpoint
-							server.Transport = "http"
-						}
-						if transport, ok := stringValue(config, "transport", "type"); ok {
-							server.Transport = strings.ToLower(transport)
-						}
-						if enabled, ok := boolValue(config, "enabled"); ok {
-							server.Enabled = &enabled
-						}
-						if disabled, ok := boolValue(config, "disabled"); ok {
-							enabled := !disabled
-							server.Enabled = &enabled
-						}
-						if env, ok := config["env"].(map[string]any); ok {
-							for envKey, envValue := range env {
-								server.EnvironmentKeys = append(server.EnvironmentKeys, envKey)
-								if discovery.IsSensitiveKey(envKey) && fmt.Sprint(envValue) != "" {
-									server.CredentialPresent = true
-								}
-							}
-							sort.Strings(server.EnvironmentKeys)
-						}
-						result = append(result, server)
-					}
-				}
-				continue
-			}
-			walk(child)
-		}
-	}
-	walk(document)
-	return result
 }
 
 func addModels(b *builder.Builder, options Options, runtimeID string, document any, ref string) {
@@ -698,22 +1064,15 @@ func normalizeJSONC(data []byte) ([]byte, error) {
 	return result, nil
 }
 
-func stringValue(object map[string]any, keys ...string) (string, bool) {
-	for _, key := range keys {
-		if value, ok := object[key].(string); ok && strings.TrimSpace(value) != "" {
-			return value, true
-		}
+func hasConfigurationContent(value any) bool {
+	switch typed := value.(type) {
+	case map[string]any:
+		return len(typed) > 0
+	case []any:
+		return len(typed) > 0
+	default:
+		return false
 	}
-	return "", false
-}
-
-func boolValue(object map[string]any, keys ...string) (bool, bool) {
-	for _, key := range keys {
-		if value, ok := object[key].(bool); ok {
-			return value, true
-		}
-	}
-	return false, false
 }
 
 func expandPath(path, home string) string {

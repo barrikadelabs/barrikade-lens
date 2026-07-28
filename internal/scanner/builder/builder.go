@@ -10,10 +10,11 @@ import (
 // Builder de-duplicates observations and applies Lens's confidence rules while
 // collectors remain focused on gathering evidence.
 type Builder struct {
-	Snapshot      discovery.Snapshot
-	entityIndex   map[string]int
-	evidenceIndex map[string]int
-	relationIndex map[string]int
+	Snapshot          discovery.Snapshot
+	entityIndex       map[string]int
+	evidenceIndex     map[string]int
+	evidenceAuthority map[string]bool
+	relationIndex     map[string]int
 }
 
 type Observation struct {
@@ -24,20 +25,26 @@ type Observation struct {
 	Specificity     string
 	Locator         string
 	ContentHash     string
+	// Authoritative means the observation is a product- or protocol-defined
+	// descriptor for the fact being emitted. A generic filename or a document
+	// that merely parsed successfully must never set this.
+	Authoritative bool
 }
 
 func New(snapshot discovery.Snapshot) *Builder {
 	return &Builder{
-		Snapshot: snapshot, entityIndex: map[string]int{}, evidenceIndex: map[string]int{}, relationIndex: map[string]int{},
+		Snapshot: snapshot, entityIndex: map[string]int{}, evidenceIndex: map[string]int{}, evidenceAuthority: map[string]bool{}, relationIndex: map[string]int{},
 	}
 }
 
 func (b *Builder) AddEvidence(observation Observation) string {
 	id := discovery.EvidenceID(b.Snapshot.SourceID, observation.DetectorID, observation.Method, observation.Locator, observation.ContentHash)
 	if _, exists := b.evidenceIndex[id]; exists {
+		b.evidenceAuthority[id] = b.evidenceAuthority[id] || observation.Authoritative
 		return id
 	}
 	b.evidenceIndex[id] = len(b.Snapshot.Evidence)
+	b.evidenceAuthority[id] = observation.Authoritative
 	b.Snapshot.Evidence = append(b.Snapshot.Evidence, discovery.Evidence{
 		ID: id, DetectorID: observation.DetectorID, DetectorVersion: observation.DetectorVersion,
 		Method: observation.Method, Family: observation.Family, Specificity: observation.Specificity,
@@ -110,7 +117,7 @@ func (b *Builder) confidence(refs []string) discovery.Confidence {
 			continue
 		}
 		evidence := b.Snapshot.Evidence[index]
-		if evidence.Method == "descriptor" || evidence.Method == "api_document" || evidence.Method == "workload_uid" {
+		if b.evidenceAuthority[ref] {
 			authoritative = true
 		}
 		if evidence.Specificity == "high" {

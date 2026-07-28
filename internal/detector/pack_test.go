@@ -35,7 +35,7 @@ func TestBuiltinPack(t *testing.T) {
 		}
 	}
 	assertDetectorIDs(t, "runtime", runtimeIDs(pack), []string{
-		"claude", "codex", "cursor", "copilot", "vscode", "gemini", "windsurf", "devin", "cline", "roo", "kiro", "amazon-q", "continue", "opencode", "openclaw", "aider", "goose", "factory", "grok", "hermes", "zed", "warp", "junie", "augment", "qodo", "ollama", "lm-studio", "localai", "vllm", "llama-cpp", "anythingllm", "trae",
+		"claude", "codex", "cursor", "copilot", "vscode", "gemini", "antigravity", "windsurf", "devin", "cline", "roo", "kiro", "amazon-q", "continue", "opencode", "openclaw", "aider", "goose", "factory", "grok", "hermes", "zed", "warp", "junie", "augment", "qodo", "ollama", "lm-studio", "localai", "vllm", "llama-cpp", "anythingllm", "trae",
 	})
 	assertDetectorIDs(t, "framework", frameworkIDs(pack), []string{
 		"langchain", "langgraph", "crewai", "autogen", "semantic-kernel", "agents-sdk", "google-adk", "llamaindex", "pydantic-ai", "haystack", "smolagents", "mastra", "vercel-ai", "voltagent",
@@ -83,5 +83,15 @@ func TestPackV2RequiresRuntimeClassification(t *testing.T) {
 	pack.Runtimes[0].Category = "agent_tool"
 	if err := pack.Validate(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestPackRejectsAmbiguousExtensionIdentity(t *testing.T) {
+	pack := Pack{SchemaVersion: "2", ID: "test-pack", Version: "1", Runtimes: []RuntimeSignature{
+		{ID: "one", Name: "One", Category: "agent_tool", ExtensionIDs: []string{"Acme.Agent"}},
+		{ID: "two", Name: "Two", Category: "agent_tool", ExtensionIDs: []string{"acme.agent"}},
+	}}
+	if err := pack.Validate(); err == nil {
+		t.Fatal("ambiguous IDE extension identity passed validation")
 	}
 }

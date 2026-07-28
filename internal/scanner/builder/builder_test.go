@@ -21,6 +21,21 @@ func TestConfidenceAggregation(t *testing.T) {
 	}
 }
 
+func TestDescriptorMethodDoesNotAutomaticallyBecomeAuthoritative(t *testing.T) {
+	snapshot := discovery.NewSnapshot("org", "source", discovery.SourceEndpoint, discovery.Collector{ID: "test", Name: "test", Version: "1", Mode: "test"})
+	b := New(snapshot)
+	generic := b.AddEvidence(Observation{DetectorID: "candidate", DetectorVersion: "1", Method: "descriptor", Family: "configuration", Specificity: "high", Locator: "candidate"})
+	b.AddEntity(discovery.KindRuntime, "candidate", "Candidate", nil, generic)
+	if got := b.Snapshot.Entities[0].Confidence; got != discovery.ConfidenceLikely {
+		t.Fatalf("generic descriptor was treated as authoritative: %s", got)
+	}
+	authoritative := b.AddEvidence(Observation{DetectorID: "defined", DetectorVersion: "1", Method: "config_shape", Family: "configuration", Specificity: "high", Locator: "defined", Authoritative: true})
+	b.AddEntity(discovery.KindRuntime, "defined", "Defined", nil, authoritative)
+	if got := b.Snapshot.Entities[1].Confidence; got != discovery.ConfidenceConfirmed {
+		t.Fatalf("explicit authoritative descriptor was not confirmed: %s", got)
+	}
+}
+
 func TestEntityAttributeStringListsAreUnioned(t *testing.T) {
 	snapshot := discovery.NewSnapshot("org", "source", discovery.SourceEndpoint, discovery.Collector{ID: "test", Name: "test", Version: "1", Mode: "test"})
 	b := New(snapshot)

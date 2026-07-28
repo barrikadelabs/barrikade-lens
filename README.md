@@ -109,6 +109,8 @@ Lens accepts useful organizational identity—hostnames, OS users, repository/wo
 
 Read [privacy and evidence](docs/privacy.md), [data integrity and executive posture](docs/data-integrity.md), [architecture](docs/architecture.md), and the [threat model](docs/threat-model.md) before extending a detector.
 
+Detector contributors should also read [detector packs and detection-quality rules](docs/detector-packs.md). Lens favors validated open formats and independent evidence over filename or product-name guesses: agent instructions are not agents, framework imports do not manufacture agents, supporting runtimes stay separate, and malformed descriptors are excluded from inventory.
+
 ## Build and test
 
 Requirements are Go 1.26, Node.js 24+, npm 11+, and PostgreSQL 16+ for Hub integration tests.

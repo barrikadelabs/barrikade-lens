@@ -8,4 +8,6 @@ Schema validation recursively rejects sensitive field names such as password, to
 
 Repository source is processed ephemerally. GitHub archives are bounded, extracted into a private temporary directory, scanned, and removed. Kubernetes ConfigMap bodies stay in controller memory and are reduced to hashes and discovered metadata; the controller cannot read Secrets.
 
+Agent and skill Markdown is reduced locally to validated names, descriptor state, sanitized locators, and content hashes. Lens does not serialize frontmatter descriptions, instruction bodies, or arbitrary Markdown. MCP configuration is reduced to server names, normalized transports, sanitized endpoints, enabled state, environment-key names, and credential presence; commands, arguments, headers, and values are not retained.
+
 Local scans make no network calls unless the operator explicitly supplies an active probe. Managed collectors contact only their configured Hub. Public-catalog traffic originates only from Hub.
