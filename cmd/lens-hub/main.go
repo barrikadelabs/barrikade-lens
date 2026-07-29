@@ -9,9 +9,11 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
+	"github.com/barrikadelabs/barrikade-lens/internal/ard"
 	"github.com/barrikadelabs/barrikade-lens/internal/catalog"
 	"github.com/barrikadelabs/barrikade-lens/internal/githubapp"
 	"github.com/barrikadelabs/barrikade-lens/internal/hub"
@@ -37,6 +39,8 @@ func run() error {
 	migrateOnly := flag.Bool("migrate-only", false, "apply database migrations and exit")
 	catalogEnabled := flag.Bool("catalog-enabled", env("LENS_CATALOG_ENABLED", "true") != "false", "enable Hub-only public catalog enrichment")
 	catalogManifest := flag.String("catalog-manifest", env("LENS_CATALOG_MANIFEST", catalog.PublicCatalogManifest), "OAK-compatible compact catalog manifest")
+	ardEnabled := flag.Bool("ard-enabled", env("LENS_ARD_ENABLED", "true") != "false", "enable explicitly configured ARD catalog discovery")
+	ardPrivateHosts := flag.String("ard-private-host-allowlist", os.Getenv("LENS_ARD_PRIVATE_HOST_ALLOWLIST"), "comma-separated exact private ARD catalog hosts")
 	uiDir := flag.String("ui-dir", os.Getenv("LENS_UI_DIR"), "directory containing the built Lens Hub UI")
 	oidcIssuer := flag.String("oidc-issuer", os.Getenv("LENS_OIDC_ISSUER"), "OIDC issuer URL")
 	oidcClientID := flag.String("oidc-client-id", os.Getenv("LENS_OIDC_CLIENT_ID"), "OIDC client ID")
@@ -81,18 +85,30 @@ func run() error {
 			return err
 		}
 	}
-	server, err := hub.NewServer(ctx, hub.Config{Pool: pool, JWTSecret: []byte(*jwtSecret), DevAdminToken: *devAdminToken, DefaultOrganizationID: *organizationID, DefaultOrganizationName: *organizationName, PublicURL: *publicURL, Logger: slog.Default(), UIDir: *uiDir, OIDCIssuer: *oidcIssuer, OIDCClientID: *oidcClientID, OIDCClientSecret: *oidcClientSecret, OIDCRedirectURI: *oidcRedirectURI, OIDCAdminGroup: *oidcAdminGroup, GitHubWebhookSecret: []byte(*githubWebhookSecret), GitHubClient: githubClient})
+	allowedARDHosts := map[string]bool{}
+	for _, host := range strings.Split(*ardPrivateHosts, ",") {
+		if host = strings.ToLower(strings.TrimSpace(host)); host != "" {
+			allowedARDHosts[host] = true
+		}
+	}
+	ardProvider := &ard.Provider{AllowedPrivateHosts: allowedARDHosts}
+	server, err := hub.NewServer(ctx, hub.Config{Pool: pool, JWTSecret: []byte(*jwtSecret), DevAdminToken: *devAdminToken, DefaultOrganizationID: *organizationID, DefaultOrganizationName: *organizationName, PublicURL: *publicURL, Logger: slog.Default(), UIDir: *uiDir, OIDCIssuer: *oidcIssuer, OIDCClientID: *oidcClientID, OIDCClientSecret: *oidcClientSecret, OIDCRedirectURI: *oidcRedirectURI, OIDCAdminGroup: *oidcAdminGroup, GitHubWebhookSecret: []byte(*githubWebhookSecret), GitHubClient: githubClient, ARDProvider: ardProvider, ARDDisabled: !*ardEnabled})
 	if err != nil {
 		return err
 	}
 	httpServer := &http.Server{Addr: *listen, Handler: server.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 35 * time.Second, WriteTimeout: 35 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 1 << 20}
-	errChannel := make(chan error, 5)
+	errChannel := make(chan error, 6)
 	go func() { errChannel <- hub.Worker{Pool: pool, Logger: slog.Default()}.Run(ctx) }()
 	go func() { errChannel <- hub.WebhookWorker{Pool: pool, Logger: slog.Default()}.Run(ctx) }()
 	if *catalogEnabled {
 		provider := &catalog.OAKProvider{ProviderID: "public-api-catalog", Name: "Public API Catalog", ManifestURL: *catalogManifest}
 		go func() {
 			errChannel <- (&hub.CatalogWorker{Pool: pool, Provider: provider, Logger: slog.Default()}).Run(ctx)
+		}()
+	}
+	if *ardEnabled {
+		go func() {
+			errChannel <- (hub.ARDWorker{Pool: pool, Provider: ardProvider, Logger: slog.Default()}).Run(ctx)
 		}()
 	}
 	if githubClient != nil {

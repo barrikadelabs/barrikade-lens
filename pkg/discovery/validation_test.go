@@ -67,3 +67,22 @@ func TestStableIDsAreOrganizationScoped(t *testing.T) {
 		t.Fatalf("stable identity invariant failed: %s %s %s", a, b, c)
 	}
 }
+
+func TestSnapshot11RemainsSupportedButCannotCarryARDTypes(t *testing.T) {
+	legacy := validSnapshot()
+	legacy.SchemaVersion = PreviousSchemaVersion
+	if err := legacy.Validate(); err != nil {
+		t.Fatalf("ordinary 1.1 snapshot should remain valid: %v", err)
+	}
+	legacy.SourceType = SourceCatalog
+	if err := legacy.Validate(); err == nil || !strings.Contains(err.Error(), SchemaVersion) {
+		t.Fatalf("catalog source should require schema 1.2, got %v", err)
+	}
+
+	legacy = validSnapshot()
+	legacy.SchemaVersion = PreviousSchemaVersion
+	legacy.Entities[0].Kind = KindResourceDeclaration
+	if err := legacy.Validate(); err == nil || !strings.Contains(err.Error(), SchemaVersion) {
+		t.Fatalf("declaration entity should require schema 1.2, got %v", err)
+	}
+}

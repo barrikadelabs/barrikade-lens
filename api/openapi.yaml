@@ -29,7 +29,7 @@ paths:
     post:
       operationId: submitDiscoverySnapshot
       requestBody: {required: true, content: {application/json: {schema: {$ref: './schema/discovery-snapshot-v1.json'}}}}
-      responses: {'202': {description: Snapshot accepted into the PostgreSQL ingestion queue}, '422': {description: Snapshot failed schema or privacy validation}, '426': {description: Collector must upgrade to DiscoverySnapshot 1.1}}
+      responses: {'202': {description: Snapshot accepted into the PostgreSQL ingestion queue}, '422': {description: Snapshot failed schema or privacy validation}, '426': {description: Collector must upgrade to DiscoverySnapshot 1.1 or 1.2}}
   /v1/discovery/jobs/{id}:
     get:
       operationId: getDiscoveryJob
@@ -45,21 +45,55 @@ paths:
   /v1/relationships:
     get: {operationId: listRelationships, parameters: [{name: kind, in: query, schema: {type: string}}, {name: entity_id, in: query, schema: {type: string}}, {name: search, in: query, schema: {type: string}}, {$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}], responses: {'200': {description: Current discovery graph edges}}}
   /v1/changes:
-    get: {operationId: listChanges, parameters: [{name: category, in: query, schema: {enum: [state, network_scope, attribution, capability, confidence, identity, freshness, metadata]}}, {name: target_id, in: query, schema: {type: string}}, {name: system_type, in: query, schema: {type: string}}, {name: system_role, in: query, schema: {enum: [system, supporting, component, artifact, target]}}, {name: surface, in: query, schema: {type: string}}, {name: window, in: query, schema: {enum: [24h, 7d, 30d, 90d]}}, {$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}], responses: {'200': {description: Material discovery changes with safe field-level differences}}}
+    get: {operationId: listChanges, parameters: [{name: category, in: query, schema: {enum: [state, network_scope, attribution, capability, confidence, identity, freshness, metadata, declaration]}}, {name: target_id, in: query, schema: {type: string}}, {name: system_type, in: query, schema: {type: string}}, {name: system_role, in: query, schema: {enum: [system, supporting, component, artifact, target]}}, {name: surface, in: query, schema: {type: string}}, {name: window, in: query, schema: {enum: [24h, 7d, 30d, 90d]}}, {$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}], responses: {'200': {description: Material discovery changes with safe field-level differences}}}
   /v1/overview:
     get: {operationId: getDiscoveryOverview, parameters: [{name: window, in: query, schema: {enum: [24h, 7d, 30d, 90d], default: 7d}}], responses: {'200': {description: Server-computed discovery posture, coverage, factual attention, data quality, and changes}}}
   /v1/systems:
-    get: {operationId: listSystems, parameters: [{name: system_type, in: query, schema: {enum: [autonomous_agent, agent_tool, model_runtime]}}, {name: state, in: query, schema: {type: string}}, {name: surface, in: query, schema: {type: string}}, {name: target_id, in: query, schema: {type: string}}, {name: confidence, in: query, schema: {enum: [confirmed, likely, possible]}}, {name: attribution, in: query, schema: {enum: [attributed, unattributed]}}, {name: network_scope, in: query, schema: {type: string}}, {name: search, in: query, schema: {type: string}}, {name: sort, in: query, schema: {enum: [last_seen, name]}}, {$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}], responses: {'200': {description: Root autonomous agents, agent tools, and model runtimes}}}
+    get: {operationId: listSystems, parameters: [{name: system_type, in: query, schema: {enum: [autonomous_agent, agent_tool, model_runtime]}}, {name: state, in: query, schema: {type: string}}, {name: surface, in: query, schema: {type: string}}, {name: target_id, in: query, schema: {type: string}}, {name: confidence, in: query, schema: {enum: [confirmed, likely, possible]}}, {name: attribution, in: query, schema: {enum: [attributed, unattributed]}}, {name: network_scope, in: query, schema: {type: string}}, {name: declaration_status, in: query, schema: {enum: [matched, unmatched, conflict]}}, {name: search, in: query, schema: {type: string}}, {name: sort, in: query, schema: {enum: [last_seen, name]}}, {$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}], responses: {'200': {description: Root autonomous agents, agent tools, and model runtimes with declaration alignment}}}
   /v1/systems/{id}:
     get: {operationId: getSystem, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Root system posture, connected inventory, and evidence}, '404': {description: System not found}}}
   /v1/targets:
-    get: {operationId: listTargets, parameters: [{name: target_type, in: query, schema: {enum: [endpoint, repository, kubernetes]}}, {name: search, in: query, schema: {type: string}}, {$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}], responses: {'200': {description: Unique discovery targets with nested active collectors}}}
+    get: {operationId: listTargets, parameters: [{name: target_type, in: query, schema: {enum: [endpoint, repository, kubernetes, catalog]}}, {name: include_catalog, in: query, description: Set false when rendering fleet coverage separately from declaration sources, schema: {type: boolean, default: true}}, {name: search, in: query, schema: {type: string}}, {$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}], responses: {'200': {description: Unique discovery targets with nested active collectors}}}
   /v1/targets/{id}:
     get: {operationId: getTarget, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Discovery target, freshness, scan coverage, and collectors}, '404': {description: Target not found}}}
   /v1/coverage:
     get: {operationId: getCoverage, responses: {'200': {description: Source coverage and freshness}}}
   /v1/exports:
     get: {operationId: exportInventory, parameters: [{name: format, in: query, schema: {enum: [lens, ndjson, cyclonedx]}}], responses: {'200': {description: Lens JSON, JSONL, or CycloneDX 1.7 export}}}
+  /v1/declarations:
+    get:
+      operationId: listResourceDeclarations
+      parameters: [{name: status, in: query, schema: {enum: [matched, declared_only, conflict]}}, {name: publisher, in: query, schema: {type: string}}, {name: media_type, in: query, schema: {type: string}}, {name: mapped_kind, in: query, schema: {type: string}}, {name: source_id, in: query, schema: {type: string}}, {name: freshness, in: query, schema: {enum: [fresh, stale]}}, {name: trust_alignment, in: query, schema: {enum: [absent, aligned, misaligned, unresolved]}}, {name: signature_status, in: query, schema: {enum: [absent, present_unverified, malformed, unsupported]}}, {name: search, in: query, schema: {type: string}}, {$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
+      responses: {'200': {description: Current publisher declarations and observed-resource alignment}}
+  /v1/declarations/{id}:
+    get: {operationId: getResourceDeclaration, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Declaration metadata, evidence, matches, and safe change history}, '404': {description: Declaration not found}}}
+  /v1/declaration-alignment:
+    get: {operationId: getDeclarationAlignment, parameters: [{name: window, in: query, schema: {enum: [24h, 7d, 30d, 90d], default: 7d}}], responses: {'200': {description: Matched, declared-only, observed-only, conflict, stale-source, and unverified-claim aggregates}}}
+  /v1/admin/discovery/catalogs/validate:
+    post:
+      operationId: validateResourceDeclarationCatalog
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ResourceCatalogCreate'}}}}
+      responses: {'200': {description: Safe catalog preview without persistence}, '422': {description: Catalog could not be safely fetched or validated}}
+  /v1/admin/discovery/catalogs:
+    get: {operationId: listResourceDeclarationCatalogs, responses: {'200': {description: Configured ARD catalog sources}, '403': {description: Administrator access required}}}
+    post:
+      operationId: createResourceDeclarationCatalog
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ResourceCatalogCreate'}}}}
+      responses: {'201': {description: Catalog source configured and initial refresh scheduled}, '409': {description: Catalog URL already configured}}
+  /v1/admin/discovery/catalogs/{id}:
+    put: {operationId: updateResourceDeclarationCatalog, parameters: [{$ref: '#/components/parameters/ID'}], requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ResourceCatalogRequest'}}}}, responses: {'200': {description: Catalog source updated}}}
+    delete: {operationId: deleteResourceDeclarationCatalog, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'204': {description: Source observations removed and history retained}}}
+  /v1/admin/discovery/catalogs/{id}/refresh:
+    post: {operationId: refreshResourceDeclarationCatalog, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'202': {description: Immediate refresh scheduled through the PostgreSQL worker queue}}}
+  /v1/exports/ard:
+    post:
+      operationId: exportARDManifest
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/ARDExportRequest'}}}}
+      responses:
+        '200':
+          description: Stateless ai-catalog.json document
+          content: {application/ai-catalog+json: {schema: {$ref: './schema/ard-ai-catalog-v1.json'}}}
+        '422': {description: A selected entry lacks a valid identifier, media type, or credential-free HTTPS artifact URL}
   /v1/webhooks:
     post: {operationId: createWebhook, requestBody: {required: true, content: {application/json: {schema: {type: object, additionalProperties: false, required: [url], properties: {url: {type: string, format: uri, pattern: '^https://'}}}}}}, responses: {'201': {description: Webhook and one-time HMAC signing secret}}}
   /v1/connectors/github/webhook:
@@ -93,3 +127,37 @@ components:
             properties:
               target_type: {enum: [endpoint, repository, kubernetes]}
               expected_count: {type: [integer, 'null'], minimum: 0}
+    ResourceCatalogRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        name: {type: string, maxLength: 500}
+        format: {const: ard, default: ard}
+        url: {type: string, format: uri, pattern: '^https://'}
+        refresh_interval_seconds: {type: integer, minimum: 3600, maximum: 86400, default: 21600}
+        nested_policy: {enum: [same_site, disabled], default: same_site}
+        enabled: {type: boolean}
+    ResourceCatalogCreate:
+      allOf:
+        - {$ref: '#/components/schemas/ResourceCatalogRequest'}
+        - {type: object, required: [url]}
+    ARDExportRequest:
+      type: object
+      additionalProperties: false
+      required: [publisher_domain, host_display_name, entries]
+      properties:
+        publisher_domain: {type: string}
+        host_display_name: {type: string}
+        entries:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items:
+            type: object
+            additionalProperties: false
+            required: [entity_id]
+            properties:
+              entity_id: {type: string}
+              identifier: {type: string, pattern: '^urn:air:'}
+              media_type: {type: string}
+              artifact_url: {type: string, format: uri, pattern: '^https://'}

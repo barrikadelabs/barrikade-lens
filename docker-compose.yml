@@ -22,5 +22,6 @@ services:
       LENS_JWT_SECRET: replace-this-quickstart-signing-key-before-production
       LENS_DEV_ADMIN_TOKEN: lens-local-admin
       LENS_CATALOG_ENABLED: "true"
+      LENS_ARD_ENABLED: "true"
 volumes:
   lens-postgres: {}

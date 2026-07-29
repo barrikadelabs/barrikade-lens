@@ -365,7 +365,28 @@ func (s *Server) coverage(w http.ResponseWriter, r *http.Request) {
 		}
 		targetTypes = append(targetTypes, map[string]any{"target_type": targetType, "reporting": reporting, "fresh": fresh, "stale": stale, "partial": partial, "expected_count": expected, "population_configured": expected != nil})
 	}
-	writeJSON(w, 200, map[string]any{"target_types": targetTypes, "collectors": map[string]any{"active": len(items)}, "sources": items})
+	catalogs := []map[string]any{}
+	catalogRows, _ := s.config.Pool.Query(r.Context(), `SELECT id::text,name,url,last_attempt_at,last_success_at,last_error_code,last_error_message,enabled FROM resource_catalog_configs WHERE organization_id=$1 ORDER BY name`, principal.OrganizationID)
+	if catalogRows != nil {
+		for catalogRows.Next() {
+			var id, name, url string
+			var lastAttempt, lastSuccess *time.Time
+			var errorCode, errorMessage *string
+			var enabled bool
+			if catalogRows.Scan(&id, &name, &url, &lastAttempt, &lastSuccess, &errorCode, &errorMessage, &enabled) == nil {
+				freshness := "never"
+				if lastSuccess != nil {
+					freshness = "fresh"
+					if time.Since(*lastSuccess) > 24*time.Hour {
+						freshness = "stale"
+					}
+				}
+				catalogs = append(catalogs, map[string]any{"id": id, "name": name, "url": url, "last_attempt_at": lastAttempt, "last_success_at": lastSuccess, "last_error_code": errorCode, "last_error_message": errorMessage, "enabled": enabled, "freshness": freshness})
+			}
+		}
+		catalogRows.Close()
+	}
+	writeJSON(w, 200, map[string]any{"target_types": targetTypes, "collectors": map[string]any{"active": len(items)}, "sources": items, "declaration_sources": catalogs})
 }
 
 func (s *Server) exports(w http.ResponseWriter, r *http.Request) {

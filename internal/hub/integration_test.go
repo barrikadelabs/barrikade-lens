@@ -250,7 +250,7 @@ func TestHubQueriesAreOrganizationScopedAndCollectorsCannotReadInventory(t *test
 		server.Handler().ServeHTTP(response, request)
 		return response
 	}
-	for _, path := range []string{"/v1/entities", "/v1/systems", "/v1/overview?window=7d", "/v1/targets", "/v1/changes?system_role=system", "/v1/coverage", "/v1/relationships"} {
+	for _, path := range []string{"/v1/entities", "/v1/systems", "/v1/overview?window=7d", "/v1/targets", "/v1/changes?system_role=system", "/v1/coverage", "/v1/relationships", "/v1/declarations", "/v1/declaration-alignment", "/v1/admin/discovery/catalogs"} {
 		response := adminRequest(http.MethodGet, path, "")
 		if response.Code != http.StatusOK {
 			t.Fatalf("%s returned %d: %s", path, response.Code, response.Body.String())
@@ -284,13 +284,23 @@ func TestHubQueriesAreOrganizationScopedAndCollectorsCannotReadInventory(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"/v1/entities", "/v1/systems", "/v1/overview", "/v1/targets", "/v1/changes", "/v1/coverage", "/v1/relationships", "/v1/exports?format=lens"} {
+	for _, path := range []string{"/v1/entities", "/v1/systems", "/v1/overview", "/v1/targets", "/v1/changes", "/v1/coverage", "/v1/relationships", "/v1/exports?format=lens", "/v1/declarations", "/v1/declaration-alignment", "/v1/admin/discovery/catalogs"} {
 		request := httptest.NewRequest(http.MethodGet, path, nil)
 		request.Header.Set("Authorization", "Bearer "+collector)
 		response := httptest.NewRecorder()
 		server.Handler().ServeHTTP(response, request)
 		if response.Code != http.StatusForbidden {
 			t.Fatalf("collector read %s should be forbidden, got %d", path, response.Code)
+		}
+	}
+	for _, path := range []string{"/v1/exports/ard", "/v1/admin/discovery/catalogs/validate", "/v1/admin/discovery/catalogs"} {
+		request := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{}`))
+		request.Header.Set("Authorization", "Bearer "+collector)
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		server.Handler().ServeHTTP(response, request)
+		if response.Code != http.StatusForbidden {
+			t.Fatalf("collector mutation %s should be forbidden, got %d", path, response.Code)
 		}
 	}
 	request := httptest.NewRequest(http.MethodPost, "/v1/discovery/snapshots", strings.NewReader(`{"schema_version":"1.0"}`))

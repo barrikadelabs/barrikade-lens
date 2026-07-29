@@ -1,17 +1,33 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://barrikade.ai/schemas/lens/discovery-snapshot-v1.json",
-  "title": "Barrikade Lens Discovery Snapshot v1.1",
+  "title": "Barrikade Lens Discovery Snapshot v1.2",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema_version", "snapshot_id", "organization_id", "source_id", "target_id", "source_type", "collector", "observed_at", "full", "sequence", "scope", "entities", "relationships", "evidence", "coverage"],
+  "allOf": [
+    {
+      "if": {"properties": {"schema_version": {"const": "1.1"}}, "required": ["schema_version"]},
+      "then": {
+        "properties": {
+          "source_type": {"enum": ["endpoint", "repository", "kubernetes"]},
+          "entities": {
+            "not": {"contains": {"type": "object", "required": ["kind"], "properties": {"kind": {"enum": ["catalog", "resource_declaration"]}}}}
+          },
+          "relationships": {
+            "not": {"contains": {"type": "object", "required": ["kind"], "properties": {"kind": {"enum": ["publishes", "references", "describes"]}}}}
+          }
+        }
+      }
+    }
+  ],
   "properties": {
-    "schema_version": {"const": "1.1"},
+    "schema_version": {"enum": ["1.1", "1.2"]},
     "snapshot_id": {"type": "string", "format": "uuid"},
     "organization_id": {"type": "string", "minLength": 1},
     "source_id": {"type": "string", "minLength": 1},
     "target_id": {"type": "string", "minLength": 1},
-    "source_type": {"enum": ["endpoint", "repository", "kubernetes"]},
+    "source_type": {"enum": ["endpoint", "repository", "kubernetes", "catalog"]},
     "collector": {"$ref": "#/$defs/collector"},
     "observed_at": {"type": "string", "format": "date-time"},
     "full": {"type": "boolean"},
@@ -42,7 +58,7 @@
       "additionalProperties": false,
       "required": ["id", "kind", "name", "confidence"],
       "properties": {
-        "id": {"type": "string"}, "kind": {"enum":["endpoint","user","repository","cluster","workload","agent","runtime","framework","mcp_server","skill","model","model_server","tool","api_service","api_operation","workflow","credential_reference"]},
+        "id": {"type": "string"}, "kind": {"enum":["endpoint","user","repository","cluster","workload","agent","runtime","framework","mcp_server","skill","model","model_server","tool","api_service","api_operation","workflow","credential_reference","catalog","resource_declaration"]},
         "canonical_key": {"type": "string"}, "name": {"type": "string"},
         "attributes": {"type": "object"}, "confidence": {"$ref": "#/$defs/confidence"},
         "evidence_refs": {"type": "array", "items": {"type": "string"}},
@@ -54,7 +70,7 @@
       "additionalProperties": false,
       "required": ["id", "kind", "from", "to", "confidence"],
       "properties": {
-        "id": {"type": "string"}, "kind": {"enum":["runs_on","defined_in","deployed_as","uses","exposes","connects_to","provides","invokes","configured_by","owned_by"]},
+        "id": {"type": "string"}, "kind": {"enum":["runs_on","defined_in","deployed_as","uses","exposes","connects_to","provides","invokes","configured_by","owned_by","publishes","references","describes"]},
         "from": {"type": "string"}, "to": {"type": "string"},
         "attributes": {"type": "object"}, "confidence": {"$ref": "#/$defs/confidence"},
         "evidence_refs": {"type": "array", "items": {"type": "string"}}

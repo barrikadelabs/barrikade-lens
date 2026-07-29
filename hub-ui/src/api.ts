@@ -2,7 +2,7 @@ export type Confidence = "confirmed" | "likely" | "possible";
 export type SystemType = "autonomous_agent" | "agent_tool" | "model_runtime";
 
 export type CoverageSummary = {
-  target_type: "endpoint" | "repository" | "kubernetes";
+  target_type: "endpoint" | "repository" | "kubernetes" | "catalog";
   reporting: number;
   fresh: number;
   stale: number;
@@ -38,6 +38,7 @@ export type Overview = {
     surfaces: Record<string, number>;
   };
   attention: Record<string, number>;
+  declaration_alignment: DeclarationAlignment;
   changes: Change[];
   data_quality: {
     confidence: Record<string, number>;
@@ -63,6 +64,8 @@ export type SystemItem = {
   confidence: Confidence;
   first_seen_at: string;
   last_seen_at: string;
+  declaration_status: "matched" | "unmatched" | "conflict";
+  declaration_ids: string[];
 };
 
 export type Evidence = {
@@ -107,7 +110,7 @@ export type Collector = {
 
 export type Target = {
   id: string;
-  target_type: "endpoint" | "repository" | "kubernetes";
+  target_type: "endpoint" | "repository" | "kubernetes" | "catalog";
   identity_quality: "persistent" | "legacy_identity";
   name: string;
   platform?: string;
@@ -163,9 +166,94 @@ export type Relationship = {
 
 export type PageResult<T> = { items: T[]; limit: number; next_cursor?: string };
 
+export type DeclarationAlignment = {
+  configured: boolean;
+  configured_sources: number;
+  counts: {
+    matched: number;
+    declared_only: number;
+    observed_only: number;
+    conflict: number;
+    stale_sources: number;
+    unverified_claims: number;
+  };
+  generated_at?: string;
+};
+
+export type Declaration = {
+  id: string;
+  identifier: string;
+  name: string;
+  attributes: Record<string, unknown>;
+  confidence: Confidence;
+  publisher_domain: string;
+  media_type: string;
+  mapped_kind: string;
+  delivery: "url" | "inline";
+  artifact_url?: string;
+  descriptor_host?: string;
+  trust_identity_alignment: "absent" | "aligned" | "misaligned" | "unresolved";
+  signature_status: "absent" | "present_unverified" | "malformed" | "unsupported";
+  source_ids: string[];
+  catalog_ids: string[];
+  alignment_status: "matched" | "declared_only" | "conflict";
+  matched_entity_id?: string;
+  first_seen_at: string;
+  last_seen_at: string;
+};
+
+export type DeclarationDetail = Declaration & {
+  matches: Array<{ entity_id: string; kind: string; name: string; status: string; confidence: Confidence; reason: string; matched_at: string }>;
+  evidence: Evidence[];
+  changes: Change[];
+};
+
+export type ResourceCatalog = {
+  id: string;
+  source_id: string;
+  target_id: string;
+  name: string;
+  format: "ard";
+  url: string;
+  refresh_interval_seconds: number;
+  nested_policy: "same_site" | "disabled";
+  last_attempt_at?: string;
+  last_success_at?: string;
+  next_refresh_at: string;
+  etag?: string;
+  last_modified?: string;
+  last_content_hash?: string;
+  last_error_code?: string;
+  last_error_message?: string;
+  enabled: boolean;
+};
+
+export type DeclarationSourceCoverage = {
+  id: string;
+  name: string;
+  url: string;
+  last_attempt_at?: string;
+  last_success_at?: string;
+  last_error_code?: string;
+  last_error_message?: string;
+  enabled: boolean;
+  freshness: "fresh" | "stale" | "never";
+};
+
+export type CatalogValidation = {
+  url: string;
+  host?: { displayName?: string; identifier?: string };
+  spec_version: string;
+  entry_count: number;
+  media_types: Record<string, number>;
+  nested_catalogs: number;
+  warnings: string[];
+};
+
 export type AuthConfig = {
   enabled: boolean;
   development_bootstrap: boolean;
+  ard_enabled: boolean;
   authorization_endpoint?: string;
   client_id?: string;
   redirect_uri?: string;
@@ -209,6 +297,7 @@ export class API {
       const body = await response.json().catch(() => null) as { error?: { message?: string } } | null;
       throw new Error(body?.error?.message ?? `Lens Hub returned ${response.status}`);
     }
+    if (response.status === 204) return undefined as T;
     return response.json() as Promise<T>;
   }
 
@@ -248,8 +337,65 @@ export class API {
     return this.request<PageResult<Change>>(queryPath("/v1/changes", { limit: 50, window: "7d", ...filters }));
   }
 
+  declarations(filters: Record<string, string | number | undefined> = {}) {
+    return this.request<PageResult<Declaration>>(queryPath("/v1/declarations", { limit: 50, ...filters }));
+  }
+
+  declaration(id: string) {
+    return this.request<DeclarationDetail>(`/v1/declarations/${encodeURIComponent(id)}`);
+  }
+
+  declarationAlignment(window = "7d") {
+    return this.request<DeclarationAlignment>(queryPath("/v1/declaration-alignment", { window }));
+  }
+
+  resourceCatalogs() {
+    return this.request<{ items: ResourceCatalog[] }>("/v1/admin/discovery/catalogs");
+  }
+
+  validateResourceCatalog(url: string) {
+    return this.request<CatalogValidation>("/v1/admin/discovery/catalogs/validate", { method: "POST", body: JSON.stringify({ url, format: "ard" }) });
+  }
+
+  createResourceCatalog(input: { name: string; url: string; nested_policy?: "same_site" | "disabled"; refresh_interval_seconds?: number }) {
+    return this.request<ResourceCatalog>("/v1/admin/discovery/catalogs", { method: "POST", body: JSON.stringify({ format: "ard", ...input }) });
+  }
+
+  refreshResourceCatalog(id: string) {
+    return this.request(`/v1/admin/discovery/catalogs/${encodeURIComponent(id)}/refresh`, { method: "POST" });
+  }
+
+  deleteResourceCatalog(id: string) {
+    return this.request<void>(`/v1/admin/discovery/catalogs/${encodeURIComponent(id)}`, { method: "DELETE" });
+  }
+
+  async downloadARDExport(input: {
+    publisher_domain: string;
+    host_display_name: string;
+    entries: Array<{ entity_id: string; identifier?: string; media_type?: string; artifact_url?: string }>;
+  }) {
+    const response = await fetch("/v1/exports/ard", {
+      method: "POST",
+      headers: { Authorization: `Bearer ${this.token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(input),
+    });
+    if (!response.ok) {
+      const body = await response.json().catch(() => null) as { error?: { message?: string } } | null;
+      throw new Error(body?.error?.message ?? `Lens Hub returned ${response.status}`);
+    }
+    const blob = await response.blob();
+    const href = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = href;
+    anchor.download = "ai-catalog.json";
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(href);
+  }
+
   coverage() {
-    return this.request<{ target_types: CoverageSummary[]; collectors: { active: number } }>("/v1/coverage");
+    return this.request<{ target_types: CoverageSummary[]; collectors: { active: number }; declaration_sources: DeclarationSourceCoverage[] }>("/v1/coverage");
   }
 
   setBaselines(baselines: Array<{ target_type: string; expected_count: number | null }>) {

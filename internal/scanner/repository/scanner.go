@@ -10,15 +10,18 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	slashpath "path"
 	"path/filepath"
 	"regexp"
 	"strings"
 
+	"github.com/barrikadelabs/barrikade-lens/internal/ard"
 	"github.com/barrikadelabs/barrikade-lens/internal/detector"
 	"github.com/barrikadelabs/barrikade-lens/internal/scanner/builder"
 	"github.com/barrikadelabs/barrikade-lens/internal/scanner/mcpconfig"
 	"github.com/barrikadelabs/barrikade-lens/internal/scanner/skillconfig"
 	"github.com/barrikadelabs/barrikade-lens/pkg/discovery"
+	"golang.org/x/net/html"
 	"gopkg.in/yaml.v3"
 )
 
@@ -117,6 +120,7 @@ func Scan(ctx context.Context, options Options) (discovery.Snapshot, error) {
 	state := scanState{
 		options: options, builder: b, repositoryID: repositoryID, repositoryCanonical: canonical,
 		frameworks: map[string]string{}, frameworkRefs: map[string]string{}, agentIDs: map[string]string{},
+		ardCatalogs: map[string]string{},
 	}
 	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -150,8 +154,15 @@ func Scan(ctx context.Context, options Options) (discovery.Snapshot, error) {
 	if err != nil {
 		return discovery.Snapshot{}, err
 	}
+	state.linkARDReferences()
 	b.Snapshot.Coverage.DetectorsRun = len(options.Pack.Frameworks) + 5
 	return b.Finish()
+}
+
+type ardReference struct {
+	fromLocator string
+	toLocator   string
+	evidenceRef string
 }
 
 type scanState struct {
@@ -162,6 +173,8 @@ type scanState struct {
 	frameworks          map[string]string
 	frameworkRefs       map[string]string
 	agentIDs            map[string]string
+	ardCatalogs         map[string]string
+	ardReferences       []ardReference
 	files               int
 }
 
@@ -177,13 +190,16 @@ func (s *scanState) inspect(path string) {
 	isAgent := agentFilePattern.MatchString(strings.TrimSuffix(base, extension)) && (extension == ".json" || extension == ".yaml" || extension == ".yml")
 	isAgentInstructions := agentInstructionNames[base]
 	isSkill := base == "skill.md"
+	isARD := extension == ".json" && strings.Contains(base, "catalog")
+	isExplicitARD := base == "ai-catalog.json" || strings.Contains(base, "ai-catalog") || strings.Contains(base, "agent-catalog")
+	isARDReference := base == "robots.txt" || extension == ".html" || extension == ".htm"
 	normalizedPath := strings.ToLower(filepath.ToSlash(path))
 	isCustomAgent := strings.HasSuffix(base, ".agent.md") || extension == ".md" && (strings.Contains(normalizedPath, "/.github/agents/") || strings.Contains(normalizedPath, "/.claude/agents/"))
 	isDeclarative := extension == ".yaml" || extension == ".yml" || extension == ".json" || extension == ".toml" || extension == ".tf" || extension == ".hcl"
 	isDeploymentPath := strings.Contains(normalizedPath, "/k8s/") || strings.Contains(normalizedPath, "/kubernetes/") || strings.Contains(normalizedPath, "/helm/") || strings.Contains(normalizedPath, "/terraform/") || strings.Contains(normalizedPath, "/pulumi/") || strings.Contains(normalizedPath, "/cloudformation/")
 	isDeployment := base == "dockerfile" || strings.HasPrefix(base, "docker-compose") || base == ".gitlab-ci.yml" || base == "bitbucket-pipelines.yml" || base == "azure-pipelines.yml" || base == "jenkinsfile" || strings.Contains(normalizedPath, "/.github/workflows/") || strings.Contains(normalizedPath, "/.circleci/") || strings.Contains(normalizedPath, "/.buildkite/") || isDeclarative && isDeploymentPath
 	isOwners := base == "codeowners"
-	if !isManifest && !isSource && !isMCP && !isOpenAPI && !isArazzo && !isA2A && !isAgent && !isCustomAgent && !isAgentInstructions && !isSkill && !isDeployment && !isOwners {
+	if !isManifest && !isSource && !isMCP && !isOpenAPI && !isArazzo && !isA2A && !isAgent && !isCustomAgent && !isAgentInstructions && !isSkill && !isARD && !isARDReference && !isDeployment && !isOwners {
 		return
 	}
 	s.builder.Snapshot.Coverage.LocationsChecked++
@@ -198,13 +214,22 @@ func (s *scanState) inspect(path string) {
 	relative, _ := filepath.Rel(s.options.Root, path)
 	locator := filepath.ToSlash(relative)
 	method := "manifest"
-	if isMCP || isOpenAPI || isArazzo || isA2A || isAgent || isCustomAgent || isAgentInstructions || isSkill {
+	if isMCP || isOpenAPI || isArazzo || isA2A || isAgent || isCustomAgent || isAgentInstructions || isSkill || isARD || isARDReference {
 		method = "descriptor"
 	}
+	family := evidenceFamily(isManifest, isSource, isMCP, isOpenAPI, isArazzo, isA2A, isAgent || isCustomAgent, isAgentInstructions, isSkill, isDeployment)
+	validARD := false
+	if isARD {
+		_, validErr := ard.Parse(data)
+		validARD = validErr == nil
+		if validARD {
+			family = "publisher_declaration"
+		}
+	}
 	ref := s.builder.AddEvidence(builder.Observation{
-		DetectorID: "repo.artifacts", DetectorVersion: Version, Method: method, Family: evidenceFamily(isManifest, isSource, isMCP, isOpenAPI, isArazzo, isA2A, isAgent || isCustomAgent, isAgentInstructions, isSkill, isDeployment),
+		DetectorID: "repo.artifacts", DetectorVersion: Version, Method: method, Family: family,
 		Specificity: specificity(isSource), Locator: locator, ContentHash: discovery.ContentHash(data),
-		Authoritative: authoritativeRepositoryArtifact(locator, data, isManifest, isMCP, isOpenAPI, isArazzo, isA2A, isAgent, isCustomAgent, isAgentInstructions, isSkill, isDeployment, isOwners),
+		Authoritative: validARD || authoritativeRepositoryArtifact(locator, data, isManifest, isMCP, isOpenAPI, isArazzo, isA2A, isAgent, isCustomAgent, isAgentInstructions, isSkill, isDeployment, isOwners),
 	})
 	if isManifest || isSource {
 		s.detectFrameworks(locator, string(data), ref, isManifest, isSource)
@@ -233,11 +258,119 @@ func (s *scanState) inspect(path string) {
 	if isSkill {
 		s.detectSkill(locator, data, ref)
 	}
+	if isARD {
+		s.detectARD(locator, data, ref, isExplicitARD)
+	}
+	if isARDReference {
+		s.detectARDReferences(locator, data, ref)
+	}
 	if isDeployment {
 		s.detectDeployment(locator, base, data, ref)
 	}
 	if isOwners {
 		s.detectOwners(data, ref)
+	}
+}
+
+func (s *scanState) detectARD(locator string, data []byte, ref string, explicit bool) {
+	result, err := ard.Parse(data)
+	if err != nil {
+		if explicit {
+			s.builder.Error("repo.ard", "invalid_ard_catalog", "ARD catalog could not be parsed at "+locator, false)
+		}
+		return
+	}
+	name := result.Catalog.Host.DisplayName
+	if name == "" {
+		name = "ARD Catalog"
+	}
+	catalogID := s.builder.AddEntity(discovery.KindCatalog, "ard:catalog:"+s.repositoryCanonical+":"+locator, name, map[string]any{
+		"ard_spec_version": result.Catalog.SpecVersion, "source_surface": "repository", "defined": true, "locator": locator,
+	}, ref)
+	s.ardCatalogs[slashpath.Clean(locator)] = catalogID
+	s.builder.AddRelationship(discovery.RelationshipDefinedIn, catalogID, s.repositoryID, map[string]any{"locator": locator}, ref)
+	ard.AddToBuilder(s.builder, catalogID, s.repositoryID, result.Catalog, ref, "repository")
+	for _, warning := range result.Warnings {
+		s.builder.Error("repo.ard", "invalid_ard_entry", warning, false)
+	}
+}
+
+func (s *scanState) detectARDReferences(locator string, data []byte, ref string) {
+	references := []string{}
+	if strings.EqualFold(slashpath.Base(locator), "robots.txt") {
+		scanner := bufio.NewScanner(strings.NewReader(string(data)))
+		for scanner.Scan() {
+			line := strings.TrimSpace(scanner.Text())
+			key, value, found := strings.Cut(line, ":")
+			if found && strings.EqualFold(strings.TrimSpace(key), "Agentmap") {
+				references = append(references, strings.TrimSpace(value))
+			}
+		}
+	} else {
+		tokenizer := html.NewTokenizer(strings.NewReader(string(data)))
+		for {
+			tokenType := tokenizer.Next()
+			if tokenType == html.ErrorToken {
+				break
+			}
+			if tokenType != html.StartTagToken && tokenType != html.SelfClosingTagToken {
+				continue
+			}
+			token := tokenizer.Token()
+			if !strings.EqualFold(token.Data, "link") {
+				continue
+			}
+			rel, href := "", ""
+			for _, attribute := range token.Attr {
+				switch strings.ToLower(attribute.Key) {
+				case "rel":
+					rel = attribute.Val
+				case "href":
+					href = attribute.Val
+				}
+			}
+			for _, value := range strings.Fields(rel) {
+				if strings.EqualFold(value, "ai-catalog") {
+					references = append(references, href)
+					break
+				}
+			}
+		}
+	}
+	for _, raw := range references {
+		if target, ok := localARDReference(locator, raw); ok {
+			s.ardReferences = append(s.ardReferences, ardReference{fromLocator: locator, toLocator: target, evidenceRef: ref})
+		}
+	}
+}
+
+func localARDReference(fromLocator, raw string) (string, bool) {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Scheme != "" || parsed.Host != "" || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Path == "" {
+		return "", false
+	}
+	var target string
+	if strings.HasPrefix(parsed.Path, "/") {
+		target = strings.TrimPrefix(parsed.Path, "/")
+	} else {
+		target = slashpath.Join(slashpath.Dir(fromLocator), parsed.Path)
+	}
+	target = slashpath.Clean(target)
+	if target == "." || target == ".." || strings.HasPrefix(target, "../") {
+		return "", false
+	}
+	return target, true
+}
+
+func (s *scanState) linkARDReferences() {
+	for _, reference := range s.ardReferences {
+		catalogID, exists := s.ardCatalogs[reference.toLocator]
+		if !exists {
+			continue
+		}
+		s.builder.AddRelationship(discovery.RelationshipReferences, s.repositoryID, catalogID, map[string]any{
+			"source_surface": "repository", "locator": reference.fromLocator, "target_locator": reference.toLocator,
+		}, reference.evidenceRef)
 	}
 }
 
@@ -442,7 +575,8 @@ func (s *scanState) detectAgent(locator string, data []byte, ref string) {
 	if name == "" || len(name) > 200 {
 		name = strings.TrimSuffix(filepath.Base(locator), filepath.Ext(locator))
 	}
-	id := s.builder.AddEntity(discovery.KindAgent, "target:"+s.options.TargetID+":agent:"+locator, name, map[string]any{"defined": true, "descriptor": locator, "source_surface": "repository"}, ref)
+	attributes := s.repositoryArtifactAttributes(locator, map[string]any{"defined": true, "descriptor": locator, "source_surface": "repository"})
+	id := s.builder.AddEntity(discovery.KindAgent, "target:"+s.options.TargetID+":agent:"+locator, name, attributes, ref)
 	s.agentIDs[id] = id
 	s.builder.AddRelationship(discovery.RelationshipDefinedIn, id, s.repositoryID, nil, ref)
 	for signatureID, frameworkID := range s.frameworks {
@@ -455,9 +589,10 @@ func (s *scanState) detectCustomAgent(locator string, data []byte, ref string) {
 	if !valid {
 		return
 	}
-	id := s.builder.AddEntity(discovery.KindAgent, "target:"+s.options.TargetID+":custom-agent:"+strings.ToLower(locator), name, map[string]any{
+	attributes := s.repositoryArtifactAttributes(locator, map[string]any{
 		"defined": true, "descriptor": locator, "definition_format": "agent_markdown", "source_surface": "repository",
-	}, ref)
+	})
+	id := s.builder.AddEntity(discovery.KindAgent, "target:"+s.options.TargetID+":custom-agent:"+strings.ToLower(locator), name, attributes, ref)
 	s.agentIDs[id] = id
 	s.builder.AddRelationship(discovery.RelationshipDefinedIn, id, s.repositoryID, nil, ref)
 	for signatureID, frameworkID := range s.frameworks {
@@ -505,7 +640,7 @@ func (s *scanState) detectSkill(locator string, data []byte, ref string) {
 	if !metadata.Valid {
 		return
 	}
-	attributes := map[string]any{"declared": true, "descriptor": locator, "descriptor_valid": true, "source_surface": "repository"}
+	attributes := s.repositoryArtifactAttributes(locator, map[string]any{"declared": true, "descriptor": locator, "descriptor_valid": true, "source_surface": "repository"})
 	id := s.builder.AddEntity(discovery.KindSkill, "target:"+s.options.TargetID+":skill:"+strings.ToLower(locator), metadata.Name, attributes, ref)
 	s.builder.AddRelationship(discovery.RelationshipDefinedIn, id, s.repositoryID, nil, ref)
 }
@@ -516,12 +651,13 @@ func (s *scanState) detectMCP(locator string, data []byte, ref string) {
 		return
 	}
 	for _, server := range mcpconfig.Find(document) {
-		attributes := map[string]any{"configured": true, "transport": server.Transport, "descriptor": locator, "source_surface": "repository"}
+		attributes := s.repositoryArtifactAttributes(locator, map[string]any{"configured": true, "transport": server.Transport, "descriptor": locator, "source_surface": "repository"})
 		canonical := "target:" + s.options.TargetID + ":mcp:" + strings.ToLower(server.Name)
 		if server.URL != "" {
 			if sanitized, sanitizeErr := discovery.SanitizeURL(server.URL); sanitizeErr == nil {
 				attributes["endpoint"] = sanitized
 				attributes["host"] = discovery.URLHost(sanitized)
+				attributes["protocol_identity"] = sanitized
 				canonical = "target:" + s.options.TargetID + ":mcp-url:" + sanitized
 			}
 		}
@@ -570,12 +706,13 @@ func (s *scanState) detectOpenAPI(locator string, data []byte, ref string) {
 	if host != "" {
 		canonical = "api-host:" + host
 	}
-	attributes := map[string]any{"document": locator, "openapi_version": version}
+	attributes := s.repositoryArtifactAttributes(locator, map[string]any{"document": locator, "openapi_version": version, "source_surface": "repository"})
 	if host != "" {
 		attributes["host"] = host
 	}
 	if len(servers) > 0 {
 		attributes["servers"] = servers
+		attributes["protocol_identity"] = servers[0]
 	}
 	apiID := s.builder.AddEntity(discovery.KindAPIService, canonical, name, attributes, ref)
 	s.builder.AddRelationship(discovery.RelationshipDefinedIn, apiID, s.repositoryID, nil, ref)
@@ -617,7 +754,8 @@ func (s *scanState) detectArazzo(locator string, data []byte, ref string) {
 		if name == "" {
 			name = fmt.Sprintf("workflow-%d", index+1)
 		}
-		id := s.builder.AddEntity(discovery.KindWorkflow, "target:"+s.options.TargetID+":workflow:"+locator+":"+name, name, map[string]any{"document": locator, "arazzo_version": version, "source_surface": "repository"}, ref)
+		attributes := s.repositoryArtifactAttributes(locator, map[string]any{"document": locator, "arazzo_version": version, "source_surface": "repository"})
+		id := s.builder.AddEntity(discovery.KindWorkflow, "target:"+s.options.TargetID+":workflow:"+locator+":"+name, name, attributes, ref)
 		s.builder.AddRelationship(discovery.RelationshipDefinedIn, id, s.repositoryID, nil, ref)
 	}
 }
@@ -631,12 +769,13 @@ func (s *scanState) detectA2A(locator string, data []byte, ref string) {
 	if name == "" || len(name) > 500 {
 		name = "A2A agent at " + locator
 	}
-	attributes := map[string]any{"defined": true, "protocol": "a2a", "agent_card": true, "descriptor": locator, "source_surface": "repository"}
+	attributes := s.repositoryArtifactAttributes(locator, map[string]any{"defined": true, "protocol": "a2a", "agent_card": true, "descriptor": locator, "source_surface": "repository"})
 	canonical := "target:" + s.options.TargetID + ":a2a:" + locator
 	if endpoint := a2aEndpoint(document); endpoint != "" {
 		if sanitized, sanitizeErr := discovery.SanitizeURL(endpoint); sanitizeErr == nil {
 			attributes["endpoint"] = sanitized
 			attributes["host"] = discovery.URLHost(sanitized)
+			attributes["protocol_identity"] = sanitized
 			canonical = "a2a-endpoint:" + sanitized
 		}
 	}
@@ -652,6 +791,14 @@ func (s *scanState) detectA2A(locator string, data []byte, ref string) {
 		skillID := s.builder.AddEntity(discovery.KindSkill, canonical+":skill:"+skillName, skillName, map[string]any{"declared": true, "protocol": "a2a"}, ref)
 		s.builder.AddRelationship(discovery.RelationshipProvides, agentID, skillID, nil, ref)
 	}
+}
+
+func (s *scanState) repositoryArtifactAttributes(locator string, attributes map[string]any) map[string]any {
+	attributes["repository_path"] = locator
+	if s.options.RepositoryURL != "" {
+		attributes["repository_url"] = s.options.RepositoryURL
+	}
+	return attributes
 }
 
 func isAgentDefinition(document map[string]any) bool {

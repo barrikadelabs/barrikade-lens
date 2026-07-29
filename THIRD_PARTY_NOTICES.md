@@ -30,3 +30,13 @@ Catalog metadata may be synchronized from OAK-compatible, CC0-licensed public
 repositories. The source URL and revision are retained with every imported
 catalog entry.
 
+## Agentic Resource Discovery specification
+
+The ARD `ai-catalog.json` schema and compatibility fixtures are derived from
+the Apache-2.0-licensed `ards-project/ard-spec` repository. The exact upstream
+revision is recorded in `api/schema/ARD_UPSTREAM.md`.
+
+Copyright 2026 Agentic Resource Discovery project.
+
+Licensed under the Apache License, Version 2.0. You may obtain a copy of the
+License at https://www.apache.org/licenses/LICENSE-2.0.

@@ -228,7 +228,7 @@ func TestCurrentA2AInterfacesAndMCPServersShape(t *testing.T) {
 	root := t.TempDir()
 	writeFixture(t, root, ".well-known/agent-card.json", `{"name":"Support","protocolVersion":"1.0","supportedInterfaces":[{"url":"https://agent.example.test/a2a","protocolBinding":"JSONRPC"}],"capabilities":{},"skills":[]}`)
 	writeFixture(t, root, "mcp.json", `{"servers":{"catalog":{"type":"streamable-http","url":"https://catalog.example.test/mcp"}}}`)
-	snapshot, err := Scan(context.Background(), Options{OrganizationID: "org", Root: root})
+	snapshot, err := Scan(context.Background(), Options{OrganizationID: "org", Root: root, RepositoryURL: "https://github.com/example/agents"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,9 +236,16 @@ func TestCurrentA2AInterfacesAndMCPServersShape(t *testing.T) {
 	for _, entity := range snapshot.Entities {
 		switch entity.Kind {
 		case discovery.KindAgent:
-			foundAgent = entity.Attributes["endpoint"] == "https://agent.example.test/a2a" && entity.Confidence == discovery.ConfidenceConfirmed
+			foundAgent = entity.Attributes["endpoint"] == "https://agent.example.test/a2a" &&
+				entity.Attributes["protocol_identity"] == "https://agent.example.test/a2a" &&
+				entity.Attributes["repository_url"] == "https://github.com/example/agents" &&
+				entity.Attributes["repository_path"] == ".well-known/agent-card.json" &&
+				entity.Confidence == discovery.ConfidenceConfirmed
 		case discovery.KindMCPServer:
-			foundMCP = entity.Attributes["transport"] == "streamable_http" && entity.Confidence == discovery.ConfidenceConfirmed
+			foundMCP = entity.Attributes["transport"] == "streamable_http" &&
+				entity.Attributes["protocol_identity"] == "https://catalog.example.test/mcp" &&
+				entity.Attributes["repository_path"] == "mcp.json" &&
+				entity.Confidence == discovery.ConfidenceConfirmed
 		}
 	}
 	if !foundAgent || !foundMCP {
@@ -263,6 +270,63 @@ func TestRepositorySkillDescriptorUsesOpenFormat(t *testing.T) {
 		}
 	}
 	t.Fatal("standards-based repository skill was not detected")
+}
+
+func TestRepositoryDetectsARDWithoutRetainingInlineBodies(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root, ".well-known/ai-catalog.json", `{
+	  "specVersion":"1.0",
+	  "host":{"displayName":"Example Engineering"},
+	  "entries":[{
+	    "identifier":"urn:air:example.test:agent:support",
+	    "displayName":"Support Agent",
+	    "type":"application/a2a-agent-card+json",
+	    "data":{"name":"Support","skills":[{"name":"triage","description":"private implementation"}]},
+	    "representativeQueries":["summarize the confidential case"]
+	  }]
+	}`)
+	snapshot, err := Scan(context.Background(), Options{OrganizationID: "org", Root: root, RepositoryURL: "https://github.com/example/agents"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kinds := map[discovery.EntityKind]int{}
+	for _, entity := range snapshot.Entities {
+		kinds[entity.Kind]++
+	}
+	if kinds[discovery.KindCatalog] != 1 || kinds[discovery.KindResourceDeclaration] != 1 {
+		t.Fatalf("ARD declaration graph missing: %#v", snapshot.Entities)
+	}
+	encoded, _ := json.Marshal(snapshot)
+	for _, forbidden := range []string{"private implementation", "confidential case", "representativeQueries"} {
+		if strings.Contains(string(encoded), forbidden) {
+			t.Fatalf("repository snapshot leaked %q", forbidden)
+		}
+	}
+}
+
+func TestRepositoryResolvesOnlyLocalARDReferences(t *testing.T) {
+	root := t.TempDir()
+	catalog := `{"specVersion":"1.0","host":{"displayName":"Example"},"entries":[{"identifier":"urn:air:example.test:agent:one","displayName":"One","type":"application/a2a-agent-card+json","url":"https://agents.example.test/card.json"}]}`
+	writeFixture(t, root, ".well-known/ai-catalog.json", catalog)
+	writeFixture(t, root, "robots.txt", "Agentmap: /.well-known/ai-catalog.json\nAgentmap: https://remote.example.test/ai-catalog.json\n")
+	writeFixture(t, root, "docs/index.html", `<link href="../.well-known/missing.json" rel="ai-catalog"><link rel="ai-catalog alternate" href="/.well-known/ai-catalog.json">`)
+	snapshot, err := Scan(context.Background(), Options{OrganizationID: "org", Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	references := 0
+	for _, relationship := range snapshot.Relationships {
+		if relationship.Kind == discovery.RelationshipReferences {
+			references++
+			target, _ := relationship.Attributes["target_locator"].(string)
+			if target != ".well-known/ai-catalog.json" {
+				t.Fatalf("unexpected ARD reference target: %#v", relationship)
+			}
+		}
+	}
+	if references != 1 {
+		t.Fatalf("expected one de-duplicated local catalog relationship, got %d", references)
+	}
 }
 
 func TestMalformedMarkdownDescriptorsDoNotCreateAgentsOrSkills(t *testing.T) {

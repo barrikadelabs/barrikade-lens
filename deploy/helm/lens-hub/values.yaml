@@ -8,6 +8,9 @@ publicURL: https://lens.example.com
 catalog:
   enabled: true
   manifest: https://raw.githubusercontent.com/jentic/jentic-public-apis/refs/heads/main/apis/openapi/apis.json
+ard:
+  enabled: true
+  privateHostAllowlist: ""
 oidc:
   issuer: ""
   clientID: ""

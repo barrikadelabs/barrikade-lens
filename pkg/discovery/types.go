@@ -8,7 +8,10 @@ import (
 	"github.com/google/uuid"
 )
 
-const SchemaVersion = "1.1"
+const (
+	SchemaVersion         = "1.2"
+	PreviousSchemaVersion = "1.1"
+)
 
 type SourceType string
 
@@ -16,6 +19,7 @@ const (
 	SourceEndpoint   SourceType = "endpoint"
 	SourceRepository SourceType = "repository"
 	SourceKubernetes SourceType = "kubernetes"
+	SourceCatalog    SourceType = "catalog"
 )
 
 type EntityKind string
@@ -38,6 +42,8 @@ const (
 	KindAPIOperation        EntityKind = "api_operation"
 	KindWorkflow            EntityKind = "workflow"
 	KindCredentialReference EntityKind = "credential_reference"
+	KindCatalog             EntityKind = "catalog"
+	KindResourceDeclaration EntityKind = "resource_declaration"
 )
 
 type RelationshipKind string
@@ -53,6 +59,9 @@ const (
 	RelationshipInvokes      RelationshipKind = "invokes"
 	RelationshipConfiguredBy RelationshipKind = "configured_by"
 	RelationshipOwnedBy      RelationshipKind = "owned_by"
+	RelationshipPublishes    RelationshipKind = "publishes"
+	RelationshipReferences   RelationshipKind = "references"
+	RelationshipDescribes    RelationshipKind = "describes"
 )
 
 type Confidence string

@@ -8,15 +8,22 @@ import (
 	"time"
 )
 
+func IsSupportedSchemaVersion(version string) bool {
+	return version == SchemaVersion || version == PreviousSchemaVersion
+}
+
 func (s *Snapshot) Validate() error {
-	if s.SchemaVersion != SchemaVersion {
-		return fmt.Errorf("schema_version must be %q", SchemaVersion)
+	if !IsSupportedSchemaVersion(s.SchemaVersion) {
+		return fmt.Errorf("schema_version must be %q or %q", PreviousSchemaVersion, SchemaVersion)
 	}
 	if s.SnapshotID == "" || s.OrganizationID == "" || s.SourceID == "" || s.TargetID == "" {
 		return fmt.Errorf("snapshot_id, organization_id, source_id, and target_id are required")
 	}
-	if s.SourceType != SourceEndpoint && s.SourceType != SourceRepository && s.SourceType != SourceKubernetes {
+	if s.SourceType != SourceEndpoint && s.SourceType != SourceRepository && s.SourceType != SourceKubernetes && s.SourceType != SourceCatalog {
 		return fmt.Errorf("unsupported source_type %q", s.SourceType)
+	}
+	if s.SchemaVersion == PreviousSchemaVersion && s.SourceType == SourceCatalog {
+		return fmt.Errorf("catalog sources require schema_version %q", SchemaVersion)
 	}
 	if _, err := time.Parse(time.RFC3339Nano, s.ObservedAt); err != nil {
 		return fmt.Errorf("observed_at: %w", err)
@@ -36,6 +43,9 @@ func (s *Snapshot) Validate() error {
 		if _, exists := entities[entity.ID]; exists {
 			return fmt.Errorf("duplicate entity id %q", entity.ID)
 		}
+		if s.SchemaVersion == PreviousSchemaVersion && (entity.Kind == KindCatalog || entity.Kind == KindResourceDeclaration) {
+			return fmt.Errorf("entity kind %q requires schema_version %q", entity.Kind, SchemaVersion)
+		}
 		entities[entity.ID] = struct{}{}
 		if err := validateConfidence(entity.Confidence); err != nil {
 			return fmt.Errorf("entity %s: %w", entity.ID, err)
@@ -52,6 +62,9 @@ func (s *Snapshot) Validate() error {
 	for _, relationship := range s.Relationships {
 		if relationship.ID == "" || relationship.Kind == "" {
 			return fmt.Errorf("relationship id and kind are required")
+		}
+		if s.SchemaVersion == PreviousSchemaVersion && (relationship.Kind == RelationshipPublishes || relationship.Kind == RelationshipReferences || relationship.Kind == RelationshipDescribes) {
+			return fmt.Errorf("relationship kind %q requires schema_version %q", relationship.Kind, SchemaVersion)
 		}
 		if _, ok := entities[relationship.From]; !ok {
 			return fmt.Errorf("relationship %s has missing from entity", relationship.ID)

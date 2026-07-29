@@ -16,4 +16,12 @@ The Hub recomputes organization-level entities from all current source observati
 
 Catalog enrichment is a fail-open Hub worker. Providers implement refresh, match, and lazy fetch. Exact and high-confidence host/provider matches link automatically; fuzzy candidates remain suggestions. Unavailability never blocks discovery ingestion or queries.
 
+Resource declarations use a separate provider boundary. ARD catalogs enter the
+same snapshot and normalization pipeline as collectors, but their
+`resource_declaration` artifacts remain distinct from observed resources.
+Only exact identifiers, sanitized descriptor URLs, fingerprints, repository
+coordinates, or authoritative protocol identities create a `describes`
+relationship. A declaration cannot change observed posture or executive
+system counts.
+
 Lens Hub is an interoperable producer, not a control plane. Its APIs and HMAC webhooks are designed to feed registration or governance systems without importing those responsibilities into Lens.

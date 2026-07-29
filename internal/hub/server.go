@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/barrikadelabs/barrikade-lens/internal/ard"
 	"github.com/barrikadelabs/barrikade-lens/internal/githubapp"
 	"github.com/barrikadelabs/barrikade-lens/internal/identity"
 	"github.com/barrikadelabs/barrikade-lens/pkg/discovery"
@@ -41,6 +42,8 @@ type Config struct {
 	OIDCAdminGroup          string
 	GitHubWebhookSecret     []byte
 	GitHubClient            *githubapp.Client
+	ARDProvider             ard.ResourceDeclarationProvider
+	ARDDisabled             bool
 }
 
 type Server struct {
@@ -70,6 +73,9 @@ func NewServer(ctx context.Context, config Config) (*Server, error) {
 	}
 	if config.Logger == nil {
 		config.Logger = slog.Default()
+	}
+	if config.ARDProvider == nil {
+		config.ARDProvider = &ard.Provider{}
 	}
 	if _, err := config.Pool.Exec(ctx, `INSERT INTO organizations(id,name) VALUES($1,$2) ON CONFLICT(id) DO NOTHING`, config.DefaultOrganizationID, config.DefaultOrganizationName); err != nil {
 		return nil, err
@@ -123,6 +129,18 @@ func (s *Server) routes() {
 	authenticated.HandleFunc("GET /v1/coverage", s.coverage)
 	authenticated.HandleFunc("GET /v1/exports", s.exports)
 	authenticated.HandleFunc("POST /v1/webhooks", s.createWebhook)
+	if !s.config.ARDDisabled {
+		authenticated.HandleFunc("POST /v1/admin/discovery/catalogs/validate", s.validateResourceCatalog)
+		authenticated.HandleFunc("GET /v1/admin/discovery/catalogs", s.listResourceCatalogs)
+		authenticated.HandleFunc("POST /v1/admin/discovery/catalogs", s.createResourceCatalog)
+		authenticated.HandleFunc("PUT /v1/admin/discovery/catalogs/{id}", s.updateResourceCatalog)
+		authenticated.HandleFunc("DELETE /v1/admin/discovery/catalogs/{id}", s.deleteResourceCatalog)
+		authenticated.HandleFunc("POST /v1/admin/discovery/catalogs/{id}/refresh", s.refreshResourceCatalog)
+		authenticated.HandleFunc("GET /v1/declarations", s.listDeclarations)
+		authenticated.HandleFunc("GET /v1/declarations/{id}", s.getDeclaration)
+		authenticated.HandleFunc("GET /v1/declaration-alignment", s.declarationAlignment)
+		authenticated.HandleFunc("POST /v1/exports/ard", s.exportARD)
+	}
 	s.mux.Handle("/v1/", s.auth.Middleware(authenticated))
 	if s.config.UIDir != "" {
 		s.mux.Handle("/", http.FileServer(http.Dir(s.config.UIDir)))
@@ -345,8 +363,8 @@ func (s *Server) submitSnapshot(w http.ResponseWriter, r *http.Request) {
 	if err := decodeJSON(w, r, &snapshot, 32<<20); err != nil {
 		return
 	}
-	if snapshot.SchemaVersion != discovery.SchemaVersion {
-		writeError(w, http.StatusUpgradeRequired, "collector_upgrade_required", "This Lens Hub requires DiscoverySnapshot schema "+discovery.SchemaVersion)
+	if !discovery.IsSupportedSchemaVersion(snapshot.SchemaVersion) {
+		writeError(w, http.StatusUpgradeRequired, "collector_upgrade_required", "This Lens Hub accepts DiscoverySnapshot schema "+discovery.PreviousSchemaVersion+" or "+discovery.SchemaVersion)
 		return
 	}
 	if err := snapshot.Validate(); err != nil {

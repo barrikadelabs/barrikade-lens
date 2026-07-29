@@ -3,19 +3,20 @@ import {
   Activity, AlertCircle, ArrowRight, Bot, Boxes, BrainCircuit, CheckCircle2, ChevronDown,
   ChevronRight, CircleDot, Container, Copy, Database, Download, GitBranch, History,
   LayoutDashboard, Link2, LogOut, Menu, Monitor, Network, PackageSearch, PlugZap, Radar,
-  RefreshCw, Search, Server, SlidersHorizontal,
+  RefreshCw, Search, Server, SlidersHorizontal, BookOpen,
   TerminalSquare, UserRound, Workflow, X, type LucideIcon,
 } from "lucide-react";
 import {
   API, authConfig, exchangeOIDC, type AuthConfig, type Change, type Connection, type Entity,
-  type EntityDetail, type Overview, type SystemDetail, type SystemItem, type Target,
+  type Declaration, type DeclarationDetail, type EntityDetail, type Overview, type SystemDetail, type SystemItem, type Target,
 } from "./api";
 
-type Page = "Overview" | "Systems" | "Coverage" | "Changes" | "Technical inventory" | "Evidence graph";
+type Page = "Overview" | "Systems" | "Declarations" | "Coverage" | "Changes" | "Technical inventory" | "Evidence graph";
 
 const navigation: Array<{ page: Page; icon: LucideIcon; detail: string }> = [
   { page: "Overview", icon: LayoutDashboard, detail: "Discovery posture" },
   { page: "Systems", icon: Bot, detail: "Root systems" },
+  { page: "Declarations", icon: BookOpen, detail: "Published inventory" },
   { page: "Coverage", icon: Radar, detail: "Targets and freshness" },
   { page: "Changes", icon: History, detail: "Material change" },
   { page: "Technical inventory", icon: Boxes, detail: "Complete entity set" },
@@ -25,6 +26,7 @@ const navigation: Array<{ page: Page; icon: LucideIcon; detail: string }> = [
 const pageCopy: Record<Page, { eyebrow: string; title: string; detail: string }> = {
   Overview: { eyebrow: "DISCOVERY", title: "Overview", detail: "A current, evidence-backed view of your autonomous system footprint." },
   Systems: { eyebrow: "INVENTORY", title: "Systems", detail: "Agents, agent-capable tools, and model runtimes—without supporting software or cached artifacts." },
+  Declarations: { eyebrow: "DECLARED INVENTORY", title: "Declarations", detail: "Resources publishers advertise through ARD, kept separate from what Lens has actually observed." },
   Coverage: { eyebrow: "VISIBILITY", title: "Coverage", detail: "Where Lens is reporting, where data is stale, and where expected population is unknown." },
   Changes: { eyebrow: "HISTORY", title: "Changes", detail: "Material inventory changes. Routine scan refreshes are suppressed." },
   "Technical inventory": { eyebrow: "TECHNICAL", title: "Technical inventory", detail: "Every discovered entity, including supporting runtimes, cached artifacts, users, APIs, and workloads." },
@@ -35,10 +37,12 @@ const kindIcons: Record<string, LucideIcon> = {
   endpoint: Monitor, repository: GitBranch, cluster: Container, workload: Container, agent: Bot,
   runtime: TerminalSquare, framework: Boxes, mcp_server: PlugZap, skill: CheckCircle2, model: BrainCircuit,
   model_server: Server, api_service: Database, api_operation: Link2, workflow: Workflow, user: UserRound,
+  catalog: BookOpen, resource_declaration: BookOpen,
 };
 
 export function App() {
   const [token, setToken] = useState(() => sessionStorage.getItem("lens-token") ?? "");
+  const [ardEnabled, setARDEnabled] = useState(true);
   const [authError, setAuthError] = useState("");
   const saveToken = useCallback((value: string) => {
     sessionStorage.setItem("lens-token", value);
@@ -61,9 +65,10 @@ export function App() {
       saveToken(result.access_token);
     }).catch((error) => setAuthError(String(error)));
   }, [saveToken]);
+  useEffect(() => { authConfig().then((config) => setARDEnabled(config.ard_enabled !== false)).catch(() => undefined); }, []);
 
   if (!token) return <SignIn onToken={saveToken} authError={authError} />;
-  return <Shell api={new API(token)} signOut={() => { sessionStorage.removeItem("lens-token"); setToken(""); }} />;
+  return <Shell api={new API(token)} ardEnabled={ardEnabled} signOut={() => { sessionStorage.removeItem("lens-token"); setToken(""); }} />;
 }
 
 function SignIn({ onToken, authError }: { onToken: (token: string) => void; authError: string }) {
@@ -107,7 +112,7 @@ function SignIn({ onToken, authError }: { onToken: (token: string) => void; auth
   </main>;
 }
 
-function Shell({ api, signOut }: { api: API; signOut: () => void }) {
+function Shell({ api, ardEnabled, signOut }: { api: API; ardEnabled: boolean; signOut: () => void }) {
   const [page, setPage] = useState<Page>("Overview");
   const [menuOpen, setMenuOpen] = useState(false);
   const [about, setAbout] = useState(false);
@@ -117,7 +122,7 @@ function Shell({ api, signOut }: { api: API; signOut: () => void }) {
     <aside className={menuOpen ? "sidebar open" : "sidebar"}>
       <div className="sidebar-brand"><Brand /></div>
       <nav className="main-nav">
-        {navigation.map(({ page: item, icon: Icon, detail }) => <button key={item} className={page === item ? "active" : ""} onClick={() => { setPage(item); setMenuOpen(false); }}>
+        {navigation.filter(({ page: item }) => ardEnabled || item !== "Declarations").map(({ page: item, icon: Icon, detail }) => <button key={item} className={page === item ? "active" : ""} onClick={() => { setPage(item); setMenuOpen(false); }}>
           <Icon size={17} /><span><b>{item}</b><small>{detail}</small></span>{page === item && <ChevronRight size={14} />}
         </button>)}
       </nav>
@@ -135,7 +140,8 @@ function Shell({ api, signOut }: { api: API; signOut: () => void }) {
         </header>
         {page === "Overview" && <OverviewPage api={api} revision={revision} go={setPage} />}
         {page === "Systems" && <SystemsPage api={api} revision={revision} />}
-        {page === "Coverage" && <CoveragePage api={api} revision={revision} />}
+        {page === "Declarations" && ardEnabled && <DeclarationsPage api={api} revision={revision} />}
+        {page === "Coverage" && <CoveragePage api={api} revision={revision} ardEnabled={ardEnabled} />}
         {page === "Changes" && <ChangesPage api={api} revision={revision} />}
         {page === "Technical inventory" && <InventoryPage api={api} revision={revision} />}
         {page === "Evidence graph" && <EvidenceGraphPage api={api} revision={revision} />}
@@ -178,6 +184,15 @@ function OverviewPage({ api, revision, go }: { api: API; revision: number; go: (
         <button onClick={() => go("Systems")}><BrainCircuit size={17} /><span><b>{systems.model_runtime ?? 0}</b><small>Model runtimes</small></span></button>
       </div>
     </section>
+    {(data.declaration_alignment.configured || sum([data.declaration_alignment.counts.matched, data.declaration_alignment.counts.declared_only, data.declaration_alignment.counts.conflict]) > 0) && <section className="panel declaration-overview">
+      <PanelHeading title="Declared inventory alignment" detail="Publisher declarations compared with Lens observations—not a compliance result" action={<button className="text-button" onClick={() => go("Declarations")}>Open declarations <ArrowRight size={13} /></button>} />
+      <div className="alignment-grid">
+        <button onClick={() => go("Declarations")}><strong>{data.declaration_alignment.counts.matched}</strong><span>Observed and declared</span><small>Exact identity evidence connects both records</small></button>
+        <button onClick={() => go("Declarations")}><strong>{data.declaration_alignment.counts.declared_only}</strong><span>Declared, not observed</span><small>Published but outside current observations</small></button>
+        <button onClick={() => go("Declarations")}><strong>{data.declaration_alignment.counts.observed_only}</strong><span>Observed, no declaration</span><small>Found by Lens without a catalog match</small></button>
+        <button onClick={() => go("Declarations")} className={data.declaration_alignment.counts.conflict ? "attention" : ""}><strong>{data.declaration_alignment.counts.conflict}</strong><span>Identity conflicts</span><small>Lens refused an ambiguous automatic link</small></button>
+      </div>
+    </section>}
     <div className="overview-primary">
       <section className="panel state-panel"><PanelHeading title="Operating state" detail="Strongest state observed for each system" />
         <StateDistribution values={states} total={totalSystems} />
@@ -224,6 +239,7 @@ function SystemsPage({ api, revision }: { api: API; revision: number }) {
       <Select label="State" value={filters.state} onChange={(value) => update("state", value)} options={{ "": "Any state", running: "Running", deployed: "Deployed", defined: "Defined", configured: "Configured", installed: "Installed", residual: "Residual", cached: "Cached" }} />
       <Select label="Confidence" value={filters.confidence} onChange={(value) => update("confidence", value)} options={{ "": "Any confidence", confirmed: "Confirmed", likely: "Likely", possible: "Possible" }} />
       <Select label="Network" value={filters.network_scope} onChange={(value) => update("network_scope", value)} options={{ "": "Any scope", external: "External", network: "Network", loopback: "Loopback", none: "None", unknown: "Unknown" }} />
+      <Select label="Declaration" value={filters.declaration_status} onChange={(value) => update("declaration_status", value)} options={{ "": "Any declaration status", matched: "Observed and declared", unmatched: "No matching declaration", conflict: "Identity conflict" }} />
     </FilterBar>
     <section className="panel data-panel"><div className="table-summary"><span><b>{items.length}</b> systems</span></div>
       <div className="system-table table-scroll"><div className="system-row table-head"><span>System</span><span>Type</span><span>State</span><span>Target / surface</span><span>Attribution</span><span>Evidence</span><span /></div>
@@ -240,15 +256,134 @@ function SystemsPage({ api, revision }: { api: API; revision: number }) {
   </div>;
 }
 
-function CoveragePage({ api, revision }: { api: API; revision: number }) {
+function DeclarationsPage({ api, revision }: { api: API; revision: number }) {
+  const [filters, setFilters] = useState<Record<string, string>>({});
+  const [cursor, setCursor] = useState("");
+  const [items, setItems] = useState<Declaration[]>([]);
+  const [next, setNext] = useState("");
+  const [selected, setSelected] = useState<string>();
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const alignment = useRemote(() => api.declarationAlignment("7d"), [api, revision]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setLoading(true); setError("");
+      api.declarations({ ...filters, cursor }).then((result) => {
+        setItems((current) => cursor ? [...current, ...result.items] : result.items);
+        setNext(result.next_cursor ?? "");
+      }).catch((reason) => setError(String(reason))).finally(() => setLoading(false));
+    }, filters.search ? 220 : 0);
+    return () => clearTimeout(timer);
+  }, [api, revision, filters, cursor]);
+
+  const update = (key: string, value: string) => { setCursor(""); setItems([]); setFilters((current) => ({ ...current, [key]: value })); };
+  const counts = alignment.data?.counts;
+  return <div className="page-stack">
+    {counts && <section className="alignment-strip">
+      <button className={filters.status === "matched" ? "active" : ""} onClick={() => update("status", filters.status === "matched" ? "" : "matched")}><strong>{counts.matched}</strong><span>Observed and declared</span></button>
+      <button className={filters.status === "declared_only" ? "active" : ""} onClick={() => update("status", filters.status === "declared_only" ? "" : "declared_only")}><strong>{counts.declared_only}</strong><span>Declared, not observed</span></button>
+      <div><strong>{counts.observed_only}</strong><span>Observed, no declaration</span></div>
+      <button className={filters.status === "conflict" ? "active" : ""} onClick={() => update("status", filters.status === "conflict" ? "" : "conflict")}><strong>{counts.conflict}</strong><span>Identity conflicts</span></button>
+    </section>}
+    <FilterBar search={filters.search ?? ""} setSearch={(value) => update("search", value)} placeholder="Search declarations or publishers">
+      <Select label="Alignment" value={filters.status} onChange={(value) => update("status", value)} options={{ "": "Any alignment", matched: "Observed and declared", declared_only: "Declared, not observed", conflict: "Identity conflict" }} />
+      <Select label="Resource type" value={filters.mapped_kind} onChange={(value) => update("mapped_kind", value)} options={{ "": "Any resource type", agent: "Agent", mcp_server: "MCP server", skill: "Skill", api_service: "API service", workflow: "Workflow", catalog: "Nested catalog", registry: "Registry", unclassified: "Unclassified" }} />
+      <Select label="Identity claim" value={filters.trust_alignment} onChange={(value) => update("trust_alignment", value)} options={{ "": "Any identity claim", aligned: "Domain aligned", absent: "No identity claim", misaligned: "Misaligned", unresolved: "Unresolved" }} />
+    </FilterBar>
+    <section className="panel data-panel">
+      <PanelHeading title="Published resources" detail="Declarations are publisher statements. They do not assert that a resource is installed, running, reachable, or approved." count={items.length} />
+      <div className="declaration-table table-scroll"><div className="declaration-row table-head"><span>Declaration</span><span>Resource type</span><span>Alignment</span><span>Publisher</span><span>Trust claim</span><span>Last observed</span><span /></div>
+        {items.map((item) => <button className="declaration-row" key={item.id} onClick={() => setSelected(item.id)}>
+          <Identity kind="resource_declaration" name={item.name} detail={item.identifier} />
+          <span className="kind-label">{pretty(item.mapped_kind)}</span><DeclarationPill value={item.alignment_status} />
+          <span className="stacked"><b>{item.publisher_domain}</b><small>{item.media_type}</small></span>
+          <span className="fact quiet">{trustClaimLabel(item.trust_identity_alignment)}</span><span className="observed">{relative(item.last_seen_at)}</span><ChevronRight size={15} />
+        </button>)}
+        {!loading && !items.length && <Empty icon={BookOpen} title="No declarations match this view" detail="Add an ARD catalog or scan a repository containing ai-catalog.json. Observed systems remain available in Systems." />}
+      </div>
+      {error && <InlineError text={error} />}{loading && <InlineLoading />}{next && !loading && <button className="load-more" onClick={() => setCursor(next)}>Load more declarations <ChevronDown size={15} /></button>}
+    </section>
+    <CatalogSources api={api} revision={revision} />
+    {selected && <DeclarationDrawer api={api} id={selected} onClose={() => setSelected(undefined)} />}
+  </div>;
+}
+
+function CatalogSources({ api, revision }: { api: API; revision: number }) {
+  const remote = useRemote(() => api.resourceCatalogs(), [api, revision]);
+  const [url, setURL] = useState("");
+  const [name, setName] = useState("");
+  const [preview, setPreview] = useState<{ entry_count: number; nested_catalogs: number; warnings: string[]; host?: { displayName?: string } }>();
+  const [status, setStatus] = useState("");
+  const [busy, setBusy] = useState(false);
+  if (remote.error) return null;
+  const validate = () => {
+    setBusy(true); setStatus("");
+    api.validateResourceCatalog(url).then((value) => { setPreview(value); if (!name) setName(value.host?.displayName ?? "ARD Catalog"); }).catch((reason) => setStatus(String(reason))).finally(() => setBusy(false));
+  };
+  const add = () => {
+    setBusy(true); setStatus("");
+    api.createResourceCatalog({ name: name || "ARD Catalog", url }).then(() => { setURL(""); setName(""); setPreview(undefined); setStatus("Catalog added. Its first refresh is scheduled."); remote.reload(); }).catch((reason) => setStatus(String(reason))).finally(() => setBusy(false));
+  };
+  return <section className="panel catalog-sources"><PanelHeading title="Declaration sources" detail="Only Lens Hub contacts catalog URLs. Referenced agents, tools, registries, and attestations are never called." count={remote.data?.items.length ?? 0} />
+    {!!remote.data?.items.length && <div className="catalog-list">{remote.data.items.map((catalog) => <div key={catalog.id}><span><b>{catalog.name}</b><small>{catalog.url}</small></span><span><Freshness value={!catalog.last_success_at ? "never" : Date.now() - new Date(catalog.last_success_at).getTime() > 86400000 ? "stale" : "fresh"} /><small>{catalog.last_success_at ? `Refreshed ${relative(catalog.last_success_at)}` : "Refresh pending"}</small></span><button className="button subtle" onClick={() => api.refreshResourceCatalog(catalog.id).then(() => { setStatus("Refresh scheduled"); remote.reload(); })}><RefreshCw size={13} /> Refresh</button><button className="icon-button danger" title="Remove catalog" onClick={() => { if (window.confirm(`Remove ${catalog.name} as a declaration source? Existing history will be retained.`)) api.deleteResourceCatalog(catalog.id).then(() => remote.reload()); }}><X size={14} /></button></div>)}</div>}
+    <div className="catalog-add"><div><p className="eyebrow">ADD ARD CATALOG</p><h3>Connect a published inventory</h3><p>Paste an explicit credential-free HTTPS URL. Lens validates the document before you save it.</p></div><div className="catalog-form"><label>Catalog URL<input placeholder="https://example.com/.well-known/ai-catalog.json" value={url} onChange={(event) => { setURL(event.target.value); setPreview(undefined); }} /></label>{preview && <label>Display name<input value={name} onChange={(event) => setName(event.target.value)} /></label>}<span><button className="button subtle" disabled={!url || busy} onClick={validate}>{busy ? "Checking…" : "Validate"}</button>{preview && <button className="button primary" disabled={busy} onClick={add}>Add catalog</button>}</span></div></div>
+    {preview && <div className="catalog-preview"><CheckCircle2 size={16} /><span><b>{preview.entry_count} valid declarations</b><small>{preview.nested_catalogs} nested catalogs · {preview.warnings.length} validation warnings</small></span></div>}
+    {status && <small className="form-status">{status}</small>}
+  </section>;
+}
+
+function DeclarationDrawer({ api, id, onClose }: { api: API; id: string; onClose: () => void }) {
+  const remote = useRemote(() => api.declaration(id), [api, id]);
+  return <Drawer onClose={onClose}>{remote.loading ? <Loading /> : remote.error || !remote.data ? <Failure error={remote.error} retry={remote.reload} /> : <DeclarationDetailView api={api} item={remote.data} />}</Drawer>;
+}
+
+function DeclarationDetailView({ api, item }: { api: API; item: DeclarationDetail }) {
+  const capabilities = item.attributes.declared_capabilities;
+  const attestations = item.attributes.claimed_attestation_types;
+  return <><div className="drawer-title"><Identity kind="resource_declaration" name={item.name} detail={item.identifier} /><div><DeclarationPill value={item.alignment_status} /></div></div>
+    <p className="drawer-note declaration-boundary">Evidence confirms that this publisher declaration exists. It does not confirm that the described resource is running, reachable, safe, or approved.</p>
+    <div className="fact-grid"><Fact label="Publisher" value={item.publisher_domain} /><Fact label="Resource type" value={pretty(item.mapped_kind)} /><Fact label="Media type" value={item.media_type} /><Fact label="Delivery" value={pretty(item.delivery)} /><Fact label="Identity claim" value={trustClaimLabel(item.trust_identity_alignment)} /><Fact label="Signature claim" value={pretty(item.signature_status)} /><Fact label="Last observed" value={relative(item.last_seen_at)} /></div>
+    {item.artifact_url && <section className="drawer-section"><h3>Published artifact</h3><code className="artifact-url">{item.artifact_url}</code></section>}
+    {Array.isArray(capabilities) && capabilities.length > 0 && <section className="drawer-section"><h3>Publisher-declared capabilities <span>{capabilities.length}</span></h3><div className="capability-tags">{capabilities.map((value) => <span key={String(value)}>{String(value)}</span>)}</div></section>}
+    {Array.isArray(attestations) && attestations.length > 0 && <section className="drawer-section"><h3>Publisher-claimed attestations <span>{attestations.length}</span></h3><p className="drawer-note">Lens inventories these claim types without verifying their documents.</p><div className="capability-tags">{attestations.map((value) => <span key={String(value)}>{String(value)}</span>)}</div></section>}
+    <section className="drawer-section"><h3>Correlation <span>{item.matches.length}</span></h3>{item.matches.length ? item.matches.map((match) => <div className="match-row" key={match.entity_id}><Identity kind={match.kind} name={match.name} detail={match.reason} /><DeclarationPill value={match.status === "linked" ? "matched" : match.status === "conflict" ? "conflict" : "suggested"} /></div>) : <p className="drawer-note">Lens has not found exact identity evidence connecting this declaration to an observed resource.</p>}</section>
+    <ARDExport api={api} item={item} />
+    {!!item.changes.length && <section className="drawer-section"><h3>Declaration changes <span>{item.changes.length}</span></h3>{item.changes.map((change) => <div className="match-row" key={change.id}><span className="stacked"><b>{change.summary}</b><small>{relative(change.changed_at)}</small></span><span className="kind-label">{pretty(change.event_type)}</span></div>)}</section>}
+    <section className="drawer-section"><h3>Evidence <span>{item.evidence.length}</span></h3>{item.evidence.map((evidence) => <div className="evidence-row" key={`${evidence.source_id}:${evidence.id}`}><span><b>{evidence.detector_id}</b><small>{evidence.family} · {evidence.specificity}</small></span><code>{evidence.locator ?? "No locator"}</code><time>{relative(evidence.observed_at)}</time></div>)}</section>
+  </>;
+}
+
+function ARDExport({ api, item }: { api: API; item: DeclarationDetail }) {
+  const [publisher, setPublisher] = useState(item.publisher_domain);
+  const [host, setHost] = useState(item.publisher_domain);
+  const [artifactURL, setArtifactURL] = useState(item.artifact_url ?? "");
+  const [status, setStatus] = useState("");
+  const [busy, setBusy] = useState(false);
+  const download = () => {
+    setBusy(true); setStatus("");
+    api.downloadARDExport({
+      publisher_domain: publisher,
+      host_display_name: host,
+      entries: [{ entity_id: item.id, identifier: item.identifier, media_type: item.media_type, artifact_url: artifactURL }],
+    }).then(() => setStatus("ai-catalog.json downloaded")).catch((reason) => setStatus(String(reason))).finally(() => setBusy(false));
+  };
+  return <section className="drawer-section ard-export"><h3>Export declaration</h3><p className="drawer-note">Create a standards-compatible file from this selected declaration. Lens does not publish or host it.</p>
+    <div><label>Publisher domain<input value={publisher} onChange={(event) => setPublisher(event.target.value)} /></label><label>Host display name<input value={host} onChange={(event) => setHost(event.target.value)} /></label><label className="wide">Credential-free HTTPS artifact URL<input placeholder="https://example.com/agent-card.json" value={artifactURL} onChange={(event) => setArtifactURL(event.target.value)} /></label></div>
+    <button className="button subtle" disabled={busy || !publisher || !artifactURL} onClick={download}><Download size={13} /> {busy ? "Preparing…" : "Download ai-catalog.json"}</button>{status && <small className="form-status">{status}</small>}
+  </section>;
+}
+
+function CoveragePage({ api, revision, ardEnabled }: { api: API; revision: number; ardEnabled: boolean }) {
   const [targetType, setTargetType] = useState("");
   const overview = useRemote(() => api.overview("7d"), [api, revision]);
-  const targets = useRemote(() => api.targets({ target_type: targetType, limit: 100 }), [api, revision, targetType]);
+  const targets = useRemote(() => api.targets({ target_type: targetType, include_catalog: targetType ? undefined : "false", limit: 100 }), [api, revision, targetType]);
+  const coverage = useRemote(() => api.coverage(), [api, revision]);
   const [expanded, setExpanded] = useState<string>();
   const [enrollment, setEnrollment] = useState<{ code: string; expires_at: string }>();
   const [enrollError, setEnrollError] = useState("");
-  if (overview.loading || targets.loading) return <Loading />;
-  if (overview.error || targets.error || !overview.data || !targets.data) return <Failure error={overview.error || targets.error} retry={() => { overview.reload(); targets.reload(); }} />;
+  if (overview.loading || targets.loading || coverage.loading) return <Loading />;
+  if (overview.error || targets.error || coverage.error || !overview.data || !targets.data || !coverage.data) return <Failure error={overview.error || targets.error || coverage.error} retry={() => { overview.reload(); targets.reload(); coverage.reload(); }} />;
   return <div className="page-stack">
     <section className="coverage-cards">{overview.data.coverage.map((item) => <CoverageCard key={item.target_type} item={item} active={targetType === item.target_type} onClick={() => setTargetType((value) => value === item.target_type ? "" : item.target_type)} />)}</section>
     <section className="panel data-panel">
@@ -267,6 +402,14 @@ function CoveragePage({ api, revision }: { api: API; revision: number }) {
         </div>)}
       </div>
     </section>
+    {ardEnabled && <section className="panel declaration-coverage">
+      <PanelHeading title="Declaration sources" detail="Catalog freshness is shown separately. It is not part of endpoint, repository, or cluster population coverage." count={coverage.data.declaration_sources.length} />
+      {coverage.data.declaration_sources.length ? <div className="catalog-list">{coverage.data.declaration_sources.map((source) => <div key={source.id}>
+        <span><b>{source.name}</b><small>{source.url}</small></span>
+        <span><Freshness value={source.freshness} /><small>{source.last_success_at ? `Last successful refresh ${relative(source.last_success_at)}` : "No successful refresh yet"}</small></span>
+        <span className={source.last_error_code ? "catalog-health needs-review" : "catalog-health reporting"}>{source.last_error_code ? "Refresh needs review" : source.enabled ? "Refresh enabled" : "Refresh paused"}</span>
+      </div>)}</div> : <Empty icon={BookOpen} title="No declaration sources configured" detail="Add an ARD catalog from Declarations. This does not change fleet coverage percentages." />}
+    </section>}
     <CoverageBaseline api={api} coverage={overview.data.coverage} onSaved={() => overview.reload()} />
     <section className="panel enrollment-panel"><div><p className="eyebrow">EXPAND COVERAGE</p><h2>Enroll a managed endpoint</h2><p>Generate a single-device code valid for ten minutes. The endpoint creates its own persistent signing identity and keeps it across credential rotation.</p></div>
       <div className="enrollment-action">{enrollment ? <div className="enrollment-code"><span>{enrollment.code}</span><button onClick={() => navigator.clipboard.writeText(enrollment.code)}><Copy size={15} /> Copy</button><small>Expires {new Date(enrollment.expires_at).toLocaleTimeString()}</small></div> : <button className="button primary" onClick={() => { setEnrollError(""); api.enrollment().then(setEnrollment).catch((reason) => setEnrollError(String(reason))); }}>Generate enrollment code</button>}{enrollError && <InlineError text={enrollError} />}</div>
@@ -283,11 +426,14 @@ function ChangesPage({ api, revision }: { api: API; revision: number }) {
   const update = (key: string, value: string) => { setCursor(""); setItems([]); setFilters((current) => ({ ...current, [key]: value })); };
   return <div className="page-stack"><FilterBar hideSearch>
     <Select label="Window" value={filters.window} onChange={(value) => update("window", value)} options={{ "24h": "Last 24 hours", "7d": "Last 7 days", "30d": "Last 30 days", "90d": "Last 90 days" }} />
-    <Select label="Category" value={filters.category} onChange={(value) => update("category", value)} options={{ "": "All material changes", state: "State", network_scope: "Network scope", attribution: "Attribution", capability: "Capability", confidence: "Confidence", identity: "Identity", freshness: "Freshness" }} />
+    <Select label="Category" value={filters.category} onChange={(value) => {
+      setCursor(""); setItems([]);
+      setFilters((current) => ({ ...current, category: value, system_role: value === "declaration" ? "artifact" : current.system_role === "artifact" ? "system" : current.system_role }));
+    }} options={{ "": "System changes", state: "State", network_scope: "Network scope", attribution: "Attribution", capability: "Capability", confidence: "Confidence", identity: "Identity", freshness: "Freshness", declaration: "Declarations" }} />
     <Select label="System type" value={filters.system_type} onChange={(value) => update("system_type", value)} options={{ "": "All systems", autonomous_agent: "Autonomous agent", agent_tool: "Agent-capable tool", model_runtime: "Model runtime" }} />
-    <Select label="Surface" value={filters.surface} onChange={(value) => update("surface", value)} options={{ "": "All surfaces", endpoint: "Endpoint", repository: "Repository", kubernetes: "Kubernetes" }} />
+    <Select label="Surface" value={filters.surface} onChange={(value) => update("surface", value)} options={{ "": "All surfaces", endpoint: "Endpoint", repository: "Repository", kubernetes: "Kubernetes", catalog: "Catalog" }} />
   </FilterBar>
-    <section className="panel change-log"><PanelHeading title="System change history" detail="Changes to root systems and their connected capabilities; routine re-observation is suppressed" count={items.length} /><ChangeList items={items} expanded />
+    <section className="panel change-log"><PanelHeading title={filters.category === "declaration" ? "Declaration change history" : "System change history"} detail={filters.category === "declaration" ? "Published additions, removals, descriptor changes, and correlation changes" : "Changes to root systems and their connected capabilities; routine re-observation is suppressed"} count={items.length} /><ChangeList items={items} expanded />
       {remote.loading && <InlineLoading />}{remote.error && <InlineError text={remote.error} />}{remote.data?.next_cursor && !remote.loading && <button className="load-more" onClick={() => setCursor(remote.data!.next_cursor!)}>Load more changes <ChevronDown size={15} /></button>}
     </section>
   </div>;
@@ -301,8 +447,8 @@ function InventoryPage({ api, revision }: { api: API; revision: number }) {
   const [selected, setSelected] = useState<string>();
   useEffect(() => { if (remote.data) setItems((current) => cursor ? [...current, ...remote.data!.items] : remote.data!.items); }, [remote.data, cursor]);
   const update = (key: string, value: string) => { setCursor(""); setItems([]); setFilters((current) => ({ ...current, [key]: value })); };
-  return <div className="page-stack"><FilterBar search={filters.search ?? ""} setSearch={(value) => update("search", value)}>
-    <Select label="Entity type" value={filters.kind} onChange={(value) => update("kind", value)} options={{ "": "All entity types", agent: "Agent", runtime: "Runtime", mcp_server: "MCP server", skill: "Skill", model: "Model", model_server: "Model server", framework: "Framework", repository: "Repository", workload: "Workload", api_service: "API service", workflow: "Workflow", user: "User" }} />
+  return <div className="page-stack"><FilterBar search={filters.search ?? ""} setSearch={(value) => update("search", value)} placeholder="Search the technical inventory">
+    <Select label="Entity type" value={filters.kind} onChange={(value) => update("kind", value)} options={{ "": "All entity types", agent: "Agent", runtime: "Runtime", mcp_server: "MCP server", skill: "Skill", model: "Model", model_server: "Model server", framework: "Framework", repository: "Repository", workload: "Workload", api_service: "API service", workflow: "Workflow", user: "User", catalog: "Catalog", resource_declaration: "Resource declaration" }} />
     <Select label="Role" value={filters.system_role} onChange={(value) => update("system_role", value)} options={{ "": "Any graph role", system: "Root system", component: "Component", supporting: "Supporting runtime", artifact: "Artifact", target: "Discovery target" }} />
     <Select label="State" value={filters.state} onChange={(value) => update("state", value)} options={{ "": "Any state", running: "Running", deployed: "Deployed", defined: "Defined", configured: "Configured", installed: "Installed", residual: "Residual", cached: "Cached", observed: "Observed" }} />
     <Select label="Confidence" value={filters.confidence} onChange={(value) => update("confidence", value)} options={{ "": "Any confidence", confirmed: "Confirmed", likely: "Likely", possible: "Possible" }} />
@@ -349,7 +495,7 @@ function SystemDrawer({ api, id, onClose }: { api: API; id: string; onClose: () 
 function SystemDetailView({ item }: { item: SystemDetail }) {
   const groups = groupConnections(item.connections);
   return <><div className="drawer-title"><Identity kind={item.kind} name={item.name} detail={item.product_id ?? item.id} /><div><TypePill value={item.system_type} /><StatePill state={item.state} /><ConfidencePill value={item.confidence} /></div></div>
-    <div className="fact-grid"><Fact label="Target" value={item.target_name ?? "Unresolved"} /><Fact label="Surface" value={pretty(item.surface)} /><Fact label="Network scope" value={pretty(item.network_scope)} /><Fact label="Attribution" value={item.attributed ? "Authoritative" : "Not established"} /><Fact label="First discovered" value={relative(item.first_seen_at)} /><Fact label="Last observed" value={relative(item.last_seen_at)} /></div>
+    <div className="fact-grid"><Fact label="Target" value={item.target_name ?? "Unresolved"} /><Fact label="Surface" value={pretty(item.surface)} /><Fact label="Network scope" value={pretty(item.network_scope)} /><Fact label="Attribution" value={item.attributed ? "Authoritative" : "Not established"} /><Fact label="Declaration" value={item.declaration_status === "matched" ? "Observed and declared" : item.declaration_status === "conflict" ? "Identity conflict" : "No matching declaration"} /><Fact label="Last observed" value={relative(item.last_seen_at)} /></div>
     <section className="drawer-section"><h3>Connected inventory <span>{item.connections.length}</span></h3>{Object.entries(groups).map(([group, values]) => <div className="connection-group" key={group}><p>{pretty(group)}</p>{values.map((connection) => <ConnectionRow item={connection} key={connection.relationship_id} />)}</div>)}</section>
     <section className="drawer-section"><h3>Evidence <span>{item.evidence.length}</span></h3>{item.evidence.map((evidence) => <div className="evidence-row" key={`${evidence.source_id}:${evidence.id}`}><span><b>{evidence.detector_id}</b><small>{evidence.family} · {evidence.specificity}</small></span><code>{evidence.locator ?? "No locator"}</code><time>{relative(evidence.observed_at)}{evidence.observations > 1 ? ` · ${evidence.observations}×` : ""}</time></div>)}</section>
   </>;
@@ -401,7 +547,7 @@ function CoverageSummaryRow({ item, onClick }: { item: Overview["coverage"][numb
 
 function ChangeList({ items, expanded = false }: { items: Change[]; expanded?: boolean }) {
   if (!items.length) return <Empty icon={History} title="No material changes" detail="Identical scans and routine refreshes are intentionally suppressed." />;
-  return <div className={expanded ? "change-list expanded" : "change-list"}>{items.map((item) => <article key={item.id}><span className={`change-mark ${item.category}`}><Activity size={13} /></span><div><p><b>{item.entity_name ?? "Discovered system"}</b><span className="category-pill">{pretty(item.category)}</span></p><h3>{item.summary || pretty(item.event_type)}</h3><small>{pretty(item.system_type ?? item.surface ?? "inventory")} · {relative(item.changed_at)}</small>{expanded && item.details?.fields && <div className="field-diffs">{item.details.fields.slice(0, 5).map((field) => <span key={field.path}><code>{pretty(field.path.replace("attributes.", ""))}</code><i>{formatValue(field.before)}</i><ArrowRight size={12} /><b>{formatValue(field.after)}</b></span>)}</div>}</div></article>)}</div>;
+  return <div className={expanded ? "change-list expanded" : "change-list"}>{items.map((item) => <article key={item.id}><span className={`change-mark ${item.category}`}><Activity size={13} /></span><div><p><b>{item.entity_name ?? (item.category === "declaration" ? "Declaration" : "Discovered system")}</b><span className="category-pill">{pretty(item.category)}</span></p><h3>{item.summary || pretty(item.event_type)}</h3><small>{pretty(item.system_type ?? item.surface ?? "inventory")} · {relative(item.changed_at)}</small>{expanded && item.details?.fields && <div className="field-diffs">{item.details.fields.slice(0, 5).map((field) => <span key={field.path}><code>{pretty(field.path.replace("attributes.", ""))}</code><i>{formatValue(field.before)}</i><ArrowRight size={12} /><b>{formatValue(field.after)}</b></span>)}</div>}</div></article>)}</div>;
 }
 
 function ConfidenceSummary({ data }: { data: Record<string, number> }) {
@@ -414,8 +560,8 @@ function StateDistribution({ values, total }: { values: Record<string, number>; 
   return <div className="state-distribution"><div className="state-bar">{observed.map((state) => <i key={state} className={state} style={{ width: `${percent(values[state], total)}%` }} title={`${pretty(state)} ${values[state]}`} />)}</div><div className="state-legend">{observed.map((state) => <div key={state}><span><i className={state} />{pretty(state)}</span><b>{values[state]}</b><small>{percent(values[state], total)}%</small></div>)}</div></div>;
 }
 
-function FilterBar({ search, setSearch, hideSearch, children }: { search?: string; setSearch?: (value: string) => void; hideSearch?: boolean; children: ReactNode }) {
-  return <section className={hideSearch ? "filter-bar filters-only" : "filter-bar"}>{!hideSearch && <label className="search"><Search size={16} /><input value={search} onChange={(event) => setSearch?.(event.target.value)} placeholder="Search discovered systems" /></label>}<div className="filters">{children}</div></section>;
+function FilterBar({ search, setSearch, hideSearch, placeholder = "Search discovered systems", children }: { search?: string; setSearch?: (value: string) => void; hideSearch?: boolean; placeholder?: string; children: ReactNode }) {
+  return <section className={hideSearch ? "filter-bar filters-only" : "filter-bar"}>{!hideSearch && <label className="search"><Search size={16} /><input value={search} onChange={(event) => setSearch?.(event.target.value)} placeholder={placeholder} /></label>}<div className="filters">{children}</div></section>;
 }
 
 function Select({ label, value = "", onChange, options }: { label: string; value?: string; onChange: (value: string) => void; options: Record<string, string> }) {
@@ -430,6 +576,19 @@ function Identity({ kind, name, detail }: { kind: string; name: string; detail: 
 function TypePill({ value }: { value: string }) { return <span className={`type-pill ${value}`}>{pretty(value)}</span>; }
 function StatePill({ state }: { state: string }) { return <span className={`state-pill ${state}`}><i />{pretty(state)}</span>; }
 function ConfidencePill({ value }: { value: string }) { return <span className={`confidence-pill ${value}`}><i />{pretty(value)}</span>; }
+function DeclarationPill({ value }: { value: string }) {
+  const label = value === "matched" ? "Observed and declared" : value === "declared_only" ? "Declared, not observed" : value === "conflict" ? "Identity conflict" : pretty(value);
+  return <span className={`declaration-pill ${value}`}><i />{label}</span>;
+}
+
+function trustClaimLabel(value: string) {
+  switch (value) {
+  case "aligned": return "Domain aligned";
+  case "misaligned": return "Domain misaligned";
+  case "unresolved": return "Unresolved";
+  default: return "No identity claim";
+  }
+}
 function Freshness({ value, partial }: { value: string; partial?: boolean }) { return <span className={`freshness ${value}`}><i />{pretty(value)}{partial && <small>Partial scan</small>}</span>; }
 function Fact({ label, value }: { label: string; value: string }) { return <div><span>{label}</span><b>{value}</b></div>; }
 

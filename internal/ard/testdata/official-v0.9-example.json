@@ -1,0 +1,43 @@
+{
+  "specVersion": "1.0",
+  "host": {
+    "displayName": "Acme Enterprise AI",
+    "identifier": "did:web:acme.example"
+  },
+  "entries": [
+    {
+      "identifier": "urn:air:acme.example:agent:assistant",
+      "displayName": "Corporate Assistant",
+      "type": "application/a2a-agent-card+json",
+      "url": "https://api.acme.example/agents/assistant.json",
+      "description": "General-purpose corporate assistant.",
+      "representativeQueries": [
+        "help me draft an email",
+        "summarize my unread messages"
+      ]
+    },
+    {
+      "identifier": "urn:air:acme.example:server:weather",
+      "displayName": "Weather Data Node",
+      "type": "application/mcp-server-card+json",
+      "data": {
+        "name": "Weather Data Node",
+        "tools": [
+          {
+            "name": "get_weather",
+            "description": "Get current weather for a city"
+          }
+        ]
+      },
+      "capabilities": [
+        "WeatherTool"
+      ]
+    },
+    {
+      "identifier": "urn:air:acme.example:skill:presentations",
+      "displayName": "Presentation Skill",
+      "type": "application/ai-skill+md",
+      "url": "https://github.com/acme-example/presentation-skill"
+    }
+  ]
+}

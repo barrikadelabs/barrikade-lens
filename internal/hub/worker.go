@@ -160,6 +160,7 @@ func normalizeSnapshot(ctx context.Context, tx pgx.Tx, snapshot discovery.Snapsh
 	evidenceRelationships := map[string][]string{}
 	touchedEntities := map[string]struct{}{}
 	discoveredEntities := map[string]struct{}{}
+	ardProjectionDirty := snapshot.SourceType == discovery.SourceCatalog
 	for _, entity := range snapshot.Entities {
 		for _, ref := range entity.EvidenceRefs {
 			evidenceEntities[ref] = append(evidenceEntities[ref], entity.ID)
@@ -170,6 +171,9 @@ func normalizeSnapshot(ctx context.Context, tx pgx.Tx, snapshot discovery.Snapsh
 		}
 		touchedEntities[entity.ID] = struct{}{}
 		if event != "" {
+			if ardMatchableKind(entity.Kind) {
+				ardProjectionDirty = true
+			}
 			if event == "entity.discovered" {
 				discoveredEntities[entity.ID] = struct{}{}
 			}
@@ -181,6 +185,12 @@ func normalizeSnapshot(ctx context.Context, tx pgx.Tx, snapshot discovery.Snapsh
 					return err
 				}
 			}
+		}
+		// Repository scans can carry publisher declarations. Their projection
+		// freshness advances on every observation, even when metadata is
+		// materially unchanged.
+		if entity.Kind == discovery.KindCatalog || entity.Kind == discovery.KindResourceDeclaration {
+			ardProjectionDirty = true
 		}
 	}
 	for _, relationship := range snapshot.Relationships {
@@ -211,6 +221,18 @@ func normalizeSnapshot(ctx context.Context, tx pgx.Tx, snapshot discovery.Snapsh
 		}
 	}
 	if snapshot.Full {
+		if !ardProjectionDirty {
+			var willRemoveMatchable bool
+			if err := tx.QueryRow(ctx, `SELECT EXISTS(
+				SELECT 1 FROM source_entities
+				WHERE organization_id=$1 AND source_id=$2 AND current
+					AND last_seen_sequence<>$3 AND consecutive_full_misses=2
+					AND observation_kind IN ('agent','mcp_server','skill','api_service','workflow','catalog','resource_declaration')
+			)`, snapshot.OrganizationID, snapshot.SourceID, sequence).Scan(&willRemoveMatchable); err != nil {
+				return err
+			}
+			ardProjectionDirty = willRemoveMatchable
+		}
 		if err := applyFullMisses(ctx, tx, snapshot, sequence); err != nil {
 			return err
 		}
@@ -220,12 +242,34 @@ func normalizeSnapshot(ctx context.Context, tx pgx.Tx, snapshot discovery.Snapsh
 			return err
 		}
 	}
+	if ardProjectionDirty {
+		previousAlignment, err := currentARDAlignment(ctx, tx, snapshot.OrganizationID)
+		if err != nil {
+			return err
+		}
+		if err := refreshARDProjections(ctx, tx, snapshot.OrganizationID); err != nil {
+			return err
+		}
+		if err := recordARDAlignmentChanges(ctx, tx, snapshot, previousAlignment); err != nil {
+			return err
+		}
+	}
 	_, _ = tx.Exec(ctx, `DELETE FROM evidence_observations WHERE expires_at < now()`)
 	_, _ = tx.Exec(ctx, `DELETE FROM ingestion_jobs WHERE status='failed' AND expires_at < now()`)
 	_, _ = tx.Exec(ctx, `DELETE FROM ingestion_jobs WHERE status='complete' AND completed_at < now()-interval '90 days'`)
 	_, _ = tx.Exec(ctx, `DELETE FROM changes WHERE changed_at < now()-interval '90 days'`)
 	_, _ = tx.Exec(ctx, `DELETE FROM webhook_outbox WHERE delivered_at < now()-interval '90 days'`)
 	return nil
+}
+
+func ardMatchableKind(kind discovery.EntityKind) bool {
+	switch kind {
+	case discovery.KindAgent, discovery.KindMCPServer, discovery.KindSkill, discovery.KindAPIService,
+		discovery.KindWorkflow, discovery.KindCatalog, discovery.KindResourceDeclaration:
+		return true
+	default:
+		return false
+	}
 }
 
 func upsertEntity(ctx context.Context, tx pgx.Tx, snapshot discovery.Snapshot, entity discovery.Entity, observedAt time.Time, sequence uint64) (string, *changeMetadata, error) {
@@ -263,11 +307,21 @@ func upsertEntity(ctx context.Context, tx pgx.Tx, snapshot discovery.Snapshot, e
 		return "", nil, err
 	}
 	if discovered {
+		if entity.Kind == discovery.KindResourceDeclaration {
+			return "entity.discovered", &changeMetadata{Category: "declaration", Summary: "Declaration discovered"}, nil
+		}
+		if entity.Kind == discovery.KindCatalog {
+			return "entity.discovered", &changeMetadata{Category: "declaration", Summary: "Declaration catalog discovered"}, nil
+		}
 		return "entity.discovered", &changeMetadata{Category: "identity", Summary: "System discovered"}, nil
 	}
 	var prior map[string]any
 	_ = json.Unmarshal(previousAttributes, &prior)
 	if metadata := entityChange(previousName, previousConfidence, prior, previousCurrent, previousStale, aggregated); metadata != nil {
+		if entity.Kind == discovery.KindResourceDeclaration || entity.Kind == discovery.KindCatalog {
+			metadata.Category = "declaration"
+			metadata.Summary = "Declaration metadata changed"
+		}
 		return "entity.updated", metadata, nil
 	}
 	return "", nil, nil
@@ -338,8 +392,9 @@ func applyFullMisses(ctx context.Context, tx pgx.Tx, snapshot discovery.Snapshot
 		return err
 	}
 	for _, item := range items {
+		var entityKind string
 		var wasCurrent, wasStale bool
-		if err := tx.QueryRow(ctx, `SELECT current,stale FROM entities WHERE organization_id=$1 AND id=$2`, snapshot.OrganizationID, item.id).Scan(&wasCurrent, &wasStale); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT kind,current,stale FROM entities WHERE organization_id=$1 AND id=$2`, snapshot.OrganizationID, item.id).Scan(&entityKind, &wasCurrent, &wasStale); err != nil {
 			return err
 		}
 		aggregated, aggregateErr := aggregateEntityObservations(ctx, tx, snapshot.OrganizationID, item.id)
@@ -365,7 +420,16 @@ func applyFullMisses(ctx context.Context, tx pgx.Tx, snapshot discovery.Snapshot
 			event = "entity.removed"
 		}
 		if event != "" {
-			if err := recordChange(ctx, tx, snapshot, event, item.id, &changeMetadata{Category: "freshness", Summary: map[bool]string{true: "System is stale", false: "System removed from current inventory"}[isCurrent]}); err != nil {
+			category := "freshness"
+			summary := map[bool]string{true: "System is stale", false: "System removed from current inventory"}[isCurrent]
+			if entityKind == string(discovery.KindResourceDeclaration) {
+				category = "declaration"
+				summary = map[bool]string{true: "Declaration is stale", false: "Declaration removed"}[isCurrent]
+			} else if entityKind == string(discovery.KindCatalog) {
+				category = "declaration"
+				summary = map[bool]string{true: "Declaration catalog is stale", false: "Declaration catalog removed"}[isCurrent]
+			}
+			if err := recordChange(ctx, tx, snapshot, event, item.id, &changeMetadata{Category: category, Summary: summary}); err != nil {
 				return err
 			}
 		}

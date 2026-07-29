@@ -374,6 +374,9 @@ func postureRole(kind string, attrs map[string]any) (string, string) {
 	if kind == string(discovery.KindModel) {
 		return "artifact", ""
 	}
+	if kind == string(discovery.KindCatalog) || kind == string(discovery.KindResourceDeclaration) {
+		return "artifact", ""
+	}
 	return "component", ""
 }
 
@@ -520,6 +523,8 @@ func titleState(value string) string {
 
 func relationshipCategory(kind string) string {
 	switch kind {
+	case string(discovery.RelationshipPublishes), string(discovery.RelationshipReferences), string(discovery.RelationshipDescribes):
+		return "declaration"
 	case string(discovery.RelationshipOwnedBy):
 		return "attribution"
 	case string(discovery.RelationshipExposes):
@@ -537,6 +542,12 @@ func relationshipSummary(kind string, added bool) string {
 		action = " added"
 	}
 	switch kind {
+	case string(discovery.RelationshipPublishes):
+		return "Catalog declaration" + action
+	case string(discovery.RelationshipReferences):
+		return "Catalog reference" + action
+	case string(discovery.RelationshipDescribes):
+		return "Declaration correlation" + action
 	case string(discovery.RelationshipOwnedBy):
 		return "Attribution evidence" + action
 	case string(discovery.RelationshipExposes):

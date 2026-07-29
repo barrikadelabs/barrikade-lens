@@ -43,7 +43,7 @@ Probes reject credential-bearing URLs and metadata targets, use strict limits, a
 
 ## Organization-wide discovery
 
-Lens Hub aggregates sources in PostgreSQL and exposes an open API, signed webhooks, Lens JSON/JSONL, and CycloneDX 1.7 exports.
+Lens Hub aggregates sources in PostgreSQL and exposes an open API, signed webhooks, Lens JSON/JSONL, CycloneDX 1.7 exports, and optional ARD declaration alignment.
 
 For a local quickstart:
 
@@ -85,9 +85,23 @@ flowchart LR
 - Go powers the detector engine, collectors, CLI/TUI, Kubernetes controller, Hub API, and PostgreSQL workers.
 - TypeScript powers the no-download npm launcher and React Hub UI.
 - PostgreSQL stores relational entities/edges plus JSONB attributes and is also the horizontally scalable job queue. There is no graph database or external queue.
-- The canonical contract is [Discovery Snapshot 1.1](api/schema/discovery-snapshot-v1.json); [OpenAPI](api/openapi.yaml) describes the Hub.
+- The canonical contract is [Discovery Snapshot 1.2](api/schema/discovery-snapshot-v1.json); Hub accepts 1.1 during the rolling-upgrade window. [OpenAPI](api/openapi.yaml) describes the Hub.
 - Detector signatures are declarative, checksummed YAML with no executable code.
 - Catalog enrichment happens only at Hub. The bundled adapter reads a compact OAK-compatible manifest and lazily fetches only matched documents.
+
+## Declared inventory with ARD
+
+Lens keeps publisher declarations separate from empirical observations:
+
+- **Observed** means a collector found evidence in an endpoint, repository, or Kubernetes environment.
+- **Declared** means a publisher advertised a resource in an ARD `ai-catalog.json`.
+- **Observed and declared** requires an exact identifier, descriptor URL, fingerprint, or authoritative protocol identity. A matching name creates only an investigation suggestion.
+
+Administrators add credential-free HTTPS catalog URLs from **Declarations → Declaration sources**. Hub refreshes them every six hours by default with conditional requests. Same-site nested catalogs are bounded by depth, catalog, and declaration limits. Lens records registry entries but never calls registry search endpoints, artifact URLs, agents, MCP tools, attestations, or runtime endpoints.
+
+Repository scans recognize `.well-known/ai-catalog.json`, local `Agentmap` directives, and local HTML `rel="ai-catalog"` links without following remote references. Endpoint scans remain offline.
+
+The Declarations page shows alignment, publisher and trust-claim facts, source freshness, evidence, and material history. Its manual export returns `ai-catalog.json` only for explicitly selected records with valid ARD identifiers, media types, and credential-free HTTPS artifact URLs. Lens does not host the exported file or invent an endpoint. See [ARD declarations and discovery](docs/ard.md).
 
 ## Repository layout
 
@@ -98,7 +112,8 @@ flowchart LR
 | `cmd/lens-k8s` | Informer-based Kubernetes collector |
 | `pkg/discovery` | Stable public discovery contract, privacy validation, identities |
 | `internal/scanner` | Endpoint, repository, and Kubernetes analyzers |
-| `internal/catalog` | Generic OAK/Git/file/directory catalog providers |
+| `internal/catalog` | Generic OAK/Git/file/directory capability-enrichment providers |
+| `internal/ard` | Privacy-reducing ARD parser, declaration provider, and safe remote fetcher |
 | `hub-ui` | Discovery-only React console |
 | `npm` | npm launcher and platform packages |
 | `deploy/helm` | Hub and Kubernetes Helm charts |
@@ -137,4 +152,4 @@ Weekly and manually triggered scale CI enforces a two-second inventory-query gat
 
 ## License and provenance
 
-Lens is Apache-2.0. Select inventory, redaction, digest, and managed-deployment design lessons were ported from Agent Beacon under its MIT license; the notice is retained in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). The bundled public catalog adapter treats its CC0 source as replaceable data and exposes source provenance as “Public API Catalog.”
+Lens is Apache-2.0. Select inventory, redaction, digest, and managed-deployment design lessons were ported from Agent Beacon under its MIT license; the notice is retained in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). The bundled public catalog adapter treats its CC0 source as replaceable data and exposes source provenance as “Public API Catalog.” The pinned Apache-2.0 ARD schema revision is recorded in [schema provenance](api/schema/ARD_UPSTREAM.md).

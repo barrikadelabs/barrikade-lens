@@ -67,6 +67,8 @@ func freshnessState(targetType string, lastSeen *time.Time, now time.Time) strin
 		threshold = 36 * time.Hour
 	case "kubernetes":
 		threshold = 12 * time.Hour
+	case "catalog":
+		threshold = 24 * time.Hour
 	}
 	if now.Sub(*lastSeen) > threshold {
 		return "stale"
@@ -160,11 +162,18 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 	}
 	changeRows.Close()
 
+	declarationAlignment := map[string]any{"configured": false, "configured_sources": 0, "counts": map[string]int{
+		"matched": 0, "declared_only": 0, "observed_only": 0, "conflict": 0, "stale_sources": 0, "unverified_claims": 0,
+	}}
+	if !s.config.ARDDisabled {
+		declarationAlignment = declarationAlignmentData(r.Context(), s.config.Pool, orgID)
+	}
 	writeJSON(w, 200, map[string]any{
 		"window": windowName, "generated_at": now, "coverage": coverage,
 		"footprint": map[string]any{"system_types": systemTypes, "states": states, "surfaces": surfaces},
 		"attention": attention, "changes": changes,
-		"data_quality": map[string]any{"confidence": confidence, "confidence_note": "Confirmed requires an authoritative descriptor or independent high-specificity evidence.", "coverage_note": "Expected population is shown only when an administrator configures a baseline."},
+		"declaration_alignment": declarationAlignment,
+		"data_quality":          map[string]any{"confidence": confidence, "confidence_note": "Confirmed requires an authoritative descriptor or independent high-specificity evidence.", "coverage_note": "Expected population is shown only when an administrator configures a baseline."},
 	})
 }
 
@@ -210,8 +219,23 @@ func (s *Server) listSystems(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "invalid_cursor", err.Error())
 		return
 	}
-	query := `SELECT e.id,e.kind,e.name,e.attributes,p.target_id,p.surface,p.system_type,p.product_id,p.product_category,p.discovery_state,p.network_scope,p.attributed,p.confidence,p.first_seen_at,p.last_seen_at,t.name
-		FROM entity_posture p JOIN entities e ON e.organization_id=p.organization_id AND e.id=p.entity_id LEFT JOIN discovery_targets t ON t.organization_id=p.organization_id AND t.id=p.target_id
+	query := `SELECT e.id,e.kind,e.name,e.attributes,p.target_id,p.surface,p.system_type,p.product_id,p.product_category,p.discovery_state,p.network_scope,p.attributed,p.confidence,p.first_seen_at,p.last_seen_at,t.name,
+			COALESCE(dm.status,'unmatched'),COALESCE(dm.declaration_ids,'{}'::text[])
+		FROM entity_posture p
+		JOIN entities e ON e.organization_id=p.organization_id AND e.id=p.entity_id
+		LEFT JOIN discovery_targets t ON t.organization_id=p.organization_id AND t.id=p.target_id
+		LEFT JOIN LATERAL (
+			SELECT CASE
+				WHEN bool_or(m.status='conflict') THEN 'conflict'
+				WHEN bool_or(m.status='linked') THEN 'matched'
+				ELSE 'unmatched'
+			END AS status,
+			array_agg(m.declaration_entity_id ORDER BY m.declaration_entity_id)
+				FILTER(WHERE m.status IN ('linked','conflict')) AS declaration_ids
+			FROM resource_matches m
+			WHERE m.organization_id=p.organization_id AND m.observed_entity_id=p.entity_id
+				AND m.status IN ('linked','conflict')
+		) dm ON true
 		WHERE p.organization_id=$1 AND p.current=true AND p.system_role='system'`
 	args := []any{principal.OrganizationID}
 	add := func(condition string, value any) {
@@ -230,6 +254,19 @@ func (s *Server) listSystems(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		add(` AND p.attributed=$%d`, value == "attributed")
+	}
+	if value := r.URL.Query().Get("declaration_status"); value != "" {
+		switch value {
+		case "matched":
+			query += ` AND EXISTS(SELECT 1 FROM resource_matches dm WHERE dm.organization_id=p.organization_id AND dm.observed_entity_id=p.entity_id AND dm.status='linked')`
+		case "conflict":
+			query += ` AND EXISTS(SELECT 1 FROM resource_matches dm WHERE dm.organization_id=p.organization_id AND dm.observed_entity_id=p.entity_id AND dm.status='conflict')`
+		case "unmatched":
+			query += ` AND NOT EXISTS(SELECT 1 FROM resource_matches dm WHERE dm.organization_id=p.organization_id AND dm.observed_entity_id=p.entity_id AND dm.status IN ('linked','conflict'))`
+		default:
+			writeError(w, 400, "invalid_filter", "Declaration status must be matched, unmatched, or conflict")
+			return
+		}
 	}
 	if search := strings.TrimSpace(r.URL.Query().Get("search")); search != "" {
 		args = append(args, search)
@@ -268,13 +305,15 @@ func (s *Server) listSystems(w http.ResponseWriter, r *http.Request) {
 		var id, kind, name, surface, discoveryState, networkScope, confidence string
 		var attributes []byte
 		var targetID, systemType, productID, productCategory, targetName *string
+		var declarationStatus string
+		var declarationIDs []string
 		var attributed bool
 		var firstSeen, lastSeen time.Time
-		if err := rows.Scan(&id, &kind, &name, &attributes, &targetID, &surface, &systemType, &productID, &productCategory, &discoveryState, &networkScope, &attributed, &confidence, &firstSeen, &lastSeen, &targetName); err != nil {
+		if err := rows.Scan(&id, &kind, &name, &attributes, &targetID, &surface, &systemType, &productID, &productCategory, &discoveryState, &networkScope, &attributed, &confidence, &firstSeen, &lastSeen, &targetName, &declarationStatus, &declarationIDs); err != nil {
 			writeError(w, 500, "database_error", "Could not read systems")
 			return
 		}
-		items = append(items, map[string]any{"id": id, "kind": kind, "name": name, "attributes": jsonObject(attributes), "target_id": targetID, "target_name": targetName, "surface": surface, "system_type": systemType, "product_id": productID, "product_category": productCategory, "state": discoveryState, "network_scope": networkScope, "attributed": attributed, "confidence": confidence, "first_seen_at": firstSeen, "last_seen_at": lastSeen})
+		items = append(items, map[string]any{"id": id, "kind": kind, "name": name, "attributes": jsonObject(attributes), "target_id": targetID, "target_name": targetName, "surface": surface, "system_type": systemType, "product_id": productID, "product_category": productCategory, "state": discoveryState, "network_scope": networkScope, "attributed": attributed, "confidence": confidence, "first_seen_at": firstSeen, "last_seen_at": lastSeen, "declaration_status": declarationStatus, "declaration_ids": declarationIDs})
 		next = pageCursor{Sort: sortBy, ID: id, Value: lastSeen.Format(time.RFC3339Nano)}
 		if sortBy == "name" {
 			next.Value = strings.ToLower(name)
@@ -312,6 +351,9 @@ func (s *Server) getSystem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result := map[string]any{"id": entityID, "kind": kind, "name": name, "attributes": jsonObject(attributes), "target_id": targetID, "target_name": targetName, "surface": surface, "system_type": systemType, "product_id": productID, "product_category": productCategory, "state": state, "network_scope": network, "attributed": attributed, "confidence": confidence, "first_seen_at": firstSeen, "last_seen_at": lastSeen}
+	declarationStatus, declarationIDs := s.systemDeclarationInfo(r.Context(), principal.OrganizationID, id)
+	result["declaration_status"] = declarationStatus
+	result["declaration_ids"] = declarationIDs
 
 	rows, err := s.config.Pool.Query(r.Context(), `SELECT r.id,r.kind,r.from_entity,r.to_entity,r.attributes,r.confidence,e.id,e.kind,e.name,e.attributes
 		FROM relationships r JOIN entities e ON e.organization_id=r.organization_id AND e.id=CASE WHEN r.from_entity=$2 THEN r.to_entity ELSE r.from_entity END
@@ -376,6 +418,12 @@ func (s *Server) listTargets(w http.ResponseWriter, r *http.Request) {
 	if targetType := r.URL.Query().Get("target_type"); targetType != "" {
 		args = append(args, targetType)
 		query += fmt.Sprintf(` AND t.target_type=$%d`, len(args))
+	}
+	if includeCatalog := r.URL.Query().Get("include_catalog"); includeCatalog == "false" {
+		query += ` AND t.target_type<>'catalog'`
+	} else if includeCatalog != "" && includeCatalog != "true" {
+		writeError(w, 400, "invalid_filter", "include_catalog must be true or false")
+		return
 	}
 	if search := strings.TrimSpace(r.URL.Query().Get("search")); search != "" {
 		args = append(args, search)
