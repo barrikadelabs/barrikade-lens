@@ -1,0 +1,2 @@
+bucket = "barrikade-lens-test-UNIQUE-terraform-state"
+prefix = "foundation"

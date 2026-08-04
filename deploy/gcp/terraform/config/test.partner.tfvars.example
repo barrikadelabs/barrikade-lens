@@ -1,0 +1,27 @@
+project_id        = "barrikade-lens-test-UNIQUE"
+environment       = "test"
+suspended         = false
+database_suspended = false
+region            = "europe-west2"
+partner_slug      = "pilot"
+organization_id   = "pilot-test"
+organization_name = "Pilot Partner (Test)"
+public_url         = "https://pilot.lens-test.barrikade.ai"
+image              = "europe-west2-docker.pkg.dev/barrikade-lens-test-UNIQUE/lens/hub@sha256:REPLACE_WITH_64_HEX_CHARACTERS"
+release_service_account = "lens-pilot-release@barrikade-lens-test-UNIQUE.iam.gserviceaccount.com"
+
+oidc_issuer       = "https://REPLACE_WITH_PARTNER_ISSUER"
+oidc_client_id    = "REPLACE_WITH_TEST_CLIENT_ID"
+oidc_redirect_uri = "https://pilot.lens-test.barrikade.ai"
+oidc_admin_group  = "REPLACE_WITH_ADMIN_GROUP"
+
+# oidc_client_secret = "set only when the partner client is confidential"
+# github_app_id = "123456"
+# github_private_key = <<-PEM
+# -----BEGIN RSA PRIVATE KEY-----
+# ...
+# -----END RSA PRIVATE KEY-----
+# PEM
+# github_webhook_secret = "replace-me"
+
+notification_channel_ids = []

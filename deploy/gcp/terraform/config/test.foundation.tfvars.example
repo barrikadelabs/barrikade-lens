@@ -1,0 +1,16 @@
+project_id        = "barrikade-lens-test-UNIQUE"
+project_name      = "Barrikade Lens Test"
+environment       = "test"
+organization_id   = "REPLACE_WITH_GCP_ORGANIZATION_ID"
+billing_account   = "REPLACE_WITH_BILLING_ACCOUNT_ID"
+region            = "europe-west2"
+budget_eur        = 100
+github_owner_id   = "REPLACE_WITH_NUMERIC_GITHUB_ORG_ID"
+github_repository = "barrikadelabs/barrikade-lens"
+deployment_targets = {
+  pilot = { github_environment = "test-pilot" }
+}
+
+labels = {
+  "data-classification" = "partner-test"
+}

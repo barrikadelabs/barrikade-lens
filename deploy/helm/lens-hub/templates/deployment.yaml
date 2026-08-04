@@ -24,7 +24,7 @@ spec:
             - {name: LENS_OIDC_REDIRECT_URI, value: {{ .Values.oidc.redirectURI | quote }}}
             - {name: LENS_OIDC_ADMIN_GROUP, value: {{ .Values.oidc.adminGroup | quote }}}
             - {name: LENS_OIDC_CLIENT_SECRET, valueFrom: {secretKeyRef: {name: {{ .Values.existingSecret }}, key: oidc-client-secret, optional: true}}}
-          readinessProbe: {httpGet: {path: /healthz, port: http}, initialDelaySeconds: 3}
-          livenessProbe: {httpGet: {path: /healthz, port: http}, initialDelaySeconds: 10}
+          readinessProbe: {httpGet: {path: /health, port: http}, initialDelaySeconds: 3}
+          livenessProbe: {httpGet: {path: /health, port: http}, initialDelaySeconds: 10}
           resources: {{ toYaml .Values.resources | nindent 12 }}
           securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: ["ALL"]}}

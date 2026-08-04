@@ -284,7 +284,7 @@ func newDoctorCommand(dependencies Dependencies, packPath *string) *cobra.Comman
 				fmt.Fprintln(dependencies.Out, "INFO  endpoint is not enrolled; standalone scans remain available")
 			}
 			if hubURL != "" {
-				request, reqErr := http.NewRequestWithContext(command.Context(), http.MethodGet, strings.TrimSuffix(hubURL, "/")+"/healthz", nil)
+				request, reqErr := http.NewRequestWithContext(command.Context(), http.MethodGet, strings.TrimSuffix(hubURL, "/")+"/health", nil)
 				if reqErr != nil {
 					return reqErr
 				}

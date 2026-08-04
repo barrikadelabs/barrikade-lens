@@ -6,8 +6,10 @@ info:
 servers: [{url: /}]
 security: [{bearerAuth: []}]
 paths:
-  /healthz:
+  /health:
     get: {security: [], operationId: health, responses: {'200': {description: Healthy}}}
+  /healthz:
+    get: {security: [], deprecated: true, operationId: legacyHealth, responses: {'200': {description: Healthy}}}
   /v1/auth/config:
     get: {security: [], operationId: authConfig, responses: {'200': {description: OIDC and quickstart access configuration}}}
   /v1/auth/exchange:

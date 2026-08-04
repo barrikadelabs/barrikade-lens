@@ -1,0 +1,20 @@
+project_id        = "barrikade-lens-prod-UNIQUE"
+environment       = "prod"
+suspended         = false
+database_suspended = false
+region            = "europe-west2"
+partner_slug      = "pilot"
+organization_id   = "pilot"
+organization_name = "Pilot Partner"
+public_url         = "https://pilot.lens.barrikade.ai"
+image              = "europe-west2-docker.pkg.dev/barrikade-lens-prod-UNIQUE/lens/hub@sha256:REPLACE_WITH_64_HEX_CHARACTERS"
+release_service_account = "lens-pilot-release@barrikade-lens-prod-UNIQUE.iam.gserviceaccount.com"
+
+oidc_issuer        = "https://REPLACE_WITH_PARTNER_ISSUER"
+oidc_client_id     = "REPLACE_WITH_PRODUCTION_CLIENT_ID"
+oidc_redirect_uri  = "https://pilot.lens.barrikade.ai"
+oidc_admin_group   = "REPLACE_WITH_ADMIN_GROUP"
+
+notification_channel_ids = [
+  "projects/barrikade-lens-prod-UNIQUE/notificationChannels/REPLACE_ME",
+]

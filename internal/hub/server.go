@@ -95,9 +95,11 @@ func NewServer(ctx context.Context, config Config) (*Server, error) {
 func (s *Server) Handler() http.Handler { return requestLog(s.config.Logger, securityHeaders(s.mux)) }
 
 func (s *Server) routes() {
-	s.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+	health := func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-	})
+	}
+	s.mux.HandleFunc("GET /health", health)
+	s.mux.HandleFunc("GET /healthz", health)
 	s.mux.HandleFunc("POST /v1/enrollment/exchange", s.exchangeEnrollment)
 	s.mux.HandleFunc("POST /v1/collector/token", s.rotateCollectorToken)
 	s.mux.HandleFunc("GET /v1/auth/config", s.oidcConfig)
