@@ -24,7 +24,7 @@ import (
 
 const (
 	maxRepositoryFiles = 100_000
-	maxArtifactSize    = 4 << 20
+	maxArtifactSize    = 64 << 20
 )
 
 var (
@@ -187,16 +187,17 @@ func (s *scanState) inspect(path string) {
 		return
 	}
 	s.builder.Snapshot.Coverage.LocationsChecked++
+	relative, _ := filepath.Rel(s.options.Root, path)
+	locator := filepath.ToSlash(relative)
 	data, err := readLimited(path, maxArtifactSize)
 	if err != nil {
 		if errors.Is(err, os.ErrPermission) {
 			s.builder.Snapshot.Coverage.LocationsDenied++
 		}
 		s.builder.Snapshot.Coverage.Partial = true
+		s.builder.Snapshot.Coverage.Notes = append(s.builder.Snapshot.Coverage.Notes, fmt.Sprintf("failed to read %s: %v", locator, err))
 		return
 	}
-	relative, _ := filepath.Rel(s.options.Root, path)
-	locator := filepath.ToSlash(relative)
 	method := "manifest"
 	if isMCP || isOpenAPI || isArazzo || isA2A || isAgent || isCustomAgent || isAgentInstructions || isSkill {
 		method = "descriptor"
@@ -241,7 +242,7 @@ func (s *scanState) inspect(path string) {
 	}
 }
 
-var agentInstructionNames = map[string]bool{"agents.md": true, "claude.md": true, "gemini.md": true, "antigravity.md": true, ".clinerules": true, ".windsurfrules": true, ".cursorrules": true, ".roomodes": true}
+var agentInstructionNames = map[string]bool{"agents.md": true, "claude.md": true, "gemini.md": true, "antigravity.md": true, ".clinerules": true, ".windsurfrules": true, ".cursorrules": true, ".roomodes": true, "copilot-instructions.md": true, ".copilotrules": true, "copilot.md": true}
 
 func authoritativeRepositoryArtifact(locator string, data []byte, manifest, mcp, openapi, arazzo, a2a, agent, customAgent, instructions, skill, deployment, owners bool) bool {
 	if manifest || instructions || deployment || owners {
