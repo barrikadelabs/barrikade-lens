@@ -18,7 +18,7 @@ The local interface is organized for both executive review and engineering follo
 - **Systems** shows root systems first, with supporting host applications and development runtimes clearly excluded from executive totals.
 - **Capabilities** groups MCP servers, models, skills, tools, APIs, and workflows without expanding every API operation into the main view.
 - **Coverage** explains what was checked, what failed or was unavailable, and how strong the collected evidence is.
-- **Evidence graph** exposes sanitized evidence samples, human-readable relationships, and export guidance for deeper engineering analysis.
+- **Evidence graph** renders an interactive directed map of systems, connected inventory, relationship direction, and sanitized supporting observations, with filters and a focused fact inspector.
 
 Use `1`–`5` or the left/right arrows to switch views, the up/down arrows or `j`/`k` to scroll, and `q` to leave. The layout adapts at 60, 80, and 140 columns and honors `NO_COLOR`.
 

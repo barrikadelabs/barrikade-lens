@@ -10,6 +10,7 @@ import {
   API, authConfig, exchangeOIDC, type AuthConfig, type Change, type Connection, type Entity,
   type EntityDetail, type Overview, type SystemDetail, type SystemItem, type Target,
 } from "./api";
+import { EvidenceGraphPage } from "./EvidenceGraph";
 
 type Page = "Overview" | "Systems" | "Coverage" | "Changes" | "Technical inventory" | "Evidence graph";
 
@@ -314,30 +315,6 @@ function InventoryPage({ api, revision }: { api: API; revision: number }) {
       {remote.loading && <InlineLoading />}{remote.error && <InlineError text={remote.error} />}{remote.data?.next_cursor && !remote.loading && <button className="load-more" onClick={() => setCursor(remote.data!.next_cursor!)}>Load more entities <ChevronDown size={15} /></button>}
     </section>
     {selected && <EntityDrawer api={api} id={selected} onClose={() => setSelected(undefined)} />}
-  </div>;
-}
-
-function EvidenceGraphPage({ api, revision }: { api: API; revision: number }) {
-  const systems = useRemote(() => api.systems({ limit: 50, sort: "name" }), [api, revision]);
-  const [selected, setSelected] = useState<string>();
-  const detail = useRemote(() => selected ? api.system(selected) : Promise.resolve(undefined), [api, selected]);
-  useEffect(() => { if (!selected && systems.data?.items[0]) setSelected(systems.data.items[0].id); }, [selected, systems.data]);
-  if (systems.loading) return <Loading />;
-  if (systems.error || !systems.data) return <Failure error={systems.error} retry={systems.reload} />;
-  return <div className="graph-layout">
-    <section className="panel graph-selector"><PanelHeading title="Choose a root system" detail="The graph is fetched on demand, one system at a time" />
-      <div className="graph-system-list">{systems.data.items.map((item) => <button className={selected === item.id ? "active" : ""} key={item.id} onClick={() => setSelected(item.id)}><Identity kind={item.kind} name={item.name} detail={pretty(item.system_type)} /><ChevronRight size={14} /></button>)}</div>
-    </section>
-    <section className="panel graph-canvas">{detail.loading ? <InlineLoading /> : detail.error ? <InlineError text={detail.error} /> : detail.data ? <SystemGraph detail={detail.data} /> : <Empty icon={Network} title="No system selected" detail="Choose a root system to inspect its evidence graph." />}</section>
-  </div>;
-}
-
-function SystemGraph({ detail }: { detail: SystemDetail }) {
-  const groups = groupConnections(detail.connections);
-  return <div><PanelHeading title={detail.name} detail={`${pretty(detail.system_type)} · ${pretty(detail.state)} · ${detail.target_name ?? "Unresolved target"}`} action={<ConfidencePill value={detail.confidence} />} />
-    <div className="graph-root"><Identity kind={detail.kind} name={detail.name} detail={detail.product_id ?? detail.id} /><span><StatePill state={detail.state} /><span className="network-pill">{pretty(detail.network_scope)}</span></span></div>
-    <div className="graph-branches">{Object.entries(groups).map(([label, connections]) => <div className="graph-branch" key={label}><div className="branch-line" /><p>{pretty(label)} <span>{connections.length}</span></p><div className="graph-nodes">{connections.map((connection) => <div className="graph-node" key={connection.relationship_id}><Identity kind={connection.entity.kind} name={connection.entity.name} detail={connection.label === "observed_user" ? "Observed user" : pretty(connection.relationship_kind)} /><ConfidencePill value={connection.confidence} /></div>)}</div></div>)}</div>
-    <div className="graph-evidence"><p>EVIDENCE FACTS <span>{detail.evidence.length}</span></p>{detail.evidence.slice(0, 12).map((evidence) => <div key={`${evidence.source_id}:${evidence.id}`}><span><b>{evidence.detector_id}</b><small>{evidence.family} · {evidence.method}{evidence.observations > 1 ? ` · ${evidence.observations} observations` : ""}</small></span><code>{evidence.locator ?? "sanitized locator unavailable"}</code><ConfidencePill value={evidence.specificity === "high" ? "confirmed" : evidence.specificity === "medium" ? "likely" : "possible"} /></div>)}</div>
   </div>;
 }
 

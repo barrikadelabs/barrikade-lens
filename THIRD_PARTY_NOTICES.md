@@ -1,10 +1,18 @@
 # Third-party notices
 
-## Agent Beacon
+## Public API catalog
+
+Catalog metadata may be synchronized from OAK-compatible, CC0-licensed public
+repositories. The source URL and revision are retained with every imported
+catalog entry.
+
+## React Flow
+
+The Lens Hub evidence map uses React Flow (`@xyflow/react`).
 
 MIT License
 
-Copyright (c) 2026 Asymptote Labs
+Copyright (c) 2019-2025 webkid GmbH
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -23,10 +31,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
-## Public API catalog
-
-Catalog metadata may be synchronized from OAK-compatible, CC0-licensed public
-repositories. The source URL and revision are retained with every imported
-catalog entry.
-
