@@ -506,7 +506,27 @@ func (s *scanState) detectSkill(locator string, data []byte, ref string) {
 	if !metadata.Valid {
 		return
 	}
-	attributes := map[string]any{"declared": true, "descriptor": locator, "descriptor_valid": true, "source_surface": "repository"}
+	attributes := map[string]any{
+		"declared": true, "descriptor": locator, "descriptor_valid": true, "descriptor_format": "agent_skills",
+		"skill_scope": "repository", "descriptor_relative": locator, "description_present": metadata.DescriptionPresent,
+		"license_declared": metadata.LicenseDeclared, "compatibility_declared": metadata.CompatibilityDeclared,
+		"allowed_tools_declared": metadata.AllowedToolsDeclared, "source_surface": "repository",
+	}
+	if metadata.DeclaredPurpose != "" {
+		attributes["declared_purpose"] = metadata.DeclaredPurpose
+	}
+	if metadata.License != "" {
+		attributes["license"] = metadata.License
+	}
+	if metadata.Compatibility != "" {
+		attributes["compatibility"] = metadata.Compatibility
+	}
+	if len(metadata.AllowedTools) > 0 {
+		attributes["allowed_tools"] = metadata.AllowedTools
+	}
+	if len(metadata.DescriptorFields) > 0 {
+		attributes["descriptor_fields"] = metadata.DescriptorFields
+	}
 	id := s.builder.AddEntity(discovery.KindSkill, "target:"+s.options.TargetID+":skill:"+strings.ToLower(locator), metadata.Name, attributes, ref)
 	s.builder.AddRelationship(discovery.RelationshipDefinedIn, id, s.repositoryID, nil, ref)
 }

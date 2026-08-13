@@ -72,6 +72,24 @@ func TestCapabilitiesShowCacheAndSystemContext(t *testing.T) {
 	}
 }
 
+func TestEvidenceViewExplainsFindingWithoutLeadingWithHashes(t *testing.T) {
+	view := noColorView(t, representativeSnapshot(), 4, 100)
+	for _, expected := range []string{
+		"Configuration structure matched  —  OpenAI Codex",
+		"Protected endpoint location",
+		"known configuration fields matched",
+		"review the local configuration",
+		"and declared capabilities",
+	} {
+		if !strings.Contains(view, expected) {
+			t.Fatalf("evidence view did not contain %q:\n%s", expected, view)
+		}
+	}
+	if strings.Contains(view, "path_hash:abc") {
+		t.Fatalf("opaque hash was presented as the finding:\n%s", view)
+	}
+}
+
 func TestNumberKeysNavigateViews(t *testing.T) {
 	model := New(representativeSnapshot())
 	updated, _ := model.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'4'}})
@@ -117,7 +135,7 @@ func representativeSnapshot() discovery.Snapshot {
 	snapshot.Entities = []discovery.Entity{
 		{ID: "endpoint", Kind: discovery.KindEndpoint, Name: "engineering-mac", Confidence: discovery.ConfidenceConfirmed},
 		{ID: "user", Kind: discovery.KindUser, Name: "developer", Confidence: discovery.ConfidenceLikely},
-		{ID: "codex", Kind: discovery.KindRuntime, Name: "OpenAI Codex", Confidence: discovery.ConfidenceConfirmed, Attributes: map[string]any{"product_category": "agent_tool", "installed": true, "configured": true, "running_at_scan": true}},
+		{ID: "codex", Kind: discovery.KindRuntime, Name: "OpenAI Codex", Confidence: discovery.ConfidenceConfirmed, EvidenceRefs: []string{"evidence"}, Attributes: map[string]any{"product_category": "agent_tool", "installed": true, "configured": true, "running_at_scan": true}},
 		{ID: "cursor", Kind: discovery.KindRuntime, Name: "Cursor", Confidence: discovery.ConfidencePossible, Attributes: map[string]any{"product_category": "agent_tool", "state_present": true}},
 		{ID: "ollama", Kind: discovery.KindRuntime, Name: "Ollama", Confidence: discovery.ConfidenceLikely, Attributes: map[string]any{"product_category": "model_runtime", "installed": true}},
 		{ID: "vscode", Kind: discovery.KindRuntime, Name: "Visual Studio Code", Confidence: discovery.ConfidenceConfirmed, Attributes: map[string]any{"product_category": "host_application", "configured": true}},

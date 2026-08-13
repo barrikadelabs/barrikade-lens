@@ -83,7 +83,7 @@ export function EvidenceGraphPage({ api, revision }: { api: API; revision: numbe
     setLoadingSystems(true);
     setSystemError("");
     const timer = window.setTimeout(() => {
-      api.systems({ limit: 100, sort: "name", search: systemSearch.trim() }).then((result) => {
+      api.systems({ limit: 100, sort: "name", freshness: "fresh", search: systemSearch.trim() }).then((result) => {
         if (!active) return;
         setSystems(result.items);
         setMoreSystems(Boolean(result.next_cursor));
@@ -304,7 +304,10 @@ function buildGraph(detail: SystemDetail, hiddenKinds: Set<string>, query: strin
     nodes.push({
       id: nodeID, type: "lens",
       position: { x: evX, y: evY },
-      data: { role: "evidence", kind: "evidence", name: fact.detector_id, detail: `${pretty(fact.family)} · ${pretty(fact.method)}`, confidence, evidence: fact },
+      data: {
+        role: "evidence", kind: "evidence", name: fact.title ?? pretty(fact.detector_id),
+        detail: conciseEvidenceDetail(fact), confidence, evidence: fact,
+      },
     });
     // Flowing arc from evidence top to root bottom.
     edges.push({
@@ -377,18 +380,50 @@ function GraphInspector({ data }: { data: GraphNodeData }) {
   if (data.role === "root" && data.system) {
     facts.push(["System type", pretty(data.system.system_type)], ["State", pretty(data.system.state)], ["Target", data.system.target_name ?? "Unresolved"], ["Surface", pretty(data.system.surface)], ["Network", pretty(data.system.network_scope)], ["Attribution", data.system.attributed ? "Established" : "Not established"]);
   } else if (data.role === "evidence" && data.evidence) {
-    facts.push(["Detector", data.evidence.detector_id], ["Evidence family", pretty(data.evidence.family)], ["Method", pretty(data.evidence.method)], ["Specificity", pretty(data.evidence.specificity)], ["Observed", relative(data.evidence.observed_at)], ["Observations", String(data.evidence.observations)]);
+    facts.push(
+      ["Exact resource", data.evidence.subject?.name ?? "Not resolved"],
+      ["Resource type", pretty(data.evidence.subject?.entity_kind ?? data.evidence.family)],
+      ["Found on", data.evidence.target_name ?? "Reporting target"],
+      ["Reporting", pretty(data.evidence.target_freshness ?? "unknown")],
+      ["Method", pretty(data.evidence.method)],
+      ["Specificity", pretty(data.evidence.specificity)],
+      ["Observed", relative(data.evidence.observed_at)],
+      ["Observations", String(data.evidence.observations)],
+    );
   } else {
     facts.push(["Entity type", pretty(data.kind)], ["Evidence", pretty(data.confidence)]);
     data.connections?.forEach((connection) => facts.push([connection.direction === "incoming" ? "Incoming" : "Outgoing", connection.label === "observed_user" ? "Observed user" : pretty(connection.relationship_kind)]));
   }
-  const locator = data.evidence?.locator;
+  const evidence = data.evidence;
+  const location = evidence?.location;
+  const matchedFacts = prioritizedEvidenceFacts(evidence?.matched_facts ?? []);
+  const visibleMatchedFacts = matchedFacts.slice(0, 8);
   return <aside className="graph-inspector">
     <div className="graph-inspector-title"><KindIcon kind={data.kind} /><span><small>{data.role === "root" ? "ROOT SYSTEM" : data.role === "evidence" ? "EVIDENCE FACT" : "CONNECTED ENTITY"}</small><b>{data.name}</b></span></div>
     <div className="graph-inspector-facts">{facts.slice(0, 8).map(([label, value], index) => <div key={`${label}:${index}`}><span>{label}</span><b>{value}</b></div>)}</div>
-    {locator && <div className="graph-locator"><span>SANITIZED LOCATOR</span><code title={locator}>{locator}</code></div>}
-    <p>{data.role === "evidence" ? "This observation supports the selected system. It does not imply approval or safety." : data.role === "entity" ? "Arrows show the canonical relationship direction recorded by Lens." : "Select any connected node or evidence fact to inspect why it appears in this neighborhood."}</p>
+    {evidence?.summary && <p className="graph-evidence-summary">{evidence.summary}</p>}
+    {location && <div className="graph-locator"><span>WHERE LENS FOUND IT</span><code title={location}>{location}</code></div>}
+    {visibleMatchedFacts.length ? <div className="graph-inspector-matched"><span>DISCOVERED DETAILS</span><div>{visibleMatchedFacts.map((fact) => <b key={fact.label}>{fact.label}: {fact.value}</b>)}</div>{matchedFacts.length > visibleMatchedFacts.length && <small>+{matchedFacts.length - visibleMatchedFacts.length} more in system details</small>}</div> : null}
+    {evidence?.why_it_matched && <div className="graph-evidence-explanation"><span>WHY IT MATCHED</span><p>{evidence.why_it_matched}</p></div>}
+    {evidence?.investigation_hint && <div className="graph-evidence-explanation action"><span>INVESTIGATE NEXT</span><p>{evidence.investigation_hint}</p></div>}
+    <p className="graph-inspector-note">{data.role === "evidence" ? "This observation supports the selected system. Integrity hashes remain available in the system detail without replacing the finding." : data.role === "entity" ? "Arrows show the canonical relationship direction recorded by Lens." : "Select any connected node or evidence fact to inspect why it appears in this neighborhood."}</p>
   </aside>;
+}
+
+function prioritizedEvidenceFacts(facts: Array<{ label: string; value: string }>) {
+  const priority = ["Declared Purpose", "Allowed Tools", "Compatibility", "License", "Descriptor Relative", "Skill Scope", "Provider Product Id", "Descriptor Valid"];
+  return [...facts].sort((left, right) => {
+    const leftRank = priority.indexOf(left.label);
+    const rightRank = priority.indexOf(right.label);
+    const normalizedLeft = leftRank < 0 ? priority.length : leftRank;
+    const normalizedRight = rightRank < 0 ? priority.length : rightRank;
+    return normalizedLeft - normalizedRight;
+  });
+}
+
+function conciseEvidenceDetail(evidence: Evidence) {
+  if (evidence.location && evidence.location !== "Location not retained") return evidence.location;
+  return `${pretty(evidence.family)} · ${pretty(evidence.method)}`;
 }
 
 function GraphFact({ label, value }: { label: string; value: string }) {

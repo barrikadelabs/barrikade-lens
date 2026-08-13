@@ -343,9 +343,12 @@ func scanPortableSkills(b *builder.Builder, options Options, signature detector.
 			})
 			attributes := map[string]any{
 				"state_present": true, "descriptor_valid": true, "skill_scope": signature.Scope,
-				"skill_root_id": signature.ID, "source_surface": "endpoint",
-				"configured": true,
+				"skill_root_id": signature.ID, "descriptor_relative": descriptor.Relative, "source_surface": "endpoint",
+				"configured": true, "descriptor_format": "agent_skills", "description_present": metadata.DescriptionPresent,
+				"license_declared": metadata.LicenseDeclared, "compatibility_declared": metadata.CompatibilityDeclared,
+				"allowed_tools_declared": metadata.AllowedToolsDeclared,
 			}
+			addSkillMetadata(attributes, metadata)
 			skillID := b.AddEntity(discovery.KindSkill, "target:"+options.TargetID+":portable-skill:"+signature.ID+":"+strings.ToLower(descriptor.Relative), metadata.Name, attributes, ref)
 			b.AddRelationship(discovery.RelationshipRunsOn, skillID, endpointID, nil, ref)
 			if userID != "" && signature.Scope == "user" {
@@ -572,10 +575,35 @@ func scanSkills(b *builder.Builder, options Options, signature detector.RuntimeS
 			ContentHash: discovery.ContentHash(descriptor.Data), Authoritative: true,
 		})
 		runtimeAttributes := map[string]any{"skill_state_present": true, "skills_configured": true}
-		skillAttributes := map[string]any{"state_present": true, "descriptor_valid": true, "source_surface": "endpoint", "configured": true}
+		skillAttributes := map[string]any{
+			"state_present": true, "descriptor_valid": true, "source_surface": "endpoint", "configured": true,
+			"descriptor_format": "agent_skills", "skill_scope": "user", "skill_root_id": signature.ID + ".skills",
+			"provider_product_id": signature.ID, "descriptor_relative": descriptor.Relative, "description_present": metadata.DescriptionPresent,
+			"license_declared": metadata.LicenseDeclared, "compatibility_declared": metadata.CompatibilityDeclared,
+			"allowed_tools_declared": metadata.AllowedToolsDeclared,
+		}
+		addSkillMetadata(skillAttributes, metadata)
 		runtimeID := addRuntime(runtimeAttributes, ref)
 		skillID := b.AddEntity(discovery.KindSkill, "target:"+options.TargetID+":skill:"+strings.ToLower(options.Username)+":"+signature.ID+":"+strings.ToLower(descriptor.Relative), metadata.Name, skillAttributes, ref)
 		b.AddRelationship(discovery.RelationshipProvides, runtimeID, skillID, nil, ref)
+	}
+}
+
+func addSkillMetadata(attributes map[string]any, metadata skillconfig.Metadata) {
+	if metadata.DeclaredPurpose != "" {
+		attributes["declared_purpose"] = metadata.DeclaredPurpose
+	}
+	if metadata.License != "" {
+		attributes["license"] = metadata.License
+	}
+	if metadata.Compatibility != "" {
+		attributes["compatibility"] = metadata.Compatibility
+	}
+	if len(metadata.AllowedTools) > 0 {
+		attributes["allowed_tools"] = metadata.AllowedTools
+	}
+	if len(metadata.DescriptorFields) > 0 {
+		attributes["descriptor_fields"] = metadata.DescriptorFields
 	}
 }
 

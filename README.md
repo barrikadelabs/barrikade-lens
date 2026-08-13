@@ -18,7 +18,7 @@ The local interface is organized for both executive review and engineering follo
 - **Systems** shows root systems first, with supporting host applications and development runtimes clearly excluded from executive totals.
 - **Capabilities** groups MCP servers, models, skills, tools, APIs, and workflows without expanding every API operation into the main view.
 - **Coverage** explains what was checked, what failed or was unavailable, and how strong the collected evidence is.
-- **Evidence graph** renders an interactive directed map of systems, connected inventory, relationship direction, and sanitized supporting observations, with filters and a focused fact inspector.
+- **Evidence graph** explains the strongest findings and relationship directions without exposing private local paths. Each finding says what matched and what to inspect next.
 
 Use `1`–`5` or the left/right arrows to switch views, the up/down arrows or `j`/`k` to scroll, and `q` to leave. The layout adapts at 60, 80, and 140 columns and honors `NO_COLOR`.
 
@@ -43,7 +43,7 @@ Probes reject credential-bearing URLs and metadata targets, use strict limits, a
 
 ## Organization-wide discovery
 
-Lens Hub aggregates sources in PostgreSQL and exposes an open API, signed webhooks, Lens JSON/JSONL, and CycloneDX 1.7 exports.
+Lens Hub aggregates sources in PostgreSQL and exposes an open API, signed webhooks, Lens JSON/JSONL, and CycloneDX 1.7 exports. Its interactive evidence graph maps each fresh root system to connected inventory and supporting findings. Evidence drawers resolve the exact linked resource, then lead with what was found, where it was observed, safe descriptor facts, related entities, the detector rationale, and an investigation prompt. Validated skill findings name the skill and show its declared purpose, actionable descriptor location, scope, provider, format, and optional compatibility, license, and allowed-tool declarations. Content and locator hashes remain available as secondary integrity references.
 
 For a local quickstart:
 
