@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  Background, BackgroundVariant, Controls, Handle, MarkerType, Position, ReactFlow,
-  type Edge, type Node, type NodeProps,
+  Background, BackgroundVariant, BaseEdge, Controls, Handle, MarkerType, Position, ReactFlow,
+  type Edge, type EdgeProps, type Node, type NodeProps,
 } from "@xyflow/react";
 import {
   AlertCircle, ArrowDownLeft, ArrowUpRight, Bot, BrainCircuit, CheckCircle2,
@@ -26,6 +26,39 @@ type LensNode = Node<GraphNodeData, "lens">;
 type GraphModel = { nodes: LensNode[]; edges: Edge[]; hiddenConnections: number; visibleEvidence: number };
 
 const nodeTypes = { lens: LensNodeCard };
+
+function FlowingEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition,
+  markerEnd, style, label, labelStyle, labelBgStyle, labelBgPadding, labelBgBorderRadius }: EdgeProps) {
+  const dx = targetX - sourceX;
+  const dy = targetY - sourceY;
+  const dist = Math.sqrt(dx * dx + dy * dy);
+  const cap = Math.max(Math.abs(dx) * 0.82, Math.abs(dy) * 0.82, 50);
+  const offset = Math.min(dist * 0.45, cap);
+
+  let cp1x = sourceX, cp1y = sourceY;
+  let cp2x = targetX, cp2y = targetY;
+  if (sourcePosition === Position.Right)       cp1x += offset;
+  else if (sourcePosition === Position.Left)   cp1x -= offset;
+  else if (sourcePosition === Position.Top)    cp1y -= offset;
+  else                                          cp1y += offset;
+  if (targetPosition === Position.Left)        cp2x -= offset;
+  else if (targetPosition === Position.Right)  cp2x += offset;
+  else if (targetPosition === Position.Top)    cp2y -= offset;
+  else                                          cp2y += offset;
+
+  const path = `M${sourceX},${sourceY} C${cp1x},${cp1y} ${cp2x},${cp2y} ${targetX},${targetY}`;
+  const lx = 0.125 * sourceX + 0.375 * cp1x + 0.375 * cp2x + 0.125 * targetX;
+  const ly = 0.125 * sourceY + 0.375 * cp1y + 0.375 * cp2y + 0.125 * targetY;
+  return (
+    <BaseEdge id={id} path={path} markerEnd={markerEnd} style={style}
+      label={label} labelX={lx} labelY={ly}
+      labelStyle={labelStyle} labelBgStyle={labelBgStyle}
+      labelBgPadding={labelBgPadding as [number, number]}
+      labelBgBorderRadius={labelBgBorderRadius} />
+  );
+}
+
+const edgeTypes = { flowing: FlowingEdge };
 const confidenceRank: Record<Confidence, number> = { confirmed: 0, likely: 1, possible: 2 };
 const kindIcons: Record<string, LucideIcon> = {
   endpoint: Monitor, repository: GitBranch, cluster: Container, workload: Container,
@@ -141,6 +174,7 @@ function SystemEvidenceMap({ detail }: { detail: SystemDetail }) {
         nodes={model.nodes}
         edges={model.edges}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         fitView
         fitViewOptions={{ padding: 0.22, maxZoom: 1.15 }}
         minZoom={0.18}
@@ -172,55 +206,123 @@ function buildGraph(detail: SystemDetail, hiddenKinds: Set<string>, query: strin
   const visible = balancedConnections(eligible, 50);
   const incoming = mergeConnectedEntities(visible.filter((connection) => connection.direction === "incoming"));
   const outgoing = mergeConnectedEntities(visible.filter((connection) => connection.direction === "outgoing"));
-  const rootX = incoming.length && outgoing.length ? 470 : incoming.length ? 650 : outgoing.length ? 100 : 470;
-  const incomingX = 50;
-  const outgoingX = incoming.length && outgoing.length ? 900 : 590;
-  const sideRows = Math.max(incoming.length, outgoing.length, 1);
-  const rootY = Math.max(130, ((sideRows - 1) * 118) / 2);
+
+  // Radial hub-and-spoke layout.
+  // Spread is capped tightly so entities stay in the clean left/right visual lanes.
+  // Straight-line edges are used throughout — a straight spoke literally cannot kink.
+  const sideCount = Math.max(incoming.length, outgoing.length, 1);
+  const ENTITY_R = Math.min(420, Math.max(360, sideCount * 26 + 240));
+  const CX = 460;
+  const CY = Math.max(240, (sideCount - 1) * 34 + 190);
+  const ROOT_W = 290, ROOT_H = 73;
+  const ENTITY_W = 240, ENTITY_H = 61;
+
   const nodes: LensNode[] = [{
-    id: detail.id, type: "lens", position: { x: rootX, y: rootY }, zIndex: 3,
+    id: detail.id, type: "lens",
+    position: { x: CX - ROOT_W / 2, y: CY - ROOT_H / 2 },
+    zIndex: 3,
     data: { role: "root", kind: detail.kind, name: detail.name, detail: `${pretty(detail.system_type)} · ${pretty(detail.state)}`, confidence: detail.confidence, system: detail },
   }];
   const edges: Edge[] = [];
 
-  const addEntities = (items: Array<{ entity: Connection["entity"]; connections: Connection[] }>, direction: "incoming" | "outgoing", x: number) => {
+  const placeEntities = (items: Array<{ entity: Connection["entity"]; connections: Connection[] }>, direction: "incoming" | "outgoing") => {
+    const total = items.length;
+    const baseAngle = direction === "incoming" ? 180 : 0;
+    // Max ±28° keeps each spoke visually distinct and edges well-separated.
+    const spreadTotal = total <= 1 ? 0 : Math.min(56, total * 9);
+
     items.forEach((item, index) => {
+      const fraction = total <= 1 ? 0.5 : index / (total - 1);
+      const angleDeg = baseAngle + spreadTotal * (fraction - 0.5);
+      const angleRad = angleDeg * (Math.PI / 180);
+      const nx = CX + ENTITY_R * Math.cos(angleRad) - ENTITY_W / 2;
+      const ny = CY + ENTITY_R * Math.sin(angleRad) - ENTITY_H / 2;
       const nodeID = `${direction}:${item.entity.id}`;
-      const strongest = item.connections.reduce((value, connection) => confidenceRank[connection.confidence] < confidenceRank[value] ? connection.confidence : value, item.connections[0].confidence);
-      nodes.push({ id: nodeID, type: "lens", position: { x, y: index * 118 }, data: { role: "entity", kind: item.entity.kind, name: item.entity.name, detail: item.connections.map((connection) => pretty(connection.relationship_kind)).join(" · "), confidence: strongest, connections: item.connections } });
+      const strongest = item.connections.reduce(
+        (best, c) => confidenceRank[c.confidence] < confidenceRank[best] ? c.confidence : best,
+        item.connections[0].confidence
+      );
+      nodes.push({
+        id: nodeID, type: "lens",
+        position: { x: nx, y: ny },
+        data: { role: "entity", kind: item.entity.kind, name: item.entity.name, detail: item.connections.map((c) => pretty(c.relationship_kind)).join(" · "), confidence: strongest, connections: item.connections },
+      });
       const outgoingEdge = direction === "outgoing";
       const primary = item.connections[0];
+      const color = edgeColor(primary.relationship_kind);
+      const isConfirmed = strongest === "confirmed";
+      // Outgoing: root right-source → entity left-target  (entity is to the right)
+      // Incoming: entity right-source → root left-target  (entity is to the left)
+      // FlowingEdge uses Euclidean-distance control points for liquid arcs at any angle.
       edges.push({
         id: `bundle:${direction}:${item.entity.id}`,
         source: outgoingEdge ? detail.id : nodeID,
         target: outgoingEdge ? nodeID : detail.id,
         sourceHandle: "right-source",
         targetHandle: "left-target",
-        type: "smoothstep",
+        type: "flowing",
         label: relationshipSummary(item.connections),
-        markerEnd: { type: MarkerType.ArrowClosed, width: 13, height: 13, color: edgeColor(primary.relationship_kind) },
-        style: { stroke: edgeColor(primary.relationship_kind), strokeWidth: strongest === "confirmed" ? 1.8 : 1.2, opacity: strongest === "possible" ? 0.55 : 0.86 },
-        labelStyle: { fill: "rgba(255,255,255,.63)", fontSize: 9, fontWeight: 600 },
-        labelBgStyle: { fill: "#121212", fillOpacity: 0.94 },
-        labelBgPadding: [5, 3],
-        labelBgBorderRadius: 4,
+        markerEnd: { type: MarkerType.ArrowClosed, width: 14, height: 14, color },
+        style: {
+          stroke: color,
+          strokeWidth: isConfirmed ? 2.4 : strongest === "likely" ? 1.6 : 1.2,
+          opacity: strongest === "possible" ? 0.5 : 0.92,
+          filter: isConfirmed ? `drop-shadow(0 0 5px ${color}90)` : undefined,
+        },
+        labelStyle: { fill: "rgba(255,255,255,.68)", fontSize: 9, fontWeight: 600 },
+        labelBgStyle: { fill: "#111315", fillOpacity: 0.96 },
+        labelBgPadding: [6, 3],
+        labelBgBorderRadius: 5,
       });
     });
   };
-  addEntities(incoming, "incoming", incomingX);
-  addEntities(outgoing, "outgoing", outgoingX);
 
-  const evidence = showEvidence ? [...detail.evidence].sort((left, right) => confidenceRank[evidenceConfidence(left)] - confidenceRank[evidenceConfidence(right)] || new Date(right.observed_at).getTime() - new Date(left.observed_at).getTime()).slice(0, 8) : [];
-  const evidenceTop = Math.max(rootY + 300, sideRows * 118 + 95);
+  placeEntities(incoming, "incoming");
+  placeEntities(outgoing, "outgoing");
+
+  // Evidence nodes: centred grid below the entity ring.
+  // All edges use top-source → bottom-target (consistently vertical) with straight lines.
+  const evidence = showEvidence
+    ? [...detail.evidence]
+        .sort((l, r) => confidenceRank[evidenceConfidence(l)] - confidenceRank[evidenceConfidence(r)] || new Date(r.observed_at).getTime() - new Date(l.observed_at).getTime())
+        .slice(0, 8)
+    : [];
+
+  const EVIDENCE_W = 245, EVIDENCE_H = 57;
+  const evidenceCols = Math.min(4, Math.max(1, evidence.length));
+  const evidenceSpacingX = 258;
+  const evidenceStartY = CY + ENTITY_R + 90;
+  const evidenceStartX = CX - ((evidenceCols - 1) * evidenceSpacingX) / 2 - EVIDENCE_W / 2;
+
   evidence.forEach((fact, index) => {
+    const col = index % evidenceCols;
+    const row = Math.floor(index / evidenceCols);
     const nodeID = `evidence:${fact.source_id}:${fact.id}`;
-    const columns = Math.min(4, Math.max(1, evidence.length));
-    const x = rootX - ((columns - 1) * 260) / 2 + (index % columns) * 260;
-    const y = evidenceTop + Math.floor(index / columns) * 110;
     const confidence = evidenceConfidence(fact);
-    nodes.push({ id: nodeID, type: "lens", position: { x, y }, data: { role: "evidence", kind: "evidence", name: fact.detector_id, detail: `${pretty(fact.family)} · ${pretty(fact.method)}`, confidence, evidence: fact } });
-    edges.push({ id: `supports:${nodeID}`, source: nodeID, target: detail.id, sourceHandle: "top-source", targetHandle: "bottom-target", type: "smoothstep", label: "supports", style: { stroke: "#6d98ba", strokeWidth: 1.25, strokeDasharray: "5 5", opacity: 0.68 }, markerEnd: { type: MarkerType.ArrowClosed, width: 12, height: 12, color: "#6d98ba" }, labelStyle: { fill: "#91b3cc", fontSize: 8 }, labelBgStyle: { fill: "#121212", fillOpacity: 0.92 } });
+    const evX = evidenceStartX + col * evidenceSpacingX;
+    const evY = evidenceStartY + row * 102;
+    nodes.push({
+      id: nodeID, type: "lens",
+      position: { x: evX, y: evY },
+      data: { role: "evidence", kind: "evidence", name: fact.detector_id, detail: `${pretty(fact.family)} · ${pretty(fact.method)}`, confidence, evidence: fact },
+    });
+    // Flowing arc from evidence top to root bottom.
+    edges.push({
+      id: `supports:${nodeID}`,
+      source: nodeID, target: detail.id,
+      sourceHandle: "top-source", targetHandle: "bottom-target",
+      type: "flowing",
+      animated: true,
+      label: "supports",
+      style: { stroke: "#5a9ec4", strokeWidth: 1.6, opacity: 0.75 },
+      markerEnd: { type: MarkerType.ArrowClosed, width: 12, height: 12, color: "#5a9ec4" },
+      labelStyle: { fill: "#7fb8d8", fontSize: 8, fontWeight: 600 },
+      labelBgStyle: { fill: "#0e1620", fillOpacity: 0.95 },
+      labelBgPadding: [5, 3],
+      labelBgBorderRadius: 4,
+    });
   });
+
   return { nodes, edges, hiddenConnections: Math.max(0, eligible.length - visible.length), visibleEvidence: evidence.length };
 }
 
@@ -256,10 +358,14 @@ function relationshipSummary(connections: Connection[]) {
 function LensNodeCard({ data, selected }: NodeProps<LensNode>) {
   const Icon = kindIcons[data.kind] ?? Network;
   return <article className={`lens-graph-node ${data.role} ${selected ? "selected" : ""}`}>
-    <Handle type="target" position={Position.Left} id="left-target" />
-    <Handle type="source" position={Position.Right} id="right-source" />
-    <Handle type="target" position={Position.Bottom} id="bottom-target" />
-    <Handle type="source" position={Position.Top} id="top-source" />
+    <Handle type="target" position={Position.Left} id="left-target" isConnectable={false} />
+    <Handle type="source" position={Position.Left} id="left-source" isConnectable={false} />
+    <Handle type="source" position={Position.Right} id="right-source" isConnectable={false} />
+    <Handle type="target" position={Position.Right} id="right-target" isConnectable={false} />
+    <Handle type="source" position={Position.Top} id="top-source" isConnectable={false} />
+    <Handle type="target" position={Position.Top} id="top-target" isConnectable={false} />
+    <Handle type="target" position={Position.Bottom} id="bottom-target" isConnectable={false} />
+    <Handle type="source" position={Position.Bottom} id="bottom-source" isConnectable={false} />
     <span className="graph-node-icon"><Icon size={data.role === "root" ? 19 : 16} /></span>
     <span className="graph-node-copy"><b>{data.name}</b><small>{data.detail}</small></span>
     <i className={`confidence-dot ${data.confidence}`} title={`${pretty(data.confidence)} evidence`} />
