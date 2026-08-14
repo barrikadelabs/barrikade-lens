@@ -53,6 +53,7 @@ export type SystemItem = {
   attributes: Record<string, unknown>;
   target_id?: string;
   target_name?: string;
+  target_freshness?: "fresh" | "stale" | "never" | "unknown";
   surface: string;
   system_type: SystemType;
   product_id?: string;
@@ -75,6 +76,28 @@ export type Evidence = {
   specificity: string;
   locator?: string;
   content_hash?: string;
+  title?: string;
+  summary?: string;
+  location?: string;
+  locator_kind?: "protected_path" | "network_listener" | "endpoint" | "repository_path" | "resource_reference" | "unavailable";
+  source_name?: string;
+  source_type?: string;
+  target_id?: string;
+  target_name?: string;
+  target_type?: string;
+  target_freshness?: "fresh" | "stale" | "never";
+  matched_facts?: Array<{ label: string; value: string }>;
+  subject?: { entity_id: string; entity_kind: string; name: string; confidence: Confidence };
+  related_entities?: Array<{
+    entity_id: string;
+    entity_kind: string;
+    name: string;
+    confidence: Confidence;
+    matched_facts?: Array<{ label: string; value: string }>;
+  }>;
+  why_it_matched?: string;
+  investigation_hint?: string;
+  integrity?: { locator_reference?: string; content_hash?: string };
   observed_at: string;
   observations: number;
 };
@@ -136,6 +159,8 @@ export type Entity = {
   last_seen_at: string;
   posture?: {
     target_id?: string;
+    target_name?: string;
+    target_freshness?: "fresh" | "stale" | "never" | "unknown";
     surface?: string;
     system_role?: string;
     system_type?: string;

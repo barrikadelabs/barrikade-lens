@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"os/user"
@@ -38,6 +39,13 @@ func Install(ctx context.Context, executable, configPath string) (Status, error)
 		}
 	}
 	executable, _ = filepath.Abs(executable)
+	if runtime.GOOS == "darwin" {
+		staged, err := stageExecutable(executable, configPath)
+		if err != nil {
+			return Status{}, fmt.Errorf("stage managed collector executable: %w", err)
+		}
+		executable = staged
+	}
 	switch runtime.GOOS {
 	case "darwin":
 		return installLaunchAgent(ctx, executable, configPath)
@@ -48,6 +56,38 @@ func Install(ctx context.Context, executable, configPath string) (Status, error)
 	default:
 		return Status{}, fmt.Errorf("service installation is unsupported on %s", runtime.GOOS)
 	}
+}
+
+func stageExecutable(source, configPath string) (string, error) {
+	directory := filepath.Join(filepath.Dir(configPath), "bin")
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return "", err
+	}
+	destination := filepath.Join(directory, serviceName)
+	temporary, err := os.CreateTemp(directory, serviceName+"-*")
+	if err != nil {
+		return "", err
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	input, err := os.Open(source)
+	if err != nil {
+		temporary.Close()
+		return "", err
+	}
+	_, copyErr := io.Copy(temporary, input)
+	closeInputErr := input.Close()
+	chmodErr := temporary.Chmod(0o755)
+	closeOutputErr := temporary.Close()
+	for _, operationErr := range []error{copyErr, closeInputErr, chmodErr, closeOutputErr} {
+		if operationErr != nil {
+			return "", operationErr
+		}
+	}
+	if err := os.Rename(temporaryPath, destination); err != nil {
+		return "", err
+	}
+	return destination, nil
 }
 
 func GetStatus(ctx context.Context) Status {

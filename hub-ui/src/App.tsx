@@ -2,12 +2,12 @@ import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react
 import {
   Activity, AlertCircle, ArrowRight, Bot, Boxes, BrainCircuit, CheckCircle2, ChevronDown,
   ChevronRight, CircleDot, Container, Copy, Database, Download, GitBranch, History,
-  LayoutDashboard, Link2, LogOut, Menu, Monitor, Network, PackageSearch, PlugZap, Radar,
+  FileSearch, Fingerprint, LayoutDashboard, Link2, LogOut, MapPin, Menu, Monitor, Network, PackageSearch, PlugZap, Radar,
   RefreshCw, Search, Server, SlidersHorizontal,
   TerminalSquare, UserRound, Workflow, X, type LucideIcon,
 } from "lucide-react";
 import {
-  API, authConfig, exchangeOIDC, type AuthConfig, type Change, type Connection, type Entity,
+  API, authConfig, exchangeOIDC, type AuthConfig, type Change, type Connection, type Entity, type Evidence,
   type EntityDetail, type Overview, type SystemDetail, type SystemItem, type Target,
 } from "./api";
 import { EvidenceGraphPage } from "./EvidenceGraph";
@@ -202,7 +202,7 @@ function OverviewPage({ api, revision, go }: { api: API; revision: number; go: (
 }
 
 function SystemsPage({ api, revision }: { api: API; revision: number }) {
-  const [filters, setFilters] = useState<Record<string, string>>({ sort: "last_seen" });
+  const [filters, setFilters] = useState<Record<string, string>>({ sort: "last_seen", freshness: "fresh" });
   const [cursor, setCursor] = useState("");
   const [items, setItems] = useState<SystemItem[]>([]);
   const [next, setNext] = useState("");
@@ -225,12 +225,13 @@ function SystemsPage({ api, revision }: { api: API; revision: number }) {
       <Select label="State" value={filters.state} onChange={(value) => update("state", value)} options={{ "": "Any state", running: "Running", deployed: "Deployed", defined: "Defined", configured: "Configured", installed: "Installed", residual: "Residual", cached: "Cached" }} />
       <Select label="Confidence" value={filters.confidence} onChange={(value) => update("confidence", value)} options={{ "": "Any confidence", confirmed: "Confirmed", likely: "Likely", possible: "Possible" }} />
       <Select label="Network" value={filters.network_scope} onChange={(value) => update("network_scope", value)} options={{ "": "Any scope", external: "External", network: "Network", loopback: "Loopback", none: "None", unknown: "Unknown" }} />
+      <Select label="Reporting" value={filters.freshness} onChange={(value) => update("freshness", value)} options={{ fresh: "Fresh targets", stale: "Stale targets", all: "Fresh and stale" }} />
     </FilterBar>
-    <section className="panel data-panel"><div className="table-summary"><span><b>{items.length}</b> systems</span></div>
+    <section className="panel data-panel"><div className="table-summary"><span><b>{items.length}</b> {filters.freshness === "stale" ? "stale" : filters.freshness === "all" ? "fresh and stale" : "fresh"} systems</span>{filters.freshness === "fresh" && <span>Older identities remain available through Reporting filters and Coverage diagnostics</span>}</div>
       <div className="system-table table-scroll"><div className="system-row table-head"><span>System</span><span>Type</span><span>State</span><span>Target / surface</span><span>Attribution</span><span>Evidence</span><span /></div>
         {items.map((item) => <button className="system-row" key={item.id} onClick={() => setSelected(item.id)}>
           <Identity kind={item.kind} name={item.name} detail={item.product_id ?? item.id} />
-          <TypePill value={item.system_type} /><StatePill state={item.state} /><span className="stacked"><b>{item.target_name ?? "Unresolved target"}</b><small>{pretty(item.surface)}</small></span>
+          <TypePill value={item.system_type} /><StatePill state={item.state} /><span className="stacked"><b>{item.target_name ?? "Unresolved target"}</b><small>{pretty(item.surface)}{item.target_freshness ? ` · ${pretty(item.target_freshness)}` : ""}</small></span>
           <span className={item.attributed ? "fact good" : "fact quiet"}>{item.attributed ? "Attributed" : "Unattributed"}</span><ConfidencePill value={item.confidence} /><ChevronRight size={15} />
         </button>)}
         {!loading && !items.length && <Empty icon={Bot} title="No systems match this view" detail="Supporting runtimes and cached artifacts are intentionally excluded from the executive systems view." />}
@@ -295,7 +296,7 @@ function ChangesPage({ api, revision }: { api: API; revision: number }) {
 }
 
 function InventoryPage({ api, revision }: { api: API; revision: number }) {
-  const [filters, setFilters] = useState<Record<string, string>>({ sort: "last_seen" });
+  const [filters, setFilters] = useState<Record<string, string>>({ sort: "last_seen", freshness: "fresh" });
   const [cursor, setCursor] = useState("");
   const remote = useRemote(() => api.entities({ ...filters, cursor }), [api, revision, filters, cursor]);
   const [items, setItems] = useState<Entity[]>([]);
@@ -307,10 +308,11 @@ function InventoryPage({ api, revision }: { api: API; revision: number }) {
     <Select label="Role" value={filters.system_role} onChange={(value) => update("system_role", value)} options={{ "": "Any graph role", system: "Root system", component: "Component", supporting: "Supporting runtime", artifact: "Artifact", target: "Discovery target" }} />
     <Select label="State" value={filters.state} onChange={(value) => update("state", value)} options={{ "": "Any state", running: "Running", deployed: "Deployed", defined: "Defined", configured: "Configured", installed: "Installed", residual: "Residual", cached: "Cached", observed: "Observed" }} />
     <Select label="Confidence" value={filters.confidence} onChange={(value) => update("confidence", value)} options={{ "": "Any confidence", confirmed: "Confirmed", likely: "Likely", possible: "Possible" }} />
+    <Select label="Reporting" value={filters.freshness} onChange={(value) => update("freshness", value)} options={{ fresh: "Fresh targets", stale: "Stale targets", all: "Fresh and stale" }} />
   </FilterBar>
-    <section className="panel data-panel"><div className="table-summary"><span><b>{items.length}</b> entities loaded</span><span>This technical view includes supporting and cached inventory</span></div>
-      <div className="inventory-table table-scroll"><div className="inventory-row table-head"><span>Entity</span><span>Graph role</span><span>State</span><span>Surface</span><span>Confidence</span><span>Last observed</span><span /></div>
-        {items.map((item) => <button className="inventory-row" key={item.id} onClick={() => setSelected(item.id)}><Identity kind={item.kind} name={item.name} detail={item.canonical_key ?? item.id} /><span className="kind-label">{pretty(item.posture?.system_role ?? item.kind)}</span><StatePill state={item.posture?.state ?? "observed"} /><span>{pretty(item.posture?.surface ?? "unknown")}</span><ConfidencePill value={item.confidence} /><span className="observed">{relative(item.last_seen_at)}</span><ChevronRight size={15} /></button>)}
+    <section className="panel data-panel"><div className="table-summary"><span><b>{items.length}</b> {filters.freshness === "stale" ? "stale" : filters.freshness === "all" ? "fresh and stale" : "fresh"} entities loaded</span><span>Supporting and cached inventory is included; older identities are available with the Reporting filter</span></div>
+      <div className="inventory-table table-scroll"><div className="inventory-row table-head"><span>Entity</span><span>Graph role</span><span>State</span><span>Target / surface</span><span>Confidence</span><span>Last observed</span><span /></div>
+        {items.map((item) => <button className="inventory-row" key={item.id} onClick={() => setSelected(item.id)}><Identity kind={item.kind} name={item.name} detail={item.canonical_key ?? item.id} /><span className="kind-label">{pretty(item.posture?.system_role ?? item.kind)}</span><StatePill state={item.posture?.state ?? "observed"} /><span className="stacked"><b>{item.posture?.target_name ?? "Shared inventory"}</b><small>{pretty(item.posture?.surface ?? "unknown")} · {pretty(item.posture?.target_freshness ?? "unknown")}</small></span><ConfidencePill value={item.confidence} /><span className="observed">{relative(item.last_seen_at)}</span><ChevronRight size={15} /></button>)}
       </div>
       {remote.loading && <InlineLoading />}{remote.error && <InlineError text={remote.error} />}{remote.data?.next_cursor && !remote.loading && <button className="load-more" onClick={() => setCursor(remote.data!.next_cursor!)}>Load more entities <ChevronDown size={15} /></button>}
     </section>
@@ -326,9 +328,9 @@ function SystemDrawer({ api, id, onClose }: { api: API; id: string; onClose: () 
 function SystemDetailView({ item }: { item: SystemDetail }) {
   const groups = groupConnections(item.connections);
   return <><div className="drawer-title"><Identity kind={item.kind} name={item.name} detail={item.product_id ?? item.id} /><div><TypePill value={item.system_type} /><StatePill state={item.state} /><ConfidencePill value={item.confidence} /></div></div>
-    <div className="fact-grid"><Fact label="Target" value={item.target_name ?? "Unresolved"} /><Fact label="Surface" value={pretty(item.surface)} /><Fact label="Network scope" value={pretty(item.network_scope)} /><Fact label="Attribution" value={item.attributed ? "Authoritative" : "Not established"} /><Fact label="First discovered" value={relative(item.first_seen_at)} /><Fact label="Last observed" value={relative(item.last_seen_at)} /></div>
+    <div className="fact-grid"><Fact label="Target" value={item.target_name ?? "Unresolved"} /><Fact label="Reporting" value={pretty(item.target_freshness ?? "unknown")} /><Fact label="Network scope" value={pretty(item.network_scope)} /><Fact label="Attribution" value={item.attributed ? "Authoritative" : "Not established"} /><Fact label="First discovered" value={relative(item.first_seen_at)} /><Fact label="Last observed" value={relative(item.last_seen_at)} /></div>
     <section className="drawer-section"><h3>Connected inventory <span>{item.connections.length}</span></h3>{Object.entries(groups).map(([group, values]) => <div className="connection-group" key={group}><p>{pretty(group)}</p>{values.map((connection) => <ConnectionRow item={connection} key={connection.relationship_id} />)}</div>)}</section>
-    <section className="drawer-section"><h3>Evidence <span>{item.evidence.length}</span></h3>{item.evidence.map((evidence) => <div className="evidence-row" key={`${evidence.source_id}:${evidence.id}`}><span><b>{evidence.detector_id}</b><small>{evidence.family} · {evidence.specificity}</small></span><code>{evidence.locator ?? "No locator"}</code><time>{relative(evidence.observed_at)}{evidence.observations > 1 ? ` · ${evidence.observations}×` : ""}</time></div>)}</section>
+    <EvidenceSection items={item.evidence} />
   </>;
 }
 
@@ -339,10 +341,34 @@ function EntityDrawer({ api, id, onClose }: { api: API; id: string; onClose: () 
 
 function EntityDetailView({ item }: { item: EntityDetail }) {
   return <><div className="drawer-title"><Identity kind={item.kind} name={item.name} detail={item.canonical_key ?? item.id} /><div><StatePill state={item.posture?.state ?? "observed"} /><ConfidencePill value={item.confidence} /></div></div>
-    <div className="fact-grid"><Fact label="Kind" value={pretty(item.kind)} /><Fact label="Graph role" value={pretty(item.posture?.system_role ?? "unknown")} /><Fact label="Surface" value={pretty(item.posture?.surface ?? "unknown")} /><Fact label="Network scope" value={pretty(item.posture?.network_scope ?? "unknown")} /><Fact label="First discovered" value={relative(item.first_seen_at)} /><Fact label="Last observed" value={relative(item.last_seen_at)} /></div>
-    <section className="drawer-section"><h3>Sanitized attributes</h3><pre>{JSON.stringify(item.attributes, null, 2)}</pre></section>
-    <section className="drawer-section"><h3>Evidence <span>{item.evidence?.length ?? 0}</span></h3>{item.evidence?.map((evidence) => <div className="evidence-row" key={`${evidence.source_id}:${evidence.id}`}><span><b>{evidence.detector_id}</b><small>{evidence.family} · {evidence.specificity}</small></span><code>{evidence.locator ?? "No locator"}</code><time>{relative(evidence.observed_at)}{evidence.observations > 1 ? ` · ${evidence.observations}×` : ""}</time></div>)}</section>
+    <div className="fact-grid"><Fact label="Kind" value={pretty(item.kind)} /><Fact label="Graph role" value={pretty(item.posture?.system_role ?? "unknown")} /><Fact label="Target" value={item.posture?.target_name ?? "Shared inventory"} /><Fact label="Reporting" value={pretty(item.posture?.target_freshness ?? "unknown")} /><Fact label="Surface" value={pretty(item.posture?.surface ?? "unknown")} /><Fact label="Network scope" value={pretty(item.posture?.network_scope ?? "unknown")} /><Fact label="First discovered" value={relative(item.first_seen_at)} /><Fact label="Last observed" value={relative(item.last_seen_at)} /></div>
+    <EvidenceSection items={item.evidence ?? []} />
+    <details className="technical-attributes"><summary>Technical attributes <ChevronDown size={13} /></summary><pre>{JSON.stringify(item.attributes, null, 2)}</pre></details>
   </>;
+}
+
+function EvidenceSection({ items }: { items: Evidence[] }) {
+  return <section className="drawer-section evidence-section"><div className="drawer-section-heading"><h3>Evidence <span>{items.length}</span></h3><small>Open a finding to see why Lens linked it and what to investigate.</small></div>
+    {items.length ? <div className="evidence-cards">{items.map((evidence) => <EvidenceCard item={evidence} key={`${evidence.source_id}:${evidence.id}`} />)}</div> : <Empty icon={FileSearch} title="No retained evidence" detail="This entity has no evidence observations in the current retention window." />}
+  </section>;
+}
+
+function EvidenceCard({ item }: { item: Evidence }) {
+  const title = item.title ?? `${pretty(item.family)} evidence`;
+  const summary = item.summary ?? `${pretty(item.method)} evidence was observed by ${pretty(item.detector_id)}.`;
+  const location = item.location ?? (item.locator?.startsWith("sha256:") || item.locator?.startsWith("path_hash:") ? "Protected endpoint location" : item.locator ?? "Location not retained");
+  return <details className="evidence-card"><summary>
+    <span className="evidence-card-icon"><FileSearch size={16} /></span>
+    <span className="evidence-card-copy"><b>{title}</b><p>{summary}</p><small><MapPin size={11} /> {location}<i />{item.target_name ?? item.source_name ?? pretty(item.source_type ?? "discovery source")}<i />{relative(item.observed_at)}</small></span>
+    <ConfidencePill value={item.specificity === "high" ? "confirmed" : item.specificity === "medium" ? "likely" : "possible"} /><ChevronDown className="evidence-chevron" size={15} />
+  </summary><div className="evidence-card-body">
+    {item.subject && <div className="evidence-subject"><span><FileSearch size={13} /> EXACT RESOURCE</span><div><b>{item.subject.name}</b><small>{pretty(item.subject.entity_kind)} · {pretty(item.subject.confidence)} evidence</small></div></div>}
+    {!!item.matched_facts?.length && <div className="evidence-facts"><span>DISCOVERED DETAILS</span><div>{item.matched_facts.map((fact) => <p key={fact.label}><small>{fact.label}</small><b>{fact.value}</b></p>)}</div></div>}
+    <div className="evidence-explanations"><article><span>WHY LENS CONNECTED THIS</span><p>{item.why_it_matched ?? `The ${pretty(item.detector_id)} detector recorded ${pretty(item.specificity)}-specificity evidence.`}</p></article><article><span>INVESTIGATE NEXT</span><p>{item.investigation_hint ?? `Review this ${pretty(item.family)} observation on ${item.target_name ?? "the reporting target"}.`}</p></article></div>
+    <div className="evidence-provenance"><Fact label="Target" value={item.target_name ?? "Unresolved"} /><Fact label="Target freshness" value={pretty(item.target_freshness ?? "unknown")} /><Fact label="Collector" value={item.source_name ?? item.source_id} /><Fact label="Detector" value={`${item.detector_id} v${item.detector_version}`} /><Fact label="Method" value={pretty(item.method)} /><Fact label="Observations" value={String(item.observations)} /></div>
+    {!!item.related_entities?.length && <div className="evidence-related"><span>ALSO SUPPORTED BY THIS OBSERVATION</span>{item.related_entities.map((entity) => <div key={entity.entity_id}><b>{entity.name}</b><small>{pretty(entity.entity_kind)} · {pretty(entity.confidence)}</small></div>)}</div>}
+    {!!item.integrity && <details className="evidence-integrity"><summary><Fingerprint size={13} /> Integrity references <ChevronDown size={12} /></summary><div>{item.integrity.locator_reference && <code><span>Locator reference</span>{item.integrity.locator_reference}</code>}{item.integrity.content_hash && <code><span>Content hash</span>{item.integrity.content_hash}</code>}</div><p>Hashes prove which sanitized artifact Lens observed. They are integrity metadata, not the finding itself.</p></details>}
+  </div></details>;
 }
 
 function CoverageBaseline({ api, coverage, onSaved }: { api: API; coverage: Overview["coverage"]; onSaved: () => void }) {

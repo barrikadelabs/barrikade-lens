@@ -424,14 +424,19 @@ func (m Model) evidence(width int) []string {
 	lines = append(lines, compactCounts(m.noColor, "Methods", methods, width)...)
 	lines = append(lines, compactCounts(m.noColor, "Families", families, width)...)
 
-	lines = append(lines, "", section(m.noColor, "Sanitized evidence samples"))
+	lines = append(lines, "", section(m.noColor, "Evidence findings"))
 	if len(m.snapshot.Evidence) == 0 {
 		lines = append(lines, "No evidence observations were recorded.")
 	} else {
+		subjects := evidenceSubjects(m.snapshot)
 		limit := min(10, len(m.snapshot.Evidence))
 		for _, item := range m.snapshot.Evidence[:limit] {
-			locator := nonEmpty(item.Locator, "sanitized locator unavailable")
-			lines = append(lines, wrap(fmt.Sprintf("• %s  ·  %s  ·  %s", item.DetectorID, pretty(item.Method), locator), width)...)
+			subject := strings.Join(subjects[item.ID], ", ")
+			if subject == "" {
+				subject = pretty(strings.TrimPrefix(item.DetectorID, "runtime."))
+			}
+			lines = append(lines, wrap(fmt.Sprintf("• %s  —  %s", tuiEvidenceTitle(item.Method, item.Family), subject), width)...)
+			lines = append(lines, mutedWrap(m.noColor, fmt.Sprintf("  %s  ·  %s  ·  %s", tuiEvidenceLocation(item.Locator), tuiEvidenceReason(item.Method, item.Family), tuiEvidenceNextStep(item.Method, item.Family, subject)), width)...)
 		}
 		if len(m.snapshot.Evidence) > limit {
 			lines = append(lines, mutedWrap(m.noColor, fmt.Sprintf("  %d more observations available in the JSON export", len(m.snapshot.Evidence)-limit), width)...)
@@ -452,6 +457,107 @@ func (m Model) evidence(width int) []string {
 	lines = append(lines, wrap("barrikade-lens scan --format json|ndjson|cyclonedx --output <file>", width)...)
 	lines = append(lines, mutedWrap(m.noColor, "Lens JSON is the canonical evidence graph; exports contain no credential values or config bodies.", width)...)
 	return lines
+}
+
+func evidenceSubjects(snapshot discovery.Snapshot) map[string][]string {
+	result := map[string][]string{}
+	names := map[string]string{}
+	for _, entity := range snapshot.Entities {
+		names[entity.ID] = entity.Name
+		for _, evidenceID := range entity.EvidenceRefs {
+			result[evidenceID] = appendUnique(result[evidenceID], entity.Name)
+		}
+	}
+	for _, relationship := range snapshot.Relationships {
+		subject := nonEmpty(names[relationship.From], shortID(relationship.From)) + " → " + nonEmpty(names[relationship.To], shortID(relationship.To))
+		for _, evidenceID := range relationship.EvidenceRefs {
+			result[evidenceID] = appendUnique(result[evidenceID], subject)
+		}
+	}
+	return result
+}
+
+func appendUnique(values []string, value string) []string {
+	if strings.TrimSpace(value) == "" {
+		return values
+	}
+	for _, current := range values {
+		if current == value {
+			return values
+		}
+	}
+	return append(values, value)
+}
+
+func tuiEvidenceTitle(method, family string) string {
+	if family == "skill" && method != "skill_descriptor" {
+		return "Unvalidated skill directory signal"
+	}
+	titles := map[string]string{
+		"application": "Application installation found", "package": "Package installation found",
+		"extension_manifest": "IDE extension manifest matched", "executable": "Executable available",
+		"process": "Process running at scan time", "listener": "Listening service observed",
+		"config_shape": "Configuration structure matched", "config_file": "Configuration file present",
+		"skill_descriptor": "SKILL.md descriptor validated", "descriptor": "Authoritative descriptor found",
+		"agent_descriptor": "Agent descriptor validated", "import": "Framework import found",
+	}
+	if title := titles[method]; title != "" {
+		return title
+	}
+	return pretty(family) + " evidence found"
+}
+
+func tuiEvidenceLocation(locator string) string {
+	value := strings.TrimSpace(locator)
+	lower := strings.ToLower(value)
+	if value == "" {
+		return "Location not retained"
+	}
+	if strings.HasPrefix(lower, "sha256:") || strings.HasPrefix(lower, "path_hash:") {
+		return "Protected endpoint location"
+	}
+	if strings.HasPrefix(lower, "tcp-listener:") {
+		return "TCP port " + strings.TrimPrefix(value, "tcp-listener:")
+	}
+	return value
+}
+
+func tuiEvidenceReason(method, family string) string {
+	reasons := map[string]string{
+		"config_shape": "known configuration fields matched", "config_file": "known configuration location exists",
+		"application": "product application path matched", "package": "recognized package matched",
+		"extension_manifest": "publisher and extension ID matched", "executable": "recognized executable found",
+		"process": "recognized live process found", "listener": "listener and process signal matched",
+		"skill_descriptor": "SKILL.md name matched its directory and required metadata was present", "agent_descriptor": "valid agent descriptor parsed",
+		"descriptor": "authoritative descriptor parsed",
+	}
+	if reason := reasons[method]; reason != "" {
+		return reason
+	}
+	if family == "skill" {
+		return "path existed under a configured skill root; no valid SKILL.md was associated"
+	}
+	return "known " + strings.ToLower(pretty(family)) + " signal matched"
+}
+
+func tuiEvidenceNextStep(method, family, subject string) string {
+	switch method {
+	case "process":
+		return "confirm the running process and responsible owner"
+	case "listener":
+		return "review its binding and owning process"
+	case "config_shape", "config_file":
+		return "review the local configuration and declared capabilities"
+	case "application", "package", "extension_manifest", "executable":
+		return "confirm the installation and who uses it"
+	case "descriptor", "skill_descriptor", "agent_descriptor":
+		return "review the descriptor, its instructions, capabilities, and owner"
+	default:
+		if family == "skill" {
+			return "confirm whether it contains a valid SKILL.md before treating it as a skill"
+		}
+		return "confirm whether " + subject + " is expected"
+	}
 }
 
 func (m Model) rootSystems() []systemSummary {

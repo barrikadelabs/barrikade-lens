@@ -38,9 +38,23 @@ func (s *Server) listEntities(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "invalid_cursor", err.Error())
 		return
 	}
-	query := `SELECT e.id,e.kind,e.canonical_key,e.name,e.attributes,e.confidence,e.provenance,e.current,e.stale,e.first_seen_at,e.last_seen_at,p.target_id,p.surface,p.system_role,p.system_type,p.discovery_state,p.network_scope,p.attributed,p.product_id,p.product_category FROM entities e LEFT JOIN entity_posture p ON p.organization_id=e.organization_id AND p.entity_id=e.id WHERE e.organization_id=$1`
+	query := `SELECT e.id,e.kind,e.canonical_key,e.name,e.attributes,e.confidence,e.provenance,e.current,e.stale,e.first_seen_at,e.last_seen_at,p.target_id,p.surface,p.system_role,p.system_type,p.discovery_state,p.network_scope,p.attributed,p.product_id,p.product_category,t.name,t.target_type,t.last_seen_at FROM entities e LEFT JOIN entity_posture p ON p.organization_id=e.organization_id AND p.entity_id=e.id LEFT JOIN discovery_targets t ON t.organization_id=p.organization_id AND t.id=p.target_id WHERE e.organization_id=$1`
 	args := []any{principal.OrganizationID}
 	index := 2
+	freshness := r.URL.Query().Get("freshness")
+	if freshness == "" {
+		freshness = "all"
+	}
+	switch freshness {
+	case "fresh":
+		query += ` AND ` + freshTargetSQL("p", "t")
+	case "stale":
+		query += ` AND p.target_id IS NOT NULL AND NOT ` + freshTargetSQL("p", "t")
+	case "all":
+	default:
+		writeError(w, 400, "invalid_filter", "Freshness must be fresh, stale, or all")
+		return
+	}
 	if !includeRemoved {
 		query += ` AND e.current=true`
 	}
@@ -99,17 +113,22 @@ func (s *Server) listEntities(w http.ResponseWriter, r *http.Request) {
 	var next pageCursor
 	for rows.Next() {
 		var id, entityKind, name, entityConfidence string
-		var canonical, targetID, surface, systemRole, systemType, state, network, productID, productCategory *string
+		var canonical, targetID, surface, systemRole, systemType, state, network, productID, productCategory, targetName, targetType *string
+		var targetLastSeen *time.Time
 		var attributes []byte
 		var provenance []string
 		var current, stale bool
 		var attributed *bool
 		var first, last time.Time
-		if err := rows.Scan(&id, &entityKind, &canonical, &name, &attributes, &entityConfidence, &provenance, &current, &stale, &first, &last, &targetID, &surface, &systemRole, &systemType, &state, &network, &attributed, &productID, &productCategory); err != nil {
+		if err := rows.Scan(&id, &entityKind, &canonical, &name, &attributes, &entityConfidence, &provenance, &current, &stale, &first, &last, &targetID, &surface, &systemRole, &systemType, &state, &network, &attributed, &productID, &productCategory, &targetName, &targetType, &targetLastSeen); err != nil {
 			writeError(w, 500, "database_error", "Could not read entities")
 			return
 		}
-		item := map[string]any{"id": id, "kind": entityKind, "canonical_key": canonical, "name": name, "attributes": jsonObject(attributes), "confidence": entityConfidence, "provenance": provenance, "current": current, "stale": stale, "first_seen_at": first, "last_seen_at": last, "posture": map[string]any{"target_id": targetID, "surface": surface, "system_role": systemRole, "system_type": systemType, "state": state, "network_scope": network, "attributed": attributed, "product_id": productID, "product_category": productCategory}}
+		targetFreshness := "unknown"
+		if targetType != nil {
+			targetFreshness = freshnessState(*targetType, targetLastSeen, time.Now().UTC())
+		}
+		item := map[string]any{"id": id, "kind": entityKind, "canonical_key": canonical, "name": name, "attributes": jsonObject(attributes), "confidence": entityConfidence, "provenance": provenance, "current": current, "stale": stale, "first_seen_at": first, "last_seen_at": last, "posture": map[string]any{"target_id": targetID, "target_name": targetName, "target_freshness": targetFreshness, "surface": surface, "system_role": systemRole, "system_type": systemType, "state": state, "network_scope": network, "attributed": attributed, "product_id": productID, "product_category": productCategory}}
 		items = append(items, item)
 		next = pageCursor{Sort: sortBy, ID: id, Value: last.Format(time.RFC3339Nano)}
 		if sortBy == "name" {
@@ -139,30 +158,20 @@ func (s *Server) getEntity(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "database_error", "Could not read entity")
 		return
 	}
-	var targetID, surface, systemRole, systemType, state, network, productID, productCategory *string
+	var targetID, surface, systemRole, systemType, state, network, productID, productCategory, targetName, targetType *string
+	var targetLastSeen *time.Time
 	var attributed *bool
-	postureErr := s.config.Pool.QueryRow(r.Context(), `SELECT target_id,surface,system_role,system_type,discovery_state,network_scope,attributed,product_id,product_category FROM entity_posture WHERE organization_id=$1 AND entity_id=$2`, principal.OrganizationID, r.PathValue("id")).Scan(&targetID, &surface, &systemRole, &systemType, &state, &network, &attributed, &productID, &productCategory)
+	postureErr := s.config.Pool.QueryRow(r.Context(), `SELECT p.target_id,p.surface,p.system_role,p.system_type,p.discovery_state,p.network_scope,p.attributed,p.product_id,p.product_category,t.name,t.target_type,t.last_seen_at FROM entity_posture p LEFT JOIN discovery_targets t ON t.organization_id=p.organization_id AND t.id=p.target_id WHERE p.organization_id=$1 AND p.entity_id=$2`, principal.OrganizationID, r.PathValue("id")).Scan(&targetID, &surface, &systemRole, &systemType, &state, &network, &attributed, &productID, &productCategory, &targetName, &targetType, &targetLastSeen)
 	if postureErr == nil {
-		item["posture"] = map[string]any{"target_id": targetID, "surface": surface, "system_role": systemRole, "system_type": systemType, "state": state, "network_scope": network, "attributed": attributed, "product_id": productID, "product_category": productCategory}
-	}
-	evidenceRows, err := s.config.Pool.Query(r.Context(), `SELECT evidence_id,source_id,detector_id,detector_version,method,family,specificity,locator,content_hash,max(observed_at),count(*)
-		FROM evidence_observations WHERE organization_id=$1 AND $2=ANY(entity_ids)
-		GROUP BY evidence_id,source_id,detector_id,detector_version,method,family,specificity,locator,content_hash
-		ORDER BY max(observed_at) DESC LIMIT 500`, principal.OrganizationID, r.PathValue("id"))
-	if err == nil {
-		defer evidenceRows.Close()
-		evidence := []map[string]any{}
-		for evidenceRows.Next() {
-			var id, source, detector, version, method, family, specificity string
-			var locator, hash *string
-			var observed time.Time
-			var observations int64
-			if evidenceRows.Scan(&id, &source, &detector, &version, &method, &family, &specificity, &locator, &hash, &observed, &observations) == nil {
-				evidence = append(evidence, map[string]any{"id": id, "source_id": source, "detector_id": detector, "detector_version": version, "method": method, "family": family, "specificity": specificity, "locator": locator, "content_hash": hash, "observed_at": observed, "observations": observations})
-			}
+		targetFreshness := "unknown"
+		if targetType != nil {
+			targetFreshness = freshnessState(*targetType, targetLastSeen, time.Now().UTC())
 		}
-		item["evidence"] = evidence
+		item["posture"] = map[string]any{"target_id": targetID, "target_name": targetName, "target_freshness": targetFreshness, "surface": surface, "system_role": systemRole, "system_type": systemType, "state": state, "network_scope": network, "attributed": attributed, "product_id": productID, "product_category": productCategory}
 	}
+	attributes, _ := item["attributes"].(map[string]any)
+	name, _ := item["name"].(string)
+	item["evidence"] = s.evidenceForEntity(r.Context(), principal.OrganizationID, r.PathValue("id"), name, attributes, 500)
 	writeJSON(w, 200, item)
 }
 

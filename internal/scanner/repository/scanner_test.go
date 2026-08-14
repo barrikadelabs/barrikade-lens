@@ -255,6 +255,9 @@ func TestRepositorySkillDescriptorUsesOpenFormat(t *testing.T) {
 	}
 	for _, entity := range snapshot.Entities {
 		if entity.Kind == discovery.KindSkill && entity.Name == "review" && entity.Confidence == discovery.ConfidenceConfirmed {
+			if entity.Attributes["descriptor_valid"] != true || entity.Attributes["descriptor_format"] != "agent_skills" || entity.Attributes["descriptor_relative"] != ".agents/skills/review/SKILL.md" || entity.Attributes["skill_scope"] != "repository" || entity.Attributes["declared_purpose"] != "Review code" {
+				t.Fatalf("repository skill omitted safe descriptor facts: %#v", entity)
+			}
 			data, _ := json.Marshal(snapshot)
 			if strings.Contains(string(data), "private instructions") {
 				t.Fatal("skill body leaked into repository snapshot")

@@ -27,7 +27,7 @@ func TestScanFindsRuntimeMCPModelsAndSkillsWithoutLeakingValues(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(config), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(configDir, "skills", "reviewer", "SKILL.md"), []byte("---\nname: reviewer\ndescription: Review changes\n---\nprivate instructions"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(configDir, "skills", "reviewer", "SKILL.md"), []byte("---\nname: reviewer\ndescription: Review changes\nallowed-tools: [Read, Grep]\n---\nprivate instructions"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	pack := detector.Pack{SchemaVersion: "1", ID: "test", Version: "1", Runtimes: []detector.RuntimeSignature{{
@@ -49,6 +49,14 @@ func TestScanFindsRuntimeMCPModelsAndSkillsWithoutLeakingValues(t *testing.T) {
 	for kind, count := range map[discovery.EntityKind]int{discovery.KindRuntime: 1, discovery.KindMCPServer: 1, discovery.KindModel: 2, discovery.KindModelServer: 1, discovery.KindSkill: 1} {
 		if kinds[kind] != count {
 			t.Errorf("expected %d %s entities, got %d", count, kind, kinds[kind])
+		}
+	}
+	for _, entity := range snapshot.Entities {
+		if entity.Kind != discovery.KindSkill {
+			continue
+		}
+		if entity.Name != "reviewer" || entity.Attributes["descriptor_valid"] != true || entity.Attributes["descriptor_format"] != "agent_skills" || entity.Attributes["descriptor_relative"] != "reviewer" || entity.Attributes["provider_product_id"] != "example" || entity.Attributes["declared_purpose"] != "Review changes" || entity.Attributes["description_present"] != true {
+			t.Fatalf("skill did not retain exact privacy-safe descriptor facts: %#v", entity)
 		}
 	}
 	data, err := json.Marshal(snapshot)
