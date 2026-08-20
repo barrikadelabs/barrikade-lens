@@ -17,3 +17,5 @@ The Hub recomputes organization-level entities from all current source observati
 Catalog enrichment is a fail-open Hub worker. Providers implement refresh, match, and lazy fetch. Exact and high-confidence host/provider matches link automatically; fuzzy candidates remain suggestions. Unavailability never blocks discovery ingestion or queries.
 
 Lens Hub is an interoperable producer, not a control plane. Its APIs and HMAC webhooks are designed to feed registration or governance systems without importing those responsibilities into Lens.
+
+For the Registry pilot, the macOS endpoint collector may emit the separate experimental `runtime-identity-observation-v0.1` evidence envelope for a running Codex process. It distinguishes an installed runtime from a process instance and contains PID/start-time lineage, UID, executable digests and macOS signing facts. The envelope and its Snapshot 1.1 projection are explicitly non-authoritative: Registry Runtime must independently re-observe the process before it can bind a session, and Lens never admits, attests, or authorizes it.

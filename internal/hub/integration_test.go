@@ -2,6 +2,7 @@ package hub
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,6 +16,66 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+func TestRegistryServiceAccountIsReadOnlyAndRevocable(t *testing.T) {
+	ctx, pool := integrationPool(t)
+	org := "registry-service-" + uuid.NewString()
+	if _, err := pool.Exec(ctx, `INSERT INTO organizations(id,name) VALUES($1,'Registry integration test')`, org); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM organizations WHERE id=$1`, org) })
+
+	server, err := NewServer(ctx, Config{
+		Pool:                  pool,
+		JWTSecret:             []byte("0123456789012345678901234567890123456789"),
+		DevAdminToken:         "registry-admin",
+		DefaultOrganizationID: org,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/v1/admin/service-accounts", strings.NewReader(`{"name":"registry-reconciler","scopes":["inventory:read"]}`))
+	request.Header.Set("Authorization", "Bearer registry-admin")
+	request.Header.Set("Content-Type", "application/json")
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("create service account returned %d: %s", response.Code, response.Body.String())
+	}
+	var created struct {
+		ID    string `json:"id"`
+		Token string `json:"token"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.ID == "" || created.Token == "" {
+		t.Fatalf("service account response omitted one-time credentials: %s", response.Body.String())
+	}
+
+	call := func(method, path, token, body string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(method, path, strings.NewReader(body))
+		request.Header.Set("Authorization", "Bearer "+token)
+		if body != "" {
+			request.Header.Set("Content-Type", "application/json")
+		}
+		response := httptest.NewRecorder()
+		server.Handler().ServeHTTP(response, request)
+		return response
+	}
+	if got := call(http.MethodGet, "/v1/exports?format=lens", created.Token, ""); got.Code != http.StatusOK {
+		t.Fatalf("service account could not read inventory: %d %s", got.Code, got.Body.String())
+	}
+	if got := call(http.MethodPost, "/v1/discovery/snapshots", created.Token, `{}`); got.Code != http.StatusForbidden {
+		t.Fatalf("read-only service account wrote discovery data: %d %s", got.Code, got.Body.String())
+	}
+	if got := call(http.MethodDelete, "/v1/admin/service-accounts/"+created.ID, "registry-admin", ""); got.Code != http.StatusNoContent {
+		t.Fatalf("revoke service account returned %d: %s", got.Code, got.Body.String())
+	}
+	if got := call(http.MethodGet, "/v1/exports?format=lens", created.Token, ""); got.Code != http.StatusUnauthorized {
+		t.Fatalf("revoked service account remained usable: %d %s", got.Code, got.Body.String())
+	}
+}
 
 func integrationPool(t *testing.T) (context.Context, *pgxpool.Pool) {
 	t.Helper()

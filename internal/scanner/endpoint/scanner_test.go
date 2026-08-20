@@ -110,6 +110,61 @@ func TestExecutablePresenceCountsAsInstalledWithoutRunning(t *testing.T) {
 	t.Fatal("installed executable was not reported factually")
 }
 
+func TestRuntimeIdentityObservationIsASeparateNonAuthoritativeProcessEntity(t *testing.T) {
+	observedAt := "2026-08-17T12:00:00Z"
+	digest := "sha256:" + strings.Repeat("a", 64)
+	observation := discovery.RuntimeIdentityObservation{
+		SchemaVersion:        discovery.RuntimeIdentityObservationVersion,
+		ObservationID:        "urn:lens:runtime-observation",
+		TargetID:             "endpoint",
+		ProductID:            "codex",
+		Platform:             "darwin",
+		ObservedAt:           observedAt,
+		PID:                  123,
+		StartTime:            observedAt,
+		ParentPID:            12,
+		Ancestry:             []discovery.ProcessAncestor{{PID: 123, StartTime: observedAt, ExecutablePathDigest: digest}},
+		EffectiveUID:         501,
+		Version:              "1.2.3",
+		ExecutablePathDigest: digest,
+		ExecutableSHA256:     digest,
+		MacOSSigning:         discovery.MacOSSigningFacts{SignatureVerified: true, HardenedRuntime: true, PublisherTeamID: "TEAM", SigningMetadataEvidenceDigest: digest},
+		Evidence: []discovery.RuntimeIdentityFact{
+			{Fact: "process", Method: "ps", ObservedAt: observedAt},
+			{Fact: "ancestry", Method: "ps", ObservedAt: observedAt},
+			{Fact: "executable", Method: "sha256", ObservedAt: observedAt},
+			{Fact: "macos_signing", Method: "codesign", ObservedAt: observedAt},
+		},
+	}
+	pack := detector.Pack{SchemaVersion: "2", ID: "test", Version: "1", Runtimes: []detector.RuntimeSignature{{ID: "codex", Name: "OpenAI Codex", Category: "agent_tool", Processes: []string{"codex"}}}}
+	snapshot, err := Scan(context.Background(), Options{OrganizationID: "org", SourceID: "endpoint", TargetID: "endpoint", HomeDir: t.TempDir(), Hostname: "fixture", Username: "alice", Platform: "darwin", Pack: pack, ProcessNames: map[string]bool{"codex": true}, RuntimeIdentityObservations: []discovery.RuntimeIdentityObservation{observation}, DisableSystemInspection: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var installation, instance *discovery.Entity
+	for index := range snapshot.Entities {
+		entity := &snapshot.Entities[index]
+		if entity.Kind != discovery.KindRuntime {
+			continue
+		}
+		if entity.Attributes["entity_role"] == "runtime_instance" {
+			instance = entity
+		} else if entity.Attributes["product_id"] == "codex" {
+			installation = entity
+		}
+	}
+	if installation == nil || instance == nil || installation.ID == instance.ID {
+		t.Fatalf("installation and running process were not distinguished: %#v", snapshot.Entities)
+	}
+	if instance.Attributes["authority"] != "non_authoritative_discovery_evidence" || instance.Confidence == discovery.ConfidenceConfirmed {
+		t.Fatalf("runtime observation overstated authority: %#v", instance)
+	}
+	encoded, _ := json.Marshal(snapshot)
+	if strings.Contains(string(encoded), "/Applications/") {
+		t.Fatal("runtime observation leaked an executable path")
+	}
+}
+
 func TestKnownListenerReportsFactualBindingWithoutProbing(t *testing.T) {
 	pack := detector.Pack{SchemaVersion: "1", ID: "test", Version: "1", Listeners: []detector.Listener{{ID: "fixture-mcp", Name: "Fixture MCP", Kind: "mcp_server", Port: 4444, Processes: []string{"fixture-server"}}}}
 	snapshot, err := Scan(context.Background(), Options{OrganizationID: "org", SourceID: "endpoint", HomeDir: t.TempDir(), Hostname: "fixture", Pack: pack, ProcessNames: map[string]bool{"fixture-server": true}, ListeningPorts: map[int]bool{4444: true}, ListeningBindings: map[int]string{4444: "all_interfaces"}, DisableSystemInspection: true})

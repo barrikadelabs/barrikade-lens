@@ -60,6 +60,10 @@ paths:
     get: {operationId: getCoverage, responses: {'200': {description: Source coverage and freshness}}}
   /v1/exports:
     get: {operationId: exportInventory, parameters: [{name: format, in: query, schema: {enum: [lens, ndjson, cyclonedx]}}], responses: {'200': {description: Lens JSON, JSONL, or CycloneDX 1.7 export}}}
+  /v1/admin/service-accounts:
+    post: {operationId: createServiceAccount, description: Creates a one-time-displayed, hash-at-rest integration credential. Registry integrations are restricted to inventory:read., responses: {'201': {description: Service account and one-time token}, '403': {description: Administrator access required}}}
+  /v1/admin/service-accounts/{id}:
+    delete: {operationId: revokeServiceAccount, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'204': {description: Service account revoked}, '404': {description: Service account not found}}}
   /v1/webhooks:
     post: {operationId: createWebhook, requestBody: {required: true, content: {application/json: {schema: {type: object, additionalProperties: false, required: [url], properties: {url: {type: string, format: uri, pattern: '^https://'}}}}}}, responses: {'201': {description: Webhook and one-time HMAC signing secret}}}
   /v1/connectors/github/webhook:

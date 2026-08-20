@@ -107,6 +107,8 @@ func (s *Server) routes() {
 	}
 	authenticated := http.NewServeMux()
 	authenticated.HandleFunc("POST /v1/admin/enrollment-codes", s.createEnrollmentCode)
+	authenticated.HandleFunc("POST /v1/admin/service-accounts", s.createServiceAccount)
+	authenticated.HandleFunc("DELETE /v1/admin/service-accounts/{id}", s.revokeServiceAccount)
 	authenticated.HandleFunc("DELETE /v1/admin/sources/{id}", s.revokeSource)
 	authenticated.HandleFunc("POST /v1/discovery/snapshots", s.submitSnapshot)
 	authenticated.HandleFunc("GET /v1/discovery/jobs/{id}", s.getJob)
@@ -127,6 +129,68 @@ func (s *Server) routes() {
 	if s.config.UIDir != "" {
 		s.mux.Handle("/", http.FileServer(http.Dir(s.config.UIDir)))
 	}
+}
+
+func (s *Server) createServiceAccount(w http.ResponseWriter, r *http.Request) {
+	principal, err := requireScope(r, "admin:service_accounts")
+	if err != nil || !principal.Admin {
+		writeError(w, http.StatusForbidden, "forbidden", "Administrator access is required")
+		return
+	}
+	var request struct {
+		Name   string   `json:"name"`
+		Scopes []string `json:"scopes"`
+	}
+	if err := decodeJSON(w, r, &request, 64<<10); err != nil {
+		return
+	}
+	request.Name = strings.TrimSpace(request.Name)
+	if request.Name == "" || len(request.Name) > 128 {
+		writeError(w, http.StatusBadRequest, "invalid_name", "Service account name is required and must be at most 128 characters")
+		return
+	}
+	if len(request.Scopes) == 0 {
+		request.Scopes = []string{"inventory:read"}
+	}
+	if len(request.Scopes) != 1 || request.Scopes[0] != "inventory:read" {
+		writeError(w, http.StatusBadRequest, "invalid_scope", "Registry integration service accounts may only receive inventory:read")
+		return
+	}
+	raw, err := randomToken(32)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal_error", "Could not create the service account")
+		return
+	}
+	id := uuid.New()
+	_, err = s.config.Pool.Exec(r.Context(), `INSERT INTO service_accounts(id,organization_id,name,token_hash,scopes) VALUES($1,$2,$3,$4,$5)`, id, principal.OrganizationID, request.Name, tokenHash(raw), request.Scopes)
+	if err != nil {
+		writeError(w, http.StatusConflict, "service_account_conflict", "A service account with this name already exists")
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{"id": id.String(), "name": request.Name, "scopes": request.Scopes, "token": raw, "token_displayed_once": true})
+}
+
+func (s *Server) revokeServiceAccount(w http.ResponseWriter, r *http.Request) {
+	principal, err := requireScope(r, "admin:service_accounts")
+	if err != nil || !principal.Admin {
+		writeError(w, http.StatusForbidden, "forbidden", "Administrator access is required")
+		return
+	}
+	id, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_id", "Service account ID is invalid")
+		return
+	}
+	result, err := s.config.Pool.Exec(r.Context(), `UPDATE service_accounts SET revoked_at=now() WHERE organization_id=$1 AND id=$2 AND revoked_at IS NULL`, principal.OrganizationID, id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "database_error", "Could not revoke the service account")
+		return
+	}
+	if result.RowsAffected() == 0 {
+		writeError(w, http.StatusNotFound, "not_found", "Active service account not found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) createEnrollmentCode(w http.ResponseWriter, r *http.Request) {

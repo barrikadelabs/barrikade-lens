@@ -31,20 +31,21 @@ const (
 )
 
 type Options struct {
-	OrganizationID          string
-	SourceID                string
-	TargetID                string
-	HomeDir                 string
-	Hostname                string
-	Username                string
-	Platform                string
-	Pack                    detector.Pack
-	ProcessNames            map[string]bool
-	ExecutableNames         map[string]bool
-	ListeningPorts          map[int]bool
-	ListeningBindings       map[int]string
-	ListeningProcesses      map[int]map[string]bool
-	DisableSystemInspection bool
+	OrganizationID              string
+	SourceID                    string
+	TargetID                    string
+	HomeDir                     string
+	Hostname                    string
+	Username                    string
+	Platform                    string
+	Pack                        detector.Pack
+	ProcessNames                map[string]bool
+	ExecutableNames             map[string]bool
+	ListeningPorts              map[int]bool
+	ListeningBindings           map[int]string
+	ListeningProcesses          map[int]map[string]bool
+	RuntimeIdentityObservations []discovery.RuntimeIdentityObservation
+	DisableSystemInspection     bool
 }
 
 func Scan(ctx context.Context, options Options) (discovery.Snapshot, error) {
@@ -100,6 +101,9 @@ func Scan(ctx context.Context, options Options) (discovery.Snapshot, error) {
 			for port := range options.ListeningBindings {
 				options.ListeningPorts[port] = true
 			}
+		}
+		if options.Platform == "darwin" && options.RuntimeIdentityObservations == nil {
+			options.RuntimeIdentityObservations = collectRuntimeIdentityObservations(ctx, options)
 		}
 	}
 
@@ -493,6 +497,34 @@ func scanRuntime(b *builder.Builder, options Options, signature detector.Runtime
 			})
 			addRuntime(map[string]any{"installed": true, "installation_methods": []string{"executable_path"}}, ref)
 			break
+		}
+	}
+	for _, observation := range options.RuntimeIdentityObservations {
+		if observation.ProductID != signature.ID || observation.TargetID != options.TargetID || observation.Validate() != nil {
+			continue
+		}
+		encoded, _ := json.Marshal(observation)
+		ref := b.AddEvidence(builder.Observation{
+			DetectorID: signature.ID + ".runtime-identity", DetectorVersion: discovery.RuntimeIdentityObservationVersion,
+			Method: "process_identity_observation", Family: "runtime_identity", Specificity: "high",
+			Locator:     discovery.HashLocator(options.OrganizationID, fmt.Sprintf("%s:%d:%s", options.TargetID, observation.PID, observation.StartTime)),
+			ContentHash: discovery.ContentHash(encoded),
+		})
+		installationID := addRuntime(map[string]any{"running_at_scan": true}, ref)
+		attributes := map[string]any{
+			"entity_role": "runtime_instance", "experimental_contract_version": observation.SchemaVersion,
+			"product_id": observation.ProductID, "source_surface": "endpoint", "running_at_scan": true,
+			"pid": observation.PID, "start_time": observation.StartTime, "parent_pid": observation.ParentPID,
+			"effective_uid": observation.EffectiveUID, "version": observation.Version,
+			"executable_path_digest": observation.ExecutablePathDigest, "executable_sha256": observation.ExecutableSHA256,
+			"ancestry": observation.Ancestry, "macos_signing": observation.MacOSSigning, "observation_id": observation.ObservationID,
+			"authority": "non_authoritative_discovery_evidence",
+		}
+		instanceID := b.AddEntity(discovery.KindRuntime, "target:"+options.TargetID+":runtime-instance:"+observation.ObservationID, signature.Name+" running process", attributes, ref)
+		b.AddRelationship(discovery.RelationshipDeployedAs, installationID, instanceID, map[string]any{"experimental": true, "authoritative": false}, ref)
+		b.AddRelationship(discovery.RelationshipRunsOn, instanceID, endpointID, nil, ref)
+		if userID != "" {
+			b.AddRelationship(discovery.RelationshipOwnedBy, instanceID, userID, map[string]any{"scope": "process_user", "attribution": "observed_uid", "authoritative": false}, ref)
 		}
 	}
 	processMatched := false

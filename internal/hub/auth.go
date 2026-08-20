@@ -63,7 +63,12 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 			return a.JWTSecret, nil
 		}, jwt.WithIssuer(a.Issuer), jwt.WithExpirationRequired())
 		if err != nil || !token.Valid || claims.OrganizationID == "" || (claims.TokenType != "human" && claims.SourceID == "") {
-			writeError(writer, http.StatusUnauthorized, "invalid_token", "The collector token is invalid or expired")
+			principal, serviceErr := a.authenticateServiceAccount(request.Context(), raw)
+			if serviceErr != nil {
+				writeError(writer, http.StatusUnauthorized, "invalid_token", "The service token is invalid or expired")
+				return
+			}
+			next.ServeHTTP(writer, request.WithContext(context.WithValue(request.Context(), principalKey{}, principal)))
 			return
 		}
 		scopes := map[string]bool{}
@@ -104,11 +109,28 @@ func (a *Authenticator) issueHumanToken(orgID, subject string, admin bool) (stri
 	expires := now.Add(time.Hour)
 	scopes := []string{"inventory:read"}
 	if admin {
-		scopes = append(scopes, "admin:enrollment", "admin:webhooks", "admin:coverage")
+		scopes = append(scopes, "admin:enrollment", "admin:webhooks", "admin:coverage", "admin:service_accounts")
 	}
 	claims := collectorClaims{OrganizationID: orgID, Scopes: scopes, TokenType: "human", Admin: admin, RegisteredClaims: jwt.RegisteredClaims{Issuer: a.Issuer, Subject: subject, IssuedAt: jwt.NewNumericDate(now), ExpiresAt: jwt.NewNumericDate(expires), ID: uuid.NewString()}}
 	raw, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(a.JWTSecret)
 	return raw, expires, err
+}
+
+func (a *Authenticator) authenticateServiceAccount(ctx context.Context, raw string) (Principal, error) {
+	if a.Pool == nil {
+		return Principal{}, fmt.Errorf("service accounts are unavailable")
+	}
+	var id, organizationID, name string
+	var scopes []string
+	err := a.Pool.QueryRow(ctx, `UPDATE service_accounts SET last_used_at=now() WHERE token_hash=$1 AND revoked_at IS NULL RETURNING id::text,organization_id,name,scopes`, tokenHash(raw)).Scan(&id, &organizationID, &name, &scopes)
+	if err != nil {
+		return Principal{}, err
+	}
+	granted := map[string]bool{}
+	for _, scope := range scopes {
+		granted[scope] = true
+	}
+	return Principal{OrganizationID: organizationID, Subject: "service-account:" + id + ":" + name, Scopes: granted}, nil
 }
 
 func (a *Authenticator) issueRefreshToken(ctx context.Context, orgID, sourceID string, scopes []string) (string, error) {
