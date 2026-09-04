@@ -269,8 +269,8 @@ function CoveragePage({ api, revision }: { api: API; revision: number }) {
   };
   const enrollmentHub = enrollment?.hub_url || location.origin;
   const enrollmentCommand = enrollmentPlatform === "macos"
-    ? `sudo -E "$(command -v npx)" --yes barrikade-lens enroll ${enrollment?.code ?? "CODE"} --hub '${enrollmentHub}' --config '/Library/Application Support/Barrikade/Lens/config.json' --install`
-    : `npx --yes barrikade-lens enroll ${enrollment?.code ?? "CODE"} --hub '${enrollmentHub}' --install`;
+    ? `sudo -E "$(command -v npx)" --yes --no-audit --no-fund barrikade-lens enroll ${enrollment?.code ?? "CODE"} --hub '${enrollmentHub}' --config '/Library/Application Support/Barrikade/Lens/config.json' --install`
+    : `npx --yes --no-audit --no-fund barrikade-lens enroll ${enrollment?.code ?? "CODE"} --hub '${enrollmentHub}' --install`;
   const copyEnrollmentCommand = () => navigator.clipboard.writeText(enrollmentCommand).then(() => {
     setCommandCopied(true);
     window.setTimeout(() => setCommandCopied(false), 1800);
