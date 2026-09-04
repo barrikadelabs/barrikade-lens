@@ -58,7 +58,7 @@ For the Barrikade pilot, the compose stack opens the `org_local` tenant used by 
 From the Hub’s Coverage page, generate the one-device install command and run it on the endpoint:
 
 ```sh
-npx --yes barrikade-lens enroll ABCDE-FGHIJ --hub https://lens.example.com --install
+npx --yes barrikade-lens@latest enroll ABCDE-FGHIJ --hub https://lens.example.com --install
 ```
 
 The command exchanges the single-use ten-minute code, stores rotating collector credentials privately, installs a stable background collector, and starts reporting. Run it with administrator privileges for system-wide macOS or Windows coverage. Node.js 18 or newer is required for the npm launcher; managed fleets can continue to pre-position the native binary.

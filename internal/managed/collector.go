@@ -35,6 +35,29 @@ type Runner struct {
 	Client     *hubclient.Client
 }
 
+func (r Runner) RunOnce(ctx context.Context) error {
+	cfg, err := lensconfig.Load(r.ConfigPath)
+	if err != nil {
+		return fmt.Errorf("load managed collector configuration: %w", err)
+	}
+	if cfg.ConfigVersion != 2 || cfg.TargetID == "" {
+		return fmt.Errorf("managed collector configuration is from an older Lens version; re-enroll this endpoint")
+	}
+	pack, err := detector.Builtin()
+	if err != nil {
+		return err
+	}
+	if r.Client == nil {
+		r.Client = hubclient.New(r.Version)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	_, err = collectAndUpload(ctx, r.ConfigPath, &cfg, pack, managedProfiles(home), r.Version, r.Client, true, "")
+	return err
+}
+
 func (r Runner) Run(ctx context.Context) error {
 	cfg, err := lensconfig.Load(r.ConfigPath)
 	if err != nil {
@@ -56,42 +79,9 @@ func (r Runner) Run(ctx context.Context) error {
 	}
 	lastDigest := ""
 	scanAndUpload := func(full bool) error {
-		cfg.Sequence++
-		if err := lensconfig.Save(r.ConfigPath, cfg); err != nil {
-			return err
-		}
-		profiles := managedProfiles(home)
-		snapshot, scanErr := scanProfiles(ctx, cfg.OrganizationID, cfg.SourceID, cfg.TargetID, pack, profiles, r.Version)
-		if scanErr != nil {
-			return scanErr
-		}
-		snapshot.Sequence, snapshot.Full = cfg.Sequence, full
-		digest, err := snapshot.Digest()
-		if err != nil {
-			return err
-		}
-		if digest == lastDigest && !full {
-			return nil
-		}
-		var uploadErr error
-		for attempt := 0; attempt < 5; attempt++ {
-			if _, uploadErr = r.Client.Upload(ctx, r.ConfigPath, &cfg, snapshot); uploadErr == nil {
-				break
-			}
-			delay := time.Duration(1<<attempt) * time.Second
-			timer := time.NewTimer(delay)
-			select {
-			case <-ctx.Done():
-				timer.Stop()
-				return ctx.Err()
-			case <-timer.C:
-			}
-		}
-		if uploadErr != nil {
-			return fmt.Errorf("upload discovery snapshot after retries: %w", uploadErr)
-		}
-		lastDigest = digest
-		return nil
+		var collectErr error
+		lastDigest, collectErr = collectAndUpload(ctx, r.ConfigPath, &cfg, pack, managedProfiles(home), r.Version, r.Client, full, lastDigest)
+		return collectErr
 	}
 	if err := scanAndUpload(true); err != nil {
 		return err
@@ -176,6 +166,40 @@ func (r Runner) Run(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+func collectAndUpload(ctx context.Context, configPath string, cfg *lensconfig.Config, pack detector.Pack, profiles []profile, version string, client *hubclient.Client, full bool, lastDigest string) (string, error) {
+	cfg.Sequence++
+	if err := lensconfig.Save(configPath, *cfg); err != nil {
+		return lastDigest, err
+	}
+	snapshot, scanErr := scanProfiles(ctx, cfg.OrganizationID, cfg.SourceID, cfg.TargetID, pack, profiles, version)
+	if scanErr != nil {
+		return lastDigest, scanErr
+	}
+	snapshot.Sequence, snapshot.Full = cfg.Sequence, full
+	digest, err := snapshot.Digest()
+	if err != nil {
+		return lastDigest, err
+	}
+	if digest == lastDigest && !full {
+		return lastDigest, nil
+	}
+	var uploadErr error
+	for attempt := 0; attempt < 5; attempt++ {
+		if _, uploadErr = client.Upload(ctx, configPath, cfg, snapshot); uploadErr == nil {
+			return digest, nil
+		}
+		delay := time.Duration(1<<attempt) * time.Second
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return lastDigest, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return lastDigest, fmt.Errorf("upload discovery snapshot after retries: %w", uploadErr)
 }
 
 type profile struct {

@@ -30,6 +30,7 @@ type Dependencies struct {
 	In             io.Reader
 	Out            io.Writer
 	Err            io.Writer
+	CollectOnce    func(context.Context, string) error
 	InstallService func(context.Context, string, string) (servicecontrol.Status, error)
 }
 
@@ -203,6 +204,16 @@ func newEnrollCommand(dependencies Dependencies) *cobra.Command {
 			}
 			fmt.Fprintf(dependencies.Out, "Enrolled %s with Lens Hub.\nConfiguration saved privately at %s.\n", cfg.SourceID, path)
 			if installService {
+				collector := dependencies.CollectOnce
+				if collector == nil {
+					collector = func(ctx context.Context, configPath string) error {
+						return (managed.Runner{ConfigPath: configPath, Version: Version}).RunOnce(ctx)
+					}
+				}
+				if collectErr := collector(command.Context(), path); collectErr != nil {
+					return fmt.Errorf("endpoint enrollment succeeded, but the initial discovery scan could not be uploaded: %w; configuration remains at %q", collectErr, path)
+				}
+				fmt.Fprintln(dependencies.Out, "Initial discovery snapshot uploaded.")
 				installer := dependencies.InstallService
 				if installer == nil {
 					installer = servicecontrol.Install

@@ -17,7 +17,7 @@ paths:
   /v1/collector/token:
     post: {security: [], operationId: rotateCollectorToken, requestBody: {required: true, content: {application/json: {schema: {type: object, additionalProperties: false, required: [refresh_token], properties: {refresh_token: {type: string}}}}}}, responses: {'200': {description: Rotated access and refresh credentials}}}
   /v1/admin/enrollment-codes:
-    post: {operationId: createEnrollmentCode, requestBody: {content: {application/json: {schema: {type: object, additionalProperties: false, properties: {expires_in_seconds: {type: integer, minimum: 60, maximum: 86400, default: 600}, uses: {type: integer, minimum: 1, maximum: 10000, default: 1}, source_type: {enum: [endpoint, repository, kubernetes], default: endpoint}}}}}}, responses: {'201': {description: Expiring use-limited enrollment code with the configured public Hub URL}}}
+    post: {operationId: createEnrollmentCode, requestBody: {content: {application/json: {schema: {type: object, additionalProperties: false, properties: {expires_in_seconds: {type: integer, minimum: 60, maximum: 86400, default: 600}, uses: {type: integer, minimum: 1, maximum: 10000, default: 1}, source_type: {enum: [endpoint, repository, kubernetes], default: endpoint}}}}}}, responses: {'201': {description: Expiring use-limited enrollment code with the configured public Hub URL and exact collector version}}}
   /v1/admin/sources/{id}:
     delete: {operationId: revokeDiscoverySource, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'204': {description: Source credentials revoked and its current observations removed}, '404': {description: Source not found}}}
   /v1/admin/coverage/baselines:

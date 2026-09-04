@@ -105,10 +105,11 @@ func GetStatus(ctx context.Context) Status {
 		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
 			return Status{State: StateNotInstalled, DefinitionPath: path}
 		}
-		if exec.CommandContext(ctx, "launchctl", "print", domain+"/com.barrikade.lens").Run() == nil {
+		output, err := exec.CommandContext(ctx, "launchctl", "print", domain+"/com.barrikade.lens").CombinedOutput()
+		if err == nil && launchdRunning(string(output)) {
 			return Status{State: StateRunning, DefinitionPath: path}
 		}
-		return Status{State: StateStopped, DefinitionPath: path}
+		return Status{State: StateStopped, Detail: strings.TrimSpace(string(output)), DefinitionPath: path}
 	case "linux":
 		path, system, _ := systemdTarget()
 		if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) {
@@ -193,7 +194,23 @@ func installLaunchAgent(ctx context.Context, executable, configPath string) (Sta
 	if output, err := exec.CommandContext(ctx, "launchctl", "bootstrap", domain, path).CombinedOutput(); err != nil {
 		return Status{}, fmt.Errorf("launchctl bootstrap: %s: %w", strings.TrimSpace(string(output)), err)
 	}
-	return GetStatus(ctx), nil
+	deadline := time.NewTimer(10 * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		status := GetStatus(ctx)
+		if status.State == StateRunning {
+			return status, nil
+		}
+		select {
+		case <-ctx.Done():
+			return Status{}, ctx.Err()
+		case <-deadline.C:
+			return status, fmt.Errorf("macOS collector did not reach the running state: %s", status.Detail)
+		case <-ticker.C:
+		}
+	}
 }
 
 func installSystemd(ctx context.Context, executable, configPath string) (Status, error) {
@@ -282,6 +299,15 @@ func managedExecutableName() string {
 		return serviceName + ".exe"
 	}
 	return serviceName
+}
+
+func launchdRunning(output string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		if strings.TrimSpace(line) == "state = running" {
+			return true
+		}
+	}
+	return false
 }
 
 func launchdTarget() (string, string, error) {

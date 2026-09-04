@@ -258,7 +258,7 @@ function CoveragePage({ api, revision }: { api: API; revision: number }) {
   const overview = useRemote(() => api.overview("7d"), [api, revision]);
   const targets = useRemote(() => api.targets({ target_type: targetType, limit: 100 }), [api, revision, targetType]);
   const [expanded, setExpanded] = useState<string>();
-  const [enrollment, setEnrollment] = useState<{ code: string; expires_at: string; hub_url?: string }>();
+  const [enrollment, setEnrollment] = useState<{ code: string; expires_at: string; hub_url?: string; collector_version?: string }>();
   const [enrollError, setEnrollError] = useState("");
   const [enrollmentPlatform, setEnrollmentPlatform] = useState<"macos" | "windows">("macos");
   const [commandCopied, setCommandCopied] = useState(false);
@@ -268,9 +268,11 @@ function CoveragePage({ api, revision }: { api: API; revision: number }) {
     api.enrollment().then(setEnrollment).catch((reason) => setEnrollError(String(reason)));
   };
   const enrollmentHub = enrollment?.hub_url || location.origin;
+  const collectorVersion = enrollment?.collector_version && !enrollment.collector_version.endsWith("-dev") ? enrollment.collector_version : "latest";
+  const collectorPackage = `barrikade-lens@${collectorVersion}`;
   const enrollmentCommand = enrollmentPlatform === "macos"
-    ? `sudo -E "$(command -v npx)" --yes --no-audit --no-fund barrikade-lens enroll ${enrollment?.code ?? "CODE"} --hub '${enrollmentHub}' --config '/Library/Application Support/Barrikade/Lens/config.json' --install`
-    : `npx --yes --no-audit --no-fund barrikade-lens enroll ${enrollment?.code ?? "CODE"} --hub '${enrollmentHub}' --install`;
+    ? `sudo -E "$(command -v npx)" --yes --no-audit --no-fund ${collectorPackage} enroll ${enrollment?.code ?? "CODE"} --hub '${enrollmentHub}' --config '/Library/Application Support/Barrikade/Lens/config.json' --install`
+    : `npx --yes --no-audit --no-fund ${collectorPackage} enroll ${enrollment?.code ?? "CODE"} --hub '${enrollmentHub}' --install`;
   const copyEnrollmentCommand = () => navigator.clipboard.writeText(enrollmentCommand).then(() => {
     setCommandCopied(true);
     window.setTimeout(() => setCommandCopied(false), 1800);

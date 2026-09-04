@@ -51,3 +51,14 @@ func TestStageExecutableUsesPrivateStableServiceLocation(t *testing.T) {
 		t.Fatalf("staged upgrade was not atomic: content=%q err=%v", content, err)
 	}
 }
+
+func TestLaunchdRunningRequiresActiveProcess(t *testing.T) {
+	if !launchdRunning("state = running\nlast exit code = 1") {
+		t.Fatal("running launchd service was not recognized")
+	}
+	for _, output := range []string{"state = spawn scheduled\nlast exit code = 1", "state = exited", ""} {
+		if launchdRunning(output) {
+			t.Fatalf("inactive launchd service was reported running: %q", output)
+		}
+	}
+}

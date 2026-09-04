@@ -16,14 +16,25 @@ import (
 )
 
 func TestEnrollInstallCompletesOnboardingInOneCommand(t *testing.T) {
-	server := enrollmentServer(t)
+	server := enrollmentServer(t, nil)
 	defer server.Close()
 	configPath := filepath.Join(t.TempDir(), "lens", "config.json")
 	var output bytes.Buffer
 	installed := false
+	collected := false
 	code := ExecuteWith(Dependencies{
 		In: os.Stdin, Out: &output, Err: &output,
+		CollectOnce: func(_ context.Context, path string) error {
+			if path != configPath {
+				t.Fatalf("collector config path=%q want %q", path, configPath)
+			}
+			collected = true
+			return nil
+		},
 		InstallService: func(_ context.Context, executable, path string) (servicecontrol.Status, error) {
+			if !collected {
+				t.Fatal("service installed before the initial snapshot was uploaded")
+			}
 			installed = true
 			if executable != "" {
 				t.Fatalf("expected the current executable, got %q", executable)
@@ -37,18 +48,46 @@ func TestEnrollInstallCompletesOnboardingInOneCommand(t *testing.T) {
 			return servicecontrol.Status{State: servicecontrol.StateRunning}, nil
 		},
 	}, []string{"enroll", "ABCDE-FGHIJ", "--hub", server.URL, "--config", configPath, "--install"})
-	if code != 0 || !installed {
-		t.Fatalf("one-command enrollment failed: code=%d installed=%v output=%s", code, installed, output.String())
+	if code != 0 || !collected || !installed {
+		t.Fatalf("one-command enrollment failed: code=%d collected=%v installed=%v output=%s", code, collected, installed, output.String())
 	}
-	for _, message := range []string{"Enrolled source:test", "Collector service: running", "Onboarding complete"} {
+	for _, message := range []string{"Enrolled source:test", "Initial discovery snapshot uploaded", "Collector service: running", "Onboarding complete"} {
 		if !strings.Contains(output.String(), message) {
 			t.Fatalf("output omitted %q: %s", message, output.String())
 		}
 	}
 }
 
+func TestEnrollInstallUploadsBeforeStartingService(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	uploaded := false
+	server := enrollmentServer(t, &uploaded)
+	defer server.Close()
+	configPath := filepath.Join(t.TempDir(), "lens", "config.json")
+	var output bytes.Buffer
+	code := ExecuteWith(Dependencies{
+		In: os.Stdin, Out: &output, Err: &output,
+		InstallService: func(_ context.Context, _, _ string) (servicecontrol.Status, error) {
+			if !uploaded {
+				t.Fatal("service installed before the Hub accepted the initial snapshot")
+			}
+			return servicecontrol.Status{State: servicecontrol.StateRunning}, nil
+		},
+	}, []string{"enroll", "ABCDE-FGHIJ", "--hub", server.URL, "--config", configPath, "--install"})
+	if code != 0 || !uploaded {
+		t.Fatalf("initial upload failed: code=%d uploaded=%v output=%s", code, uploaded, output.String())
+	}
+	cfg, err := lensconfig.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Sequence != 1 {
+		t.Fatalf("initial upload sequence=%d want 1", cfg.Sequence)
+	}
+}
+
 func TestEnrollWithoutInstallPreservesManualServiceFlow(t *testing.T) {
-	server := enrollmentServer(t)
+	server := enrollmentServer(t, nil)
 	defer server.Close()
 	configPath := filepath.Join(t.TempDir(), "lens", "config.json")
 	var output bytes.Buffer
@@ -61,9 +100,21 @@ func TestEnrollWithoutInstallPreservesManualServiceFlow(t *testing.T) {
 	}
 }
 
-func enrollmentServer(t *testing.T) *httptest.Server {
+func enrollmentServer(t *testing.T, uploaded *bool) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method == http.MethodPost && request.URL.Path == "/v1/discovery/snapshots" {
+			if request.Header.Get("Authorization") != "Bearer access" {
+				t.Errorf("snapshot omitted collector authorization")
+			}
+			if uploaded != nil {
+				*uploaded = true
+			}
+			writer.Header().Set("Content-Type", "application/json")
+			writer.WriteHeader(http.StatusAccepted)
+			_, _ = writer.Write([]byte(`{"id":"job:test","status":"pending"}`))
+			return
+		}
 		if request.Method != http.MethodPost || request.URL.Path != "/v1/enrollment/exchange" {
 			http.NotFound(writer, request)
 			return
