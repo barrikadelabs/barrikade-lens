@@ -178,15 +178,13 @@ func installLaunchAgent(ctx context.Context, executable, configPath string) (Sta
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return Status{}, err
 	}
-	definition := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0"><dict>
-<key>Label</key><string>com.barrikade.lens</string>
-<key>ProgramArguments</key><array><string>%s</string><string>service</string><string>run</string><string>--config</string><string>%s</string></array>
-<key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
-<key>ProcessType</key><string>Background</string>
-<key>StandardOutPath</key><string>%s</string><key>StandardErrorPath</key><string>%s</string>
-</dict></plist>`, xmlEscape(executable), xmlEscape(configPath), xmlEscape(filepath.Join(filepath.Dir(configPath), "collector.log")), xmlEscape(filepath.Join(filepath.Dir(configPath), "collector.log")))
+	home := ""
+	if privilegedAccount() {
+		home = "/var/root"
+	} else if value, homeErr := os.UserHomeDir(); homeErr == nil {
+		home = value
+	}
+	definition := launchdDefinition(executable, configPath, home)
 	if err := os.WriteFile(path, []byte(definition), 0o644); err != nil {
 		return Status{}, err
 	}
@@ -211,6 +209,19 @@ func installLaunchAgent(ctx context.Context, executable, configPath string) (Sta
 		case <-ticker.C:
 		}
 	}
+}
+
+func launchdDefinition(executable, configPath, home string) string {
+	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>Label</key><string>com.barrikade.lens</string>
+<key>ProgramArguments</key><array><string>%s</string><string>service</string><string>run</string><string>--config</string><string>%s</string></array>
+<key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
+<key>ProcessType</key><string>Background</string>
+<key>EnvironmentVariables</key><dict><key>HOME</key><string>%s</string></dict>
+<key>StandardOutPath</key><string>%s</string><key>StandardErrorPath</key><string>%s</string>
+</dict></plist>`, xmlEscape(executable), xmlEscape(configPath), xmlEscape(home), xmlEscape(filepath.Join(filepath.Dir(configPath), "collector.log")), xmlEscape(filepath.Join(filepath.Dir(configPath), "collector.log")))
 }
 
 func installSystemd(ctx context.Context, executable, configPath string) (Status, error) {

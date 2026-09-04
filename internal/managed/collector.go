@@ -50,7 +50,7 @@ func (r Runner) RunOnce(ctx context.Context) error {
 	if r.Client == nil {
 		r.Client = hubclient.New(r.Version)
 	}
-	home, err := os.UserHomeDir()
+	home, err := currentHomeDirectory()
 	if err != nil {
 		return err
 	}
@@ -73,7 +73,7 @@ func (r Runner) Run(ctx context.Context) error {
 	if r.Client == nil {
 		r.Client = hubclient.New(r.Version)
 	}
-	home, err := os.UserHomeDir()
+	home, err := currentHomeDirectory()
 	if err != nil {
 		return err
 	}
@@ -271,6 +271,24 @@ func managedProfiles(currentHome string) []profile {
 		root = filepath.Join(drive+string(filepath.Separator), "Users")
 	}
 	return profilesUnder(current, root)
+}
+
+func currentHomeDirectory() (string, error) {
+	home, err := os.UserHomeDir()
+	if err == nil && strings.TrimSpace(home) != "" {
+		return filepath.Clean(home), nil
+	}
+	account, accountErr := user.Current()
+	if accountErr == nil && strings.TrimSpace(account.HomeDir) != "" {
+		return filepath.Clean(account.HomeDir), nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if accountErr != nil {
+		return "", accountErr
+	}
+	return "", fmt.Errorf("current user home directory is unavailable")
 }
 
 func profilesUnder(current profile, root string) []profile {

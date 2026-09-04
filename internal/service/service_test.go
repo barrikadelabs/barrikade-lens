@@ -3,6 +3,7 @@ package service
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -49,6 +50,20 @@ func TestStageExecutableUsesPrivateStableServiceLocation(t *testing.T) {
 	content, err = os.ReadFile(staged)
 	if err != nil || string(content) != "upgraded-binary" {
 		t.Fatalf("staged upgrade was not atomic: content=%q err=%v", content, err)
+	}
+}
+
+func TestLaunchdDefinitionSetsHOMEForBackgroundCollector(t *testing.T) {
+	definition := launchdDefinition("/opt/Lens & Co/lens", "/var/lib/Lens & Co/config.json", "/var/root")
+	for _, expected := range []string{
+		"<key>EnvironmentVariables</key>",
+		"<key>HOME</key><string>/var/root</string>",
+		"/opt/Lens &amp; Co/lens",
+		"/var/lib/Lens &amp; Co/config.json",
+	} {
+		if !strings.Contains(definition, expected) {
+			t.Fatalf("launchd definition missing %q: %s", expected, definition)
+		}
 	}
 }
 

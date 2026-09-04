@@ -2,6 +2,7 @@ package managed
 
 import (
 	"os"
+	"os/user"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -9,6 +10,25 @@ import (
 
 	"github.com/barrikadelabs/barrikade-lens/internal/detector"
 )
+
+func TestCurrentHomeDirectoryFallsBackWhenHOMEIsMissing(t *testing.T) {
+	if os.Getenv("CI") != "" && os.Getenv("HOME") == "" {
+		t.Skip("test runner does not expose a current-user home directory")
+	}
+	originalHome := os.Getenv("HOME")
+	t.Setenv("HOME", "")
+	home, err := currentHomeDirectory()
+	if err != nil {
+		t.Fatal(err)
+	}
+	account, err := user.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if home != filepath.Clean(account.HomeDir) {
+		t.Fatalf("home=%q want current-user fallback %q (original HOME %q)", home, account.HomeDir, originalHome)
+	}
+}
 
 func TestWatchRootsIncludeRuntimeSkillConfigAndModelCacheRoots(t *testing.T) {
 	home := t.TempDir()
