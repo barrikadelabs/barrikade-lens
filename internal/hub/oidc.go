@@ -9,7 +9,7 @@ import (
 )
 
 func (s *Server) oidcConfig(w http.ResponseWriter, r *http.Request) {
-	response := map[string]any{"enabled": s.oidcProvider != nil, "development_bootstrap": s.config.DevAdminToken != ""}
+	response := map[string]any{"enabled": s.oidcProvider != nil, "development_bootstrap": s.config.DevAdminToken != "", "exposure_enabled": s.config.ExposureEnabled}
 	if s.oidcProvider != nil {
 		response["authorization_endpoint"] = s.oauthConfig.Endpoint.AuthURL
 		response["client_id"] = s.oauthConfig.ClientID

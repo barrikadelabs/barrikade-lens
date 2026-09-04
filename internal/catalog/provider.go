@@ -38,6 +38,8 @@ type Entry struct {
 	ID         string `json:"id"`
 	Name       string `json:"name"`
 	ProviderID string `json:"provider_id"`
+	APIFamily  string `json:"api_family,omitempty"`
+	Version    string `json:"version,omitempty"`
 	Reference  string `json:"reference"`
 	MatchHost  string `json:"-"`
 }
@@ -141,7 +143,8 @@ func (p *OAKProvider) Refresh(ctx context.Context, state State) (Index, error) {
 		if providerID == "" {
 			continue
 		}
-		index.Entries = append(index.Entries, Entry{ID: entryID(include.URL), Name: include.Name, ProviderID: providerID, Reference: include.URL})
+		family, version := entryDescriptor(include.Name)
+		index.Entries = append(index.Entries, Entry{ID: entryID(include.URL), Name: include.Name, ProviderID: providerID, APIFamily: family, Version: version, Reference: include.URL})
 	}
 	return index, nil
 }
@@ -155,16 +158,14 @@ func (p *OAKProvider) Match(index Index, host, providerIdentifier string) []Matc
 		match := Match{Entry: entry}
 		switch {
 		case host != "" && host == provider:
-			match.Exact = true
-			match.Confidence = "confirmed"
-			match.Reason = "exact host"
+			match.Confidence = "possible"
+			match.Reason = "provider host suggestion"
 		case host != "" && strings.HasSuffix(host, "."+provider):
-			match.Confidence = "likely"
+			match.Confidence = "possible"
 			match.Reason = "provider domain"
-		case providerIdentifier != "" && providerIdentifier == provider:
-			match.Exact = true
-			match.Confidence = "confirmed"
-			match.Reason = "exact provider identifier"
+		case providerIdentifier != "" && (providerIdentifier == strings.ToLower(entry.ID) || providerIdentifier == strings.ToLower(entry.APIFamily) || providerIdentifier == strings.ToLower(entry.APIFamily+"@"+entry.Version)):
+			match.Confidence = "possible"
+			match.Reason = "API family suggestion"
 		case providerIdentifier != "" && strings.Contains(strings.ToLower(entry.Name), providerIdentifier):
 			match.Confidence = "possible"
 			match.Reason = "catalog name suggestion"
@@ -173,6 +174,13 @@ func (p *OAKProvider) Match(index Index, host, providerIdentifier string) []Matc
 		}
 		match.Entry.MatchHost = host
 		matches = append(matches, match)
+	}
+	// A provider-domain match is safe to auto-link only when it identifies one
+	// catalogue entry. Provider umbrellas and multi-version APIs stay suggestions.
+	if len(matches) == 1 && (matches[0].Reason == "provider host suggestion" || matches[0].Reason == "provider domain" || matches[0].Reason == "API family suggestion") {
+		matches[0].Exact = true
+		matches[0].Confidence = "confirmed"
+		matches[0].Reason = "unique API family/version"
 	}
 	sort.Slice(matches, func(i, j int) bool { return matchRank(matches[i]) > matchRank(matches[j]) })
 	if len(matches) > 20 {
@@ -225,6 +233,7 @@ func (p *OAKProvider) Fetch(ctx context.Context, entry Entry, state State) (Docu
 			spec, _, _, err := p.fetchHTTP(ctx, property.URL, State{})
 			if err == nil {
 				document.OpenAPI, _ = parseStructured(spec)
+				deriveAPIEndpoint(&api, document.OpenAPI)
 			}
 		case "arazzo":
 			api.ArazzoReferences = append(api.ArazzoReferences, property.URL)
@@ -387,6 +396,7 @@ func (p *FileProvider) Refresh(ctx context.Context, state State) (Index, error) 
 			reference = filepath.Join(filepath.Dir(p.ManifestPath), filepath.FromSlash(reference))
 		}
 		index.Entries = append(index.Entries, Entry{ID: entryID(reference), Name: include.Name, ProviderID: providerID, Reference: reference})
+		index.Entries[len(index.Entries)-1].APIFamily, index.Entries[len(index.Entries)-1].Version = entryDescriptor(include.Name)
 	}
 	return index, nil
 }
@@ -428,6 +438,7 @@ func (p *FileProvider) Fetch(ctx context.Context, entry Entry, state State) (Doc
 		if strings.EqualFold(property.Type, "OpenAPI") {
 			api.OpenAPIReference = property.URL
 			document.OpenAPI = parsedBody
+			deriveAPIEndpoint(&api, document.OpenAPI)
 		} else if strings.EqualFold(property.Type, "Arazzo") {
 			api.ArazzoReferences = append(api.ArazzoReferences, property.URL)
 			document.Arazzo = append(document.Arazzo, parsedBody)
@@ -456,6 +467,26 @@ func selectOAKAPI(document oakDocument, matchHost string) (oakAPI, error) {
 		}
 	}
 	return oakAPI{}, fmt.Errorf("catalog umbrella entry contains no API for discovered host")
+}
+
+func deriveAPIEndpoint(api *API, document map[string]any) {
+	if api.BaseURL != "" || len(document) == 0 {
+		return
+	}
+	servers, _ := document["servers"].([]any)
+	for _, raw := range servers {
+		server, _ := raw.(map[string]any)
+		value, _ := server["url"].(string)
+		if strings.Contains(value, "{") {
+			continue
+		}
+		sanitized, err := discovery.SanitizeURL(value)
+		if err == nil {
+			api.BaseURL = sanitized
+			api.Host = discovery.URLHost(sanitized)
+			return
+		}
+	}
 }
 
 func restrictedCatalogDialer() func(context.Context, string, string) (net.Conn, error) {
@@ -511,6 +542,17 @@ func providerFromReference(reference, name string) string {
 		return strings.ToLower(strings.TrimSpace(name[:index]))
 	}
 	return ""
+}
+func entryDescriptor(name string) (string, string) {
+	descriptor := strings.TrimSpace(strings.SplitN(name, " - ", 2)[0])
+	if colon := strings.Index(descriptor, ":"); colon >= 0 {
+		descriptor = descriptor[colon+1:]
+	}
+	family, version := descriptor, ""
+	if at := strings.LastIndex(descriptor, "@"); at >= 0 {
+		family, version = descriptor[:at], descriptor[at+1:]
+	}
+	return strings.TrimSpace(family), strings.TrimSpace(version)
 }
 func entryID(reference string) string      { return discovery.ContentHash([]byte(reference)) }
 func parseHTTPTime(value string) time.Time { parsed, _ := http.ParseTime(value); return parsed }

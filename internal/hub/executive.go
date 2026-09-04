@@ -161,12 +161,16 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 	}
 	changeRows.Close()
 
-	writeJSON(w, 200, map[string]any{
+	response := map[string]any{
 		"window": windowName, "generated_at": now, "coverage": coverage,
 		"footprint": map[string]any{"system_types": systemTypes, "states": states, "surfaces": surfaces},
 		"attention": attention, "changes": changes,
 		"data_quality": map[string]any{"confidence": confidence, "confidence_note": "Confirmed requires an authoritative descriptor or independent high-specificity evidence.", "coverage_note": "Expected population is shown only when an administrator configures a baseline."},
-	})
+	}
+	if s.config.ExposureEnabled {
+		response["exposure_summary"] = exposureOverviewSummary(r.Context(), s.config.Pool, orgID)
+	}
+	writeJSON(w, 200, response)
 }
 
 func (s *Server) countProjection(r *http.Request, organizationID, column, predicate string) (map[string]int, error) {
@@ -302,7 +306,11 @@ func (s *Server) listSystems(w http.ResponseWriter, r *http.Request) {
 		if targetType != nil {
 			targetFreshness = freshnessState(*targetType, targetLastSeen, time.Now().UTC())
 		}
-		items = append(items, map[string]any{"id": id, "kind": kind, "name": name, "attributes": jsonObject(attributes), "target_id": targetID, "target_name": targetName, "target_freshness": targetFreshness, "surface": surface, "system_type": systemType, "product_id": productID, "product_category": productCategory, "state": discoveryState, "network_scope": networkScope, "attributed": attributed, "confidence": confidence, "first_seen_at": firstSeen, "last_seen_at": lastSeen})
+		item := map[string]any{"id": id, "kind": kind, "name": name, "attributes": jsonObject(attributes), "target_id": targetID, "target_name": targetName, "target_freshness": targetFreshness, "surface": surface, "system_type": systemType, "product_id": productID, "product_category": productCategory, "state": discoveryState, "network_scope": networkScope, "attributed": attributed, "confidence": confidence, "first_seen_at": firstSeen, "last_seen_at": lastSeen}
+		if s.config.ExposureEnabled {
+			item["exposure_summary"] = exposureSummary(r.Context(), s.config.Pool, principal.OrganizationID, id)
+		}
+		items = append(items, item)
 		next = pageCursor{Sort: sortBy, ID: id, Value: lastSeen.Format(time.RFC3339Nano)}
 		if sortBy == "name" {
 			next.Value = strings.ToLower(name)
@@ -369,6 +377,9 @@ func (s *Server) getSystem(w http.ResponseWriter, r *http.Request) {
 	}
 	result["connections"] = connections
 	result["evidence"] = s.evidenceForEntity(r.Context(), principal.OrganizationID, id, name, jsonObject(attributes), 250)
+	if s.config.ExposureEnabled {
+		result["exposure_summary"] = exposureSummary(r.Context(), s.config.Pool, principal.OrganizationID, id)
+	}
 	writeJSON(w, 200, result)
 }
 

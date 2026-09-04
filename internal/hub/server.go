@@ -41,6 +41,7 @@ type Config struct {
 	OIDCAdminGroup          string
 	GitHubWebhookSecret     []byte
 	GitHubClient            *githubapp.Client
+	ExposureEnabled         bool
 }
 
 type Server struct {
@@ -125,6 +126,16 @@ func (s *Server) routes() {
 	authenticated.HandleFunc("GET /v1/coverage", s.coverage)
 	authenticated.HandleFunc("GET /v1/exports", s.exports)
 	authenticated.HandleFunc("POST /v1/webhooks", s.createWebhook)
+	if s.config.ExposureEnabled {
+		authenticated.HandleFunc("GET /v1/exposures", s.listExposures)
+		authenticated.HandleFunc("GET /v1/exposures/{id}", s.getExposure)
+		authenticated.HandleFunc("GET /v1/systems/{id}/exposure-map", s.getExposureMap)
+		authenticated.HandleFunc("GET /v1/entities/{id}/context", s.getEntityContext)
+		authenticated.HandleFunc("PUT /v1/entities/{id}/context", s.putEntityContext)
+		authenticated.HandleFunc("GET /v1/catalog/search", s.searchCatalog)
+		authenticated.HandleFunc("PUT /v1/entities/{id}/catalog-link", s.putCatalogLink)
+		authenticated.HandleFunc("DELETE /v1/entities/{id}/catalog-link", s.deleteCatalogLink)
+	}
 	s.mux.Handle("/v1/", s.auth.Middleware(authenticated))
 	if s.config.UIDir != "" {
 		s.mux.Handle("/", http.FileServer(http.Dir(s.config.UIDir)))

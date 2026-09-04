@@ -19,8 +19,11 @@ services:
     environment:
       LENS_DATABASE_URL: postgres://lens:lens-quickstart-only@postgres:5432/lens?sslmode=disable
       LENS_PUBLIC_URL: http://localhost:8080
+      LENS_ORGANIZATION_ID: org_local
+      LENS_ORGANIZATION_NAME: Barrikade Pilot
       LENS_JWT_SECRET: replace-this-quickstart-signing-key-before-production
       LENS_DEV_ADMIN_TOKEN: lens-local-admin
       LENS_CATALOG_ENABLED: "true"
+      LENS_EXPOSURE_ENABLED: "true"
 volumes:
   lens-postgres: {}

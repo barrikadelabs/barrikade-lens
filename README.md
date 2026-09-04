@@ -1,8 +1,8 @@
 # Barrikade Lens v2
 
-Barrikade Lens is the open-source discovery plane for autonomous agents. It finds agents, runtimes, frameworks, MCP servers, skills, models, APIs, repositories, endpoints, and deployments, then explains every finding with sanitized evidence and confidence.
+Barrikade Lens is the open-source discovery and exposure plane for autonomous agents. It finds agents, runtimes, frameworks, MCP servers, skills, models, APIs, repositories, endpoints, and deployments, then explains every finding with sanitized evidence and confidence.
 
-Lens is intentionally the first step in the Barrikade lifecycle: **discover**. It does not register, approve, protect, block, score, or govern anything it finds.
+Lens discovers and assesses exposure. It does not verify effective authorization, invoke tools, change credentials, remediate, enforce policy, register, approve, block, or assign a composite risk score.
 
 ## Run a local scan
 
@@ -53,6 +53,8 @@ docker compose up --build
 
 Open `http://localhost:8080` and use the quickstart token `lens-local-admin`. The compose credentials are deliberately development-only; use [the self-hosting guide](docs/self-hosting.md) for a real deployment.
 
+For the Barrikade pilot, the compose stack opens the `org_local` tenant used by the managed collector. The [live-device customer-story demo](docs/demo-live-device.md) shows how to present one real finding and its evidence without loading sample inventory or implying that Lens makes approval decisions.
+
 From the Hub’s Coverage page, create a ten-minute enrollment code and run the one short command it provides:
 
 ```sh
@@ -87,7 +89,8 @@ flowchart LR
 - PostgreSQL stores relational entities/edges plus JSONB attributes and is also the horizontally scalable job queue. There is no graph database or external queue.
 - The canonical contract is [Discovery Snapshot 1.1](api/schema/discovery-snapshot-v1.json); [OpenAPI](api/openapi.yaml) describes the Hub.
 - Detector signatures are declarative, checksummed YAML with no executable code.
-- Catalog enrichment happens only at Hub. The bundled adapter reads a compact OAK-compatible manifest and lazily fetches only matched documents.
+- Catalog enrichment happens only at Hub. The bundled adapter reads a compact OAK-compatible manifest and lazily fetches only uniquely or manually linked documents. Catalogue operations are always labelled as potential—not evidence of grants or invocation.
+- `LENS_EXPOSURE_ENABLED` gates the Exposure Map, context APIs, and finding worker. The local pilot compose setup enables it; Helm leaves it disabled until pilot acceptance.
 
 ## Repository layout
 

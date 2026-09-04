@@ -11,22 +11,25 @@ import {
   type EntityDetail, type Overview, type SystemDetail, type SystemItem, type Target,
 } from "./api";
 import { EvidenceGraphPage } from "./EvidenceGraph";
+import { InvestigationPage } from "./Investigation";
 
-type Page = "Overview" | "Systems" | "Coverage" | "Changes" | "Technical inventory" | "Evidence graph";
+type Page = "Overview" | "Exposure Map" | "Systems" | "Coverage" | "Changes" | "Technical inventory" | "Evidence graph";
 
 const navigation: Array<{ page: Page; icon: LucideIcon; detail: string }> = [
-  { page: "Overview", icon: LayoutDashboard, detail: "Discovery posture" },
-  { page: "Systems", icon: Bot, detail: "Root systems" },
-  { page: "Coverage", icon: Radar, detail: "Targets and freshness" },
+  { page: "Overview", icon: LayoutDashboard, detail: "Organization posture" },
+  { page: "Exposure Map", icon: FileSearch, detail: "Reachability and findings" },
+  { page: "Systems", icon: Bot, detail: "Organization systems" },
+  { page: "Coverage", icon: Radar, detail: "Enrollment coverage" },
   { page: "Changes", icon: History, detail: "Material change" },
   { page: "Technical inventory", icon: Boxes, detail: "Complete entity set" },
   { page: "Evidence graph", icon: Network, detail: "Facts and connections" },
 ];
 
 const pageCopy: Record<Page, { eyebrow: string; title: string; detail: string }> = {
-  Overview: { eyebrow: "DISCOVERY", title: "Overview", detail: "A current, evidence-backed view of your autonomous system footprint." },
+  Overview: { eyebrow: "DISCOVERY", title: "Organization AI posture", detail: "Evidence-backed visibility across enrolled endpoints, repositories, and clusters." },
+  "Exposure Map": { eyebrow: "EXPOSURE", title: "Evidence-backed exposure map", detail: "Trace one system through configured connections, credential presence, operator context, and catalogue-derived potential." },
   Systems: { eyebrow: "INVENTORY", title: "Systems", detail: "Agents, agent-capable tools, and model runtimes—without supporting software or cached artifacts." },
-  Coverage: { eyebrow: "VISIBILITY", title: "Coverage", detail: "Where Lens is reporting, where data is stale, and where expected population is unknown." },
+  Coverage: { eyebrow: "VISIBILITY", title: "Reporting coverage", detail: "What is enrolled across the organization, where data is stale, and where expected population is unknown." },
   Changes: { eyebrow: "HISTORY", title: "Changes", detail: "Material inventory changes. Routine scan refreshes are suppressed." },
   "Technical inventory": { eyebrow: "TECHNICAL", title: "Technical inventory", detail: "Every discovered entity, including supporting runtimes, cached artifacts, users, APIs, and workloads." },
   "Evidence graph": { eyebrow: "EVIDENCE", title: "Evidence graph", detail: "Trace a system to its capabilities, deployment surfaces, observed users, and sanitized evidence." },
@@ -110,20 +113,23 @@ function SignIn({ onToken, authError }: { onToken: (token: string) => void; auth
 
 function Shell({ api, signOut }: { api: API; signOut: () => void }) {
   const [page, setPage] = useState<Page>("Overview");
+  const [graphSystem, setGraphSystem] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
   const [about, setAbout] = useState(false);
   const [revision, setRevision] = useState(0);
+  const [exposureEnabled, setExposureEnabled] = useState(false);
+  useEffect(() => { authConfig().then((config) => setExposureEnabled(config.exposure_enabled)).catch(() => setExposureEnabled(false)); }, []);
   const copy = pageCopy[page];
   return <div className="app-shell">
     <aside className={menuOpen ? "sidebar open" : "sidebar"}>
       <div className="sidebar-brand"><Brand /></div>
       <nav className="main-nav">
-        {navigation.map(({ page: item, icon: Icon, detail }) => <button key={item} className={page === item ? "active" : ""} onClick={() => { setPage(item); setMenuOpen(false); }}>
+        {navigation.filter((item) => item.page !== "Exposure Map" || exposureEnabled).map(({ page: item, icon: Icon, detail }) => <button key={item} className={page === item ? "active" : ""} onClick={() => { setPage(item); setMenuOpen(false); }}>
           <Icon size={17} /><span><b>{item}</b><small>{detail}</small></span>{page === item && <ChevronRight size={14} />}
         </button>)}
       </nav>
       <div className="sidebar-footer">
-        <button onClick={() => setAbout(true)}><CircleDot size={14} /> Discover only</button>
+        <button onClick={() => setAbout(true)}><CircleDot size={14} /> {exposureEnabled ? "Discover + assess" : "Discover only"}</button>
         <button className="logout" onClick={signOut} aria-label="Sign out"><LogOut size={16} /></button>
       </div>
     </aside>
@@ -135,11 +141,12 @@ function Shell({ api, signOut }: { api: API; signOut: () => void }) {
           <div className="page-actions"><button className="icon-button" onClick={() => setRevision((value) => value + 1)} title="Refresh"><RefreshCw size={16} /></button><ExportMenu api={api} /></div>
         </header>
         {page === "Overview" && <OverviewPage api={api} revision={revision} go={setPage} />}
+        {page === "Exposure Map" && <InvestigationPage api={api} revision={revision} onOpenGraph={(systemID) => { setGraphSystem(systemID); setPage("Evidence graph"); }} />}
         {page === "Systems" && <SystemsPage api={api} revision={revision} />}
         {page === "Coverage" && <CoveragePage api={api} revision={revision} />}
         {page === "Changes" && <ChangesPage api={api} revision={revision} />}
         {page === "Technical inventory" && <InventoryPage api={api} revision={revision} />}
-        {page === "Evidence graph" && <EvidenceGraphPage api={api} revision={revision} />}
+        {page === "Evidence graph" && <EvidenceGraphPage api={api} revision={revision} initialSystemId={graphSystem} />}
       </div>
     </main>
     {menuOpen && <button className="sidebar-scrim" onClick={() => setMenuOpen(false)} />}
@@ -149,54 +156,58 @@ function Shell({ api, signOut }: { api: API; signOut: () => void }) {
 
 function OverviewPage({ api, revision, go }: { api: API; revision: number; go: (page: Page) => void }) {
   const [window, setWindow] = useState("7d");
-  const remote = useRemote(() => api.overview(window), [api, revision, window]);
-  if (remote.loading) return <Loading />;
-  if (remote.error || !remote.data) return <Failure error={remote.error} retry={remote.reload} />;
-  const data = remote.data;
+  const overview = useRemote(() => api.overview(window), [api, revision, window]);
+  const running = useRemote(() => api.systems({ state: "running", confidence: "confirmed", freshness: "fresh", limit: 8 }), [api, revision]);
+  if (overview.loading || running.loading) return <Loading />;
+  if (overview.error || !overview.data) return <Failure error={overview.error} retry={overview.reload} />;
+  const data = overview.data;
   const systems = data.footprint.system_types;
   const states = data.footprint.states;
   const totalSystems = sum(Object.values(systems));
+  const runningCount = states.running ?? 0;
+  const reportingTargets = sum(data.coverage.map((item) => item.reporting));
+  const reportingLabel = `${reportingTargets} reporting ${reportingTargets === 1 ? "target" : "targets"}`;
   const attention = [
-    ["Non-loopback services", data.attention.non_loopback_services, "Observed beyond a loopback interface", "Systems"],
-    ["Possible-only systems", data.attention.possible_only_systems, "Evidence needs corroboration", "Systems"],
-    ["Ownership not established", data.attention.unattributed_systems, "No authoritative ownership evidence", "Systems"],
+    ...(data.exposure_summary?.top_findings ?? []).map((finding) => [`${pretty(finding.severity)} · ${finding.title}`, 1, "Open the complete evidence path and safe next check", "Exposure Map"]),
+    ["Ownership is not established", data.attention.unattributed_systems, "These systems have no authoritative business or technical owner", "Systems"],
+    ["Evidence needs corroboration", data.attention.possible_only_systems, "A second authoritative signal is needed before governance", "Systems"],
+    ["Services are reachable beyond this device", data.attention.non_loopback_services, "Network-accessible AI services need exposure review", "Systems"],
     ["Partial scans", data.attention.partial_scans, "Some locations or detectors were unavailable", "Coverage"],
     ["Stale targets", data.attention.stale_targets, "Outside the freshness threshold", "Coverage"],
-    ["Identity diagnostics", data.attention.possible_duplicate_identities, "Distinct identities share a display name", "Coverage"],
     ["Conflicting facts", data.attention.fact_conflicts, "Sources disagree on a material fact", "Systems"],
   ].filter((item) => Number(item[1]) > 0) as Array<[string, number, string, Page]>;
-  const reportingTargets = sum(data.coverage.map((item) => item.reporting));
-  const staleTargets = sum(data.coverage.map((item) => item.stale));
-  const running = states.running ?? 0;
+  const changes = groupChanges(data.changes).slice(0, 4);
 
-  return <div className="page-stack">
+  return <div className="page-stack executive-overview">
     <div className="overview-toolbar"><span>Updated {relative(data.generated_at)}</span><div className="window-switch">{["24h", "7d", "30d"].map((item) => <button className={window === item ? "active" : ""} onClick={() => setWindow(item)} key={item}>{item}</button>)}</div></div>
-    <section className="posture-summary">
-      <div className="posture-total"><span>CURRENT FOOTPRINT</span><p><strong>{totalSystems.toLocaleString()}</strong> distinct systems</p><small>{running} running now · {reportingTargets} reporting {reportingTargets === 1 ? "target" : "targets"}{staleTargets ? ` · ${staleTargets} stale` : ""}</small></div>
-      <div className="system-breakdown">
-        <button onClick={() => go("Systems")}><Bot size={17} /><span><b>{systems.autonomous_agent ?? 0}</b><small>Autonomous agents</small></span></button>
-        <button onClick={() => go("Systems")}><TerminalSquare size={17} /><span><b>{systems.agent_tool ?? 0}</b><small>Agent-capable tools</small></span></button>
-        <button onClick={() => go("Systems")}><BrainCircuit size={17} /><span><b>{systems.model_runtime ?? 0}</b><small>Model runtimes</small></span></button>
+    <section className="exposure-hero">
+      <div className="exposure-copy"><span>Organization-wide AI exposure</span><h2><strong>{totalSystems.toLocaleString()}</strong> AI systems visible in your organization</h2><p>Current evidence comes from {reportingLabel}. {runningCount} systems are running now{data.exposure_summary ? ` and ${data.exposure_summary.total} explainable exposure findings are current` : ""}.</p><div className="enrollment-scope">{data.coverage.map((item) => <span key={item.target_type}><b>{pretty(item.target_type)}</b> {item.reporting ? `${item.reporting} reporting` : "Not enrolled"}</span>)}</div>{data.exposure_summary && <button className="overview-story-link" onClick={() => go("Exposure Map")}>Open the Exposure Map <ArrowRight size={14} /></button>}</div>
+      <div className="exposure-facts">
+        <ExecutiveFact value={runningCount} label="Running now" tone="active" />
+        <ExecutiveFact value={data.attention.unattributed_systems ?? 0} label="Ownership gaps" tone="attention" />
+        <ExecutiveFact value={(data.exposure_summary?.counts.critical ?? 0) + (data.exposure_summary?.counts.high ?? 0)} label="High-priority exposures" tone="attention" />
+        <ExecutiveFact value={reportingTargets} label="Reporting targets" tone="good" />
       </div>
     </section>
-    <div className="overview-primary">
-      <section className="panel state-panel"><PanelHeading title="Operating state" detail="Strongest state observed for each system" />
-        <StateDistribution values={states} total={totalSystems} />
-        <ConfidenceSummary data={data.data_quality.confidence} />
+    <section className="system-mix-strip">
+      <div className="mix-heading"><span>Observed system mix</span><small>Root systems only · supporting software excluded</small></div>
+      <div className="system-breakdown">
+        <button onClick={() => go("Systems")}><Bot size={18} /><span><b>{systems.autonomous_agent ?? 0}</b><small>Autonomous agents</small></span></button>
+        <button onClick={() => go("Systems")}><TerminalSquare size={18} /><span><b>{systems.agent_tool ?? 0}</b><small>Agent-capable tools</small></span></button>
+        <button onClick={() => go("Systems")}><BrainCircuit size={18} /><span><b>{systems.model_runtime ?? 0}</b><small>Model runtimes</small></span></button>
+      </div>
+    </section>
+    <div className="executive-primary">
+      <section className="panel running-panel"><PanelHeading title="Running and confirmed" detail="AI systems active across currently reporting targets" action={<button className="text-button" onClick={() => go("Systems")}>Open systems <ArrowRight size={13} /></button>} />
+        {running.data?.items.length ? <div className="running-list">{running.data.items.map((item) => <button key={item.id} onClick={() => go("Systems")}><span className="running-mark"><CircleDot size={14} /></span><span><b>{item.name}</b><small>{pretty(item.system_type)} · {item.network_scope === "loopback" ? "Local access only" : pretty(item.network_scope)}</small></span><span><strong>{pretty(item.state)}</strong><small>{pretty(item.confidence)} evidence</small></span><ChevronRight size={14} /></button>)}</div> : <Empty icon={CheckCircle2} title="No confirmed systems running" detail="No active system has confirmed evidence in the current scan." />}
       </section>
-      <section className="panel attention-panel"><PanelHeading title="Review queue" detail="Facts that need context—not a risk score" />
-        {attention.length ? <div className="attention-list">{attention.map(([label, count, detail, destination]) => <button key={label} onClick={() => go(destination)}>
-          <span className={count ? "attention-count active" : "attention-count"}>{count}</span><span><b>{label}</b><small>{detail}</small></span><ChevronRight size={14} />
-        </button>)}</div> : <Empty icon={CheckCircle2} title="Nothing needs review" detail="No stale, partial, conflicting, or possible-only findings in this window." />}
+      <section className="panel attention-panel"><PanelHeading title="What needs attention" detail="Concrete findings, not an opaque risk score" />
+        {attention.length ? <div className="attention-list">{attention.map(([label, count, detail, destination]) => <button key={label} onClick={() => go(destination)}><span className="attention-count active">{count}</span><span><b>{label}</b><small>{detail}</small></span><ChevronRight size={14} /></button>)}</div> : <Empty icon={CheckCircle2} title="Nothing needs review" detail="No current discovery findings require attention." />}
       </section>
     </div>
-    <div className="overview-secondary">
-      <section className="panel overview-coverage"><PanelHeading title="Coverage" detail="Reporting targets by discovery surface" action={<button className="text-button" onClick={() => go("Coverage")}>Open coverage <ArrowRight size={13} /></button>} />
-        <div className="coverage-summary-list">{data.coverage.map((item) => <CoverageSummaryRow item={item} key={item.target_type} onClick={() => go("Coverage")} />)}</div>
-      </section>
-      <section className="panel change-panel"><PanelHeading title="Meaningful changes" detail={`Material changes in the last ${window}`} action={<button className="text-button" onClick={() => go("Changes")}>View all <ArrowRight size={13} /></button>} />
-        <ChangeList items={data.changes.slice(0, 4)} />
-      </section>
+    <div className="executive-secondary">
+      <section className="panel change-panel"><PanelHeading title="What changed" detail={`Repeated observations grouped over the last ${window}`} action={<button className="text-button" onClick={() => go("Changes")}>View history <ArrowRight size={13} /></button>} /><ChangeList items={changes} /></section>
+      <section className="panel evidence-posture"><PanelHeading title="Evidence posture" detail="How current and conclusive this view is" action={<button className="text-button" onClick={() => go("Coverage")}>Technical coverage <ArrowRight size={13} /></button>} /><StateDistribution values={states} total={totalSystems} /><ConfidenceSummary data={data.data_quality.confidence} /></section>
     </div>
   </div>;
 }
@@ -402,9 +413,26 @@ function CoverageSummaryRow({ item, onClick }: { item: Overview["coverage"][numb
   return <button className="coverage-summary-row" onClick={onClick}><span className="coverage-summary-icon"><Icon size={16} /></span><span><b>{label}</b><small>{baseline}</small></span><span className={item.stale || item.partial ? "coverage-status needs-review" : item.reporting ? "coverage-status reporting" : "coverage-status quiet"}>{statusText}</span><ChevronRight size={14} /></button>;
 }
 
-function ChangeList({ items, expanded = false }: { items: Change[]; expanded?: boolean }) {
+type GroupedChange = Change & { occurrences?: number };
+
+function groupChanges(items: Change[]): GroupedChange[] {
+  const groups = new Map<string, GroupedChange>();
+  for (const item of items) {
+    const key = `${item.entity_id}|${item.category}|${item.summary}`;
+    const existing = groups.get(key);
+    if (existing) existing.occurrences = (existing.occurrences ?? 1) + 1;
+    else groups.set(key, { ...item, occurrences: 1 });
+  }
+  return [...groups.values()].sort((left, right) => Date.parse(right.changed_at) - Date.parse(left.changed_at));
+}
+
+function ExecutiveFact({ value, label, tone = "neutral" }: { value: number; label: string; tone?: string }) {
+  return <div className={`executive-fact ${tone}`}><strong>{value}</strong><span>{label}</span></div>;
+}
+
+function ChangeList({ items, expanded = false }: { items: GroupedChange[]; expanded?: boolean }) {
   if (!items.length) return <Empty icon={History} title="No material changes" detail="Identical scans and routine refreshes are intentionally suppressed." />;
-  return <div className={expanded ? "change-list expanded" : "change-list"}>{items.map((item) => <article key={item.id}><span className={`change-mark ${item.category}`}><Activity size={13} /></span><div><p><b>{item.entity_name ?? "Discovered system"}</b><span className="category-pill">{pretty(item.category)}</span></p><h3>{item.summary || pretty(item.event_type)}</h3><small>{pretty(item.system_type ?? item.surface ?? "inventory")} · {relative(item.changed_at)}</small>{expanded && item.details?.fields && <div className="field-diffs">{item.details.fields.slice(0, 5).map((field) => <span key={field.path}><code>{pretty(field.path.replace("attributes.", ""))}</code><i>{formatValue(field.before)}</i><ArrowRight size={12} /><b>{formatValue(field.after)}</b></span>)}</div>}</div></article>)}</div>;
+  return <div className={expanded ? "change-list expanded" : "change-list"}>{items.map((item) => <article key={item.id}><span className={`change-mark ${item.category}`}><Activity size={13} /></span><div><p><b>{item.entity_name ?? "Discovered system"}</b><span className="category-pill">{pretty(item.category)}</span></p><h3>{item.summary || pretty(item.event_type)}{(item.occurrences ?? 1) > 1 ? ` · ${item.occurrences} observations` : ""}</h3><small>{pretty(item.system_type ?? item.surface ?? "inventory")} · latest {relative(item.changed_at)}</small>{expanded && item.details?.fields && <div className="field-diffs">{item.details.fields.slice(0, 5).map((field) => <span key={field.path}><code>{pretty(field.path.replace("attributes.", ""))}</code><i>{formatValue(field.before)}</i><ArrowRight size={12} /><b>{formatValue(field.after)}</b></span>)}</div>}</div></article>)}</div>;
 }
 
 function ConfidenceSummary({ data }: { data: Record<string, number> }) {
@@ -454,7 +482,7 @@ function ExportMenu({ api }: { api: API }) {
 }
 
 function About({ onClose }: { onClose: () => void }) {
-  return <div className="modal-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="about-modal"><button onClick={onClose}><X size={18} /></button><Brand /><p className="eyebrow">PRODUCT BOUNDARY</p><h2>Lens is the discovery layer.</h2><p>It observes, normalizes, correlates, and reports factual inventory across endpoints, source repositories, and Kubernetes.</p><div className="boundary-grid"><span><CheckCircle2 size={15} /> Discovers systems and capabilities</span><span><CheckCircle2 size={15} /> Preserves sanitized evidence</span><span><CheckCircle2 size={15} /> Reports coverage and change</span><span><X size={15} /> No risk scores or grades</span><span><X size={15} /> No approval or remediation</span><span><X size={15} /> No blocking or governance</span></div><small>Raw Lens JSON remains the canonical discovery contract. Executive posture is a derived projection.</small></section></div>;
+  return <div className="modal-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="about-modal"><button onClick={onClose}><X size={18} /></button><Brand /><p className="eyebrow">PRODUCT BOUNDARY</p><h2>Lens discovers and assesses exposure.</h2><p>It observes, normalizes, correlates, and reports factual inventory, operator context, and clearly labelled catalogue potential.</p><div className="boundary-grid"><span><CheckCircle2 size={15} /> Discovers systems and connections</span><span><CheckCircle2 size={15} /> Preserves sanitized evidence</span><span><CheckCircle2 size={15} /> Explains categorical findings</span><span><X size={15} /> No composite risk score</span><span><X size={15} /> No authorization verification or invocation</span><span><X size={15} /> No remediation or enforcement</span></div><small>Discovery Snapshot 1.1 remains unchanged. Exposure is a Hub-side derived projection.</small></section></div>;
 }
 
 function Loading() { return <div className="loading"><Radar size={25} /><span>Resolving discovery posture…</span></div>; }

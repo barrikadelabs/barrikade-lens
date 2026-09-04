@@ -37,6 +37,7 @@ func run() error {
 	migrateOnly := flag.Bool("migrate-only", false, "apply database migrations and exit")
 	catalogEnabled := flag.Bool("catalog-enabled", env("LENS_CATALOG_ENABLED", "true") != "false", "enable Hub-only public catalog enrichment")
 	catalogManifest := flag.String("catalog-manifest", env("LENS_CATALOG_MANIFEST", catalog.PublicCatalogManifest), "OAK-compatible compact catalog manifest")
+	exposureEnabled := flag.Bool("exposure-enabled", env("LENS_EXPOSURE_ENABLED", "false") == "true", "enable evidence-backed exposure maps and findings")
 	uiDir := flag.String("ui-dir", os.Getenv("LENS_UI_DIR"), "directory containing the built Lens Hub UI")
 	oidcIssuer := flag.String("oidc-issuer", os.Getenv("LENS_OIDC_ISSUER"), "OIDC issuer URL")
 	oidcClientID := flag.String("oidc-client-id", os.Getenv("LENS_OIDC_CLIENT_ID"), "OIDC client ID")
@@ -81,7 +82,7 @@ func run() error {
 			return err
 		}
 	}
-	server, err := hub.NewServer(ctx, hub.Config{Pool: pool, JWTSecret: []byte(*jwtSecret), DevAdminToken: *devAdminToken, DefaultOrganizationID: *organizationID, DefaultOrganizationName: *organizationName, PublicURL: *publicURL, Logger: slog.Default(), UIDir: *uiDir, OIDCIssuer: *oidcIssuer, OIDCClientID: *oidcClientID, OIDCClientSecret: *oidcClientSecret, OIDCRedirectURI: *oidcRedirectURI, OIDCAdminGroup: *oidcAdminGroup, GitHubWebhookSecret: []byte(*githubWebhookSecret), GitHubClient: githubClient})
+	server, err := hub.NewServer(ctx, hub.Config{Pool: pool, JWTSecret: []byte(*jwtSecret), DevAdminToken: *devAdminToken, DefaultOrganizationID: *organizationID, DefaultOrganizationName: *organizationName, PublicURL: *publicURL, Logger: slog.Default(), UIDir: *uiDir, OIDCIssuer: *oidcIssuer, OIDCClientID: *oidcClientID, OIDCClientSecret: *oidcClientSecret, OIDCRedirectURI: *oidcRedirectURI, OIDCAdminGroup: *oidcAdminGroup, GitHubWebhookSecret: []byte(*githubWebhookSecret), GitHubClient: githubClient, ExposureEnabled: *exposureEnabled})
 	if err != nil {
 		return err
 	}
@@ -94,6 +95,9 @@ func run() error {
 		go func() {
 			errChannel <- (&hub.CatalogWorker{Pool: pool, Provider: provider, Logger: slog.Default()}).Run(ctx)
 		}()
+	}
+	if *exposureEnabled {
+		go func() { errChannel <- (hub.ExposureWorker{Pool: pool, Logger: slog.Default()}).Run(ctx) }()
 	}
 	if githubClient != nil {
 		go func() {

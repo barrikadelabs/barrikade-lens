@@ -28,7 +28,7 @@ func TestCompactIndexMatchingAndLazyFetch(t *testing.T) {
 		t.Fatal(err)
 	}
 	matches := provider.Match(index, "api.example.com", "")
-	if len(matches) != 1 || matches[0].Confidence != "likely" {
+	if len(matches) != 1 || matches[0].Confidence != "confirmed" || !matches[0].Exact {
 		t.Fatalf("unexpected matches: %#v", matches)
 	}
 	document, err := provider.Fetch(context.Background(), matches[0].Entry, State{})
@@ -86,6 +86,29 @@ func TestUmbrellaCatalogSelectsTheDiscoveredHost(t *testing.T) {
 	}
 	if document.API.ID != "right" {
 		t.Fatalf("selected wrong umbrella API: %#v", document.API)
+	}
+}
+
+func TestAmbiguousProvidersAndVersionsNeverAutoLink(t *testing.T) {
+	provider := &OAKProvider{}
+	for _, providerID := range []string{"amazonaws.com", "googleapis.com", "github.com", "anthropic.com"} {
+		index := Index{Entries: []Entry{
+			{ID: providerID + "-v1", Name: providerID + ":main@v1", ProviderID: providerID, APIFamily: "main", Version: "v1"},
+			{ID: providerID + "-v2", Name: providerID + ":main@v2", ProviderID: providerID, APIFamily: "main", Version: "v2"},
+		}}
+		matches := provider.Match(index, "api."+providerID, "")
+		if len(matches) != 2 {
+			t.Fatalf("%s: expected two suggestions, got %#v", providerID, matches)
+		}
+		for _, match := range matches {
+			if match.Exact || match.Confidence == "confirmed" {
+				t.Fatalf("%s collision auto-linked: %#v", providerID, match)
+			}
+		}
+		versioned := provider.Match(index, "", "main@v2")
+		if len(versioned) != 1 || !versioned[0].Exact || versioned[0].Entry.Version != "v2" {
+			t.Fatalf("%s explicit family/version did not disambiguate: %#v", providerID, versioned)
+		}
 	}
 }
 

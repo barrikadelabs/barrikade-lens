@@ -73,7 +73,7 @@ const kindIcons: Record<string, LucideIcon> = {
   api_operation: Link2, workflow: Workflow, user: UserRound, evidence: FileSearch,
 };
 
-export function EvidenceGraphPage({ api, revision }: { api: API; revision: number }) {
+export function EvidenceGraphPage({ api, revision, initialSystemId = "" }: { api: API; revision: number; initialSystemId?: string }) {
   const [systems, setSystems] = useState<SystemItem[]>([]);
   const [selectedSystem, setSelectedSystem] = useState("");
   const [detail, setDetail] = useState<SystemDetail>();
@@ -93,11 +93,11 @@ export function EvidenceGraphPage({ api, revision }: { api: API; revision: numbe
         if (!active) return;
         setSystems(result.items);
         setMoreSystems(Boolean(result.next_cursor));
-        setSelectedSystem((current) => current || result.items[0]?.id || "");
+        setSelectedSystem((current) => current || result.items.find((item) => item.id === initialSystemId)?.id || result.items[0]?.id || "");
       }).catch((reason) => active && setSystemError(String(reason))).finally(() => active && setLoadingSystems(false));
     }, systemSearch ? 220 : 0);
     return () => { active = false; window.clearTimeout(timer); };
-  }, [api, revision, systemSearch]);
+  }, [api, revision, systemSearch, initialSystemId]);
 
   useEffect(() => {
     if (!selectedSystem) { setDetail(undefined); return; }

@@ -19,6 +19,7 @@ spec:
             - {name: LENS_JWT_SECRET, valueFrom: {secretKeyRef: {name: {{ .Values.existingSecret }}, key: jwt-secret}}}
             - {name: LENS_CATALOG_ENABLED, value: {{ .Values.catalog.enabled | quote }}}
             - {name: LENS_CATALOG_MANIFEST, value: {{ .Values.catalog.manifest | quote }}}
+            - {name: LENS_EXPOSURE_ENABLED, value: {{ .Values.exposure.enabled | quote }}}
             - {name: LENS_OIDC_ISSUER, value: {{ .Values.oidc.issuer | quote }}}
             - {name: LENS_OIDC_CLIENT_ID, value: {{ .Values.oidc.clientID | quote }}}
             - {name: LENS_OIDC_REDIRECT_URI, value: {{ .Values.oidc.redirectURI | quote }}}

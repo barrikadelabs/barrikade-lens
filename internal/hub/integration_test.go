@@ -124,7 +124,7 @@ func (fixtureCatalogProvider) Fetch(context.Context, catalog.Entry, catalog.Stat
 	}, nil
 }
 
-func TestCatalogEnrichmentCreatesInteroperableCapabilityGraph(t *testing.T) {
+func TestCatalogEnrichmentCreatesServiceAndOperationProjection(t *testing.T) {
 	ctx, pool := integrationPool(t)
 	org := "catalog-" + uuid.NewString()
 	if _, err := pool.Exec(ctx, `INSERT INTO organizations(id,name) VALUES($1,'catalog test')`, org); err != nil {
@@ -132,23 +132,30 @@ func TestCatalogEnrichmentCreatesInteroperableCapabilityGraph(t *testing.T) {
 	}
 	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM organizations WHERE id=$1`, org) })
 	candidate := discovery.StableID(org, discovery.KindMCPServer, "remote")
-	_, err := pool.Exec(ctx, `INSERT INTO entities(organization_id,id,kind,name,attributes,confidence,provenance,current,stale,first_seen_at,last_seen_at) VALUES($1,$2,'mcp_server','Remote MCP','{"host":"api.example.test"}','confirmed','{}',true,false,now(),now())`, org, candidate)
+	stdio := discovery.StableID(org, discovery.KindMCPServer, "stdio")
+	_, err := pool.Exec(ctx, `INSERT INTO entities(organization_id,id,kind,name,attributes,confidence,provenance,current,stale,first_seen_at,last_seen_at) VALUES($1,$2,'mcp_server','Remote MCP','{"host":"api.example.test"}','confirmed','{}',true,false,now(),now()),($1,$3,'mcp_server','Local stdio MCP','{"transport":"stdio"}','confirmed','{}',true,false,now(),now())`, org, candidate, stdio)
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO catalog_link_overrides(organization_id,entity_id,source_id,api_id,entry_reference,selected_by) VALUES($1,$2,'fixture-catalog','api','fixture','test-admin')`, org, stdio); err != nil {
 		t.Fatal(err)
 	}
 	worker := CatalogWorker{Pool: pool, Provider: fixtureCatalogProvider{}}
 	if err := worker.refreshAndEnrich(ctx); err != nil {
 		t.Fatal(err)
 	}
-	var entities, relationships int
+	var entities, relationships, operations int
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM entities WHERE organization_id=$1 AND current=true AND kind IN ('api_service','api_operation','workflow')`, org).Scan(&entities); err != nil {
 		t.Fatal(err)
 	}
 	if err := pool.QueryRow(ctx, `SELECT count(*) FROM relationships WHERE organization_id=$1 AND current=true AND attributes->>'catalog_provider'='fixture-catalog'`, org).Scan(&relationships); err != nil {
 		t.Fatal(err)
 	}
-	if entities != 3 || relationships != 3 {
-		t.Fatalf("expected service, operation, workflow and their graph edges; got %d entities and %d relationships", entities, relationships)
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM catalog_api_operations WHERE organization_id=$1 AND source_id='fixture-catalog'`, org).Scan(&operations); err != nil {
+		t.Fatal(err)
+	}
+	if entities != 1 || relationships != 2 || operations != 1 {
+		t.Fatalf("expected one service graph node, automatic and reviewed stdio links, and one projected operation; got %d entities, %d relationships, %d operations", entities, relationships, operations)
 	}
 }
 

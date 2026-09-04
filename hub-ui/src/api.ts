@@ -44,7 +44,10 @@ export type Overview = {
     confidence_note: string;
     coverage_note: string;
   };
+  exposure_summary?: ExposureSummary & { top_findings: Array<Pick<ExposureFinding, "id" | "root_entity_id" | "rule_id" | "severity" | "title">> };
 };
+
+export type ExposureSummary = { total: number; counts: Record<"critical" | "high" | "medium" | "low", number> };
 
 export type SystemItem = {
   id: string;
@@ -64,6 +67,7 @@ export type SystemItem = {
   confidence: Confidence;
   first_seen_at: string;
   last_seen_at: string;
+  exposure_summary?: ExposureSummary;
 };
 
 export type Evidence = {
@@ -113,6 +117,61 @@ export type Connection = {
 };
 
 export type SystemDetail = SystemItem & { connections: Connection[]; evidence: Evidence[] };
+
+export type EntityContext = {
+  owner_name?: string;
+  owner_type?: "person" | "team";
+  environment?: "development" | "test" | "staging" | "production";
+  criticality?: "low" | "medium" | "high" | "critical";
+  sensitivity?: "public" | "internal" | "confidential" | "restricted";
+  data_categories: Array<"personal" | "health" | "payment" | "financial" | "credentials" | "source_code" | "customer">;
+  trust_boundary?: "internal" | "partner" | "third_party";
+  updated_by?: string;
+  updated_at?: string;
+};
+
+export type ExposureFinding = {
+  id: string;
+  root_entity_id: string;
+  root_name: string;
+  destination_entity_id?: string;
+  destination_name?: string;
+  rule_id: string;
+  rule_version: string;
+  severity: "critical" | "high" | "medium" | "low";
+  title: string;
+  explanation: string;
+  recommended_next_step: string;
+  path: Array<{ entity_id: string; name: string; kind: string; edge?: string; basis: "observed" | "operator_context" | "catalog_potential" }>;
+  evidence_bases: Array<"observed" | "operator_context" | "catalog_potential">;
+  first_seen_at: string;
+  last_seen_at: string;
+};
+
+export type CatalogOperation = {
+  operation_id: string; method: string; path: string; summary?: string;
+  class: "read" | "state_changing_potential" | "destructive_potential";
+  tags: string[]; auth_scheme_types: string[]; auth_scopes: string[];
+};
+
+export type ExposureDestination = {
+  id: string; kind: string; name: string; host?: string; public_network: boolean;
+  credential_present: boolean; enabled: boolean; basis: "observed"; attributes: Record<string, unknown>; context: EntityContext;
+  catalog: { status: "unmapped"; basis: "catalog_potential"; message: string } | {
+    status: "linked"; basis: "catalog_potential"; api_id: string; name: string; version?: string;
+    match_basis: string; operation_counts: Record<string, number>; representative_operations: CatalogOperation[];
+  };
+};
+
+export type ExposureMap = {
+  system: { id: string; name: string; state: string; attributes: Record<string, unknown> };
+  context: EntityContext;
+  destinations: ExposureDestination[];
+  findings: ExposureFinding[];
+  product_boundary: string;
+};
+
+export type CatalogSuggestion = { source_id: string; entry_id: string; provider: string; api_family?: string; version?: string; name: string; status: "suggestion" };
 
 export type Collector = {
   source_id: string;
@@ -191,6 +250,7 @@ export type PageResult<T> = { items: T[]; limit: number; next_cursor?: string };
 export type AuthConfig = {
   enabled: boolean;
   development_bootstrap: boolean;
+  exposure_enabled: boolean;
   authorization_endpoint?: string;
   client_id?: string;
   redirect_uri?: string;
@@ -247,6 +307,26 @@ export class API {
 
   system(id: string) {
     return this.request<SystemDetail>(`/v1/systems/${encodeURIComponent(id)}`);
+  }
+
+  exposureMap(id: string) {
+    return this.request<ExposureMap>(`/v1/systems/${encodeURIComponent(id)}/exposure-map`);
+  }
+
+  entityContext(id: string) {
+    return this.request<EntityContext>(`/v1/entities/${encodeURIComponent(id)}/context`);
+  }
+
+  saveEntityContext(id: string, context: EntityContext) {
+    return this.request<EntityContext>(`/v1/entities/${encodeURIComponent(id)}/context`, { method: "PUT", body: JSON.stringify(context) });
+  }
+
+  catalogSearch(query: string) {
+    return this.request<{ items: CatalogSuggestion[] }>(queryPath("/v1/catalog/search", { q: query }));
+  }
+
+  linkCatalog(id: string, source_id: string, entry_id: string) {
+    return this.request<{ status: string }>(`/v1/entities/${encodeURIComponent(id)}/catalog-link`, { method: "PUT", body: JSON.stringify({ source_id, entry_id }) });
   }
 
   targets(filters: Record<string, string | number | undefined> = {}) {

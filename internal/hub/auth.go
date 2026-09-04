@@ -109,7 +109,7 @@ func (a *Authenticator) issueHumanToken(orgID, subject string, admin bool) (stri
 	expires := now.Add(time.Hour)
 	scopes := []string{"inventory:read"}
 	if admin {
-		scopes = append(scopes, "admin:enrollment", "admin:webhooks", "admin:coverage", "admin:service_accounts")
+		scopes = append(scopes, "admin:enrollment", "admin:webhooks", "admin:coverage", "admin:service_accounts", "context:write")
 	}
 	claims := collectorClaims{OrganizationID: orgID, Scopes: scopes, TokenType: "human", Admin: admin, RegisteredClaims: jwt.RegisteredClaims{Issuer: a.Issuer, Subject: subject, IssuedAt: jwt.NewNumericDate(now), ExpiresAt: jwt.NewNumericDate(expires), ID: uuid.NewString()}}
 	raw, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(a.JWTSecret)

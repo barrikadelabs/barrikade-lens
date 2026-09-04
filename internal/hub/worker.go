@@ -225,7 +225,7 @@ func normalizeSnapshot(ctx context.Context, tx pgx.Tx, snapshot discovery.Snapsh
 	_, _ = tx.Exec(ctx, `DELETE FROM ingestion_jobs WHERE status='complete' AND completed_at < now()-interval '90 days'`)
 	_, _ = tx.Exec(ctx, `DELETE FROM changes WHERE changed_at < now()-interval '90 days'`)
 	_, _ = tx.Exec(ctx, `DELETE FROM webhook_outbox WHERE delivered_at < now()-interval '90 days'`)
-	return nil
+	return enqueueExposureEvaluation(ctx, tx, snapshot.OrganizationID)
 }
 
 func upsertEntity(ctx context.Context, tx pgx.Tx, snapshot discovery.Snapshot, entity discovery.Entity, observedAt time.Time, sequence uint64) (string, *changeMetadata, error) {

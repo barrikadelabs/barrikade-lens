@@ -28,7 +28,7 @@ func TestMillionEntityInventoryQueryUnderTwoSeconds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server, err := NewServer(ctx, Config{Pool: pool, JWTSecret: []byte("0123456789012345678901234567890123456789"), DevAdminToken: "scale-admin", DefaultOrganizationID: org})
+	server, err := NewServer(ctx, Config{Pool: pool, JWTSecret: []byte("0123456789012345678901234567890123456789"), DevAdminToken: "scale-admin", DefaultOrganizationID: org, ExposureEnabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +39,7 @@ func TestMillionEntityInventoryQueryUnderTwoSeconds(t *testing.T) {
 		server.Handler().ServeHTTP(response, request)
 		return response
 	}
-	for _, path := range []string{"/v1/overview?window=7d", "/v1/systems?limit=100", "/v1/entities?limit=100"} {
+	for _, path := range []string{"/v1/overview?window=7d", "/v1/systems?limit=100", "/v1/entities?limit=100", "/v1/exposures?limit=100"} {
 		if response := query(path); response.Code != 200 {
 			t.Fatalf("warmup %s returned %d", path, response.Code)
 		}

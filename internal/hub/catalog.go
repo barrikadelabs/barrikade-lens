@@ -11,6 +11,7 @@ import (
 
 	"github.com/barrikadelabs/barrikade-lens/internal/catalog"
 	"github.com/barrikadelabs/barrikade-lens/pkg/discovery"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -101,6 +102,16 @@ func (w *CatalogWorker) enrichOrganization(ctx context.Context, orgID string) er
 	if err != nil {
 		return err
 	}
+	if _, err := w.Pool.Exec(ctx, `DELETE FROM catalog_index_entries WHERE organization_id=$1 AND source_id=$2`, orgID, w.Provider.ID()); err != nil {
+		return err
+	}
+	indexRows := make([][]any, 0, len(w.index.Entries))
+	for _, entry := range w.index.Entries {
+		indexRows = append(indexRows, []any{orgID, w.Provider.ID(), entry.ID, entry.ProviderID, nullString(entry.APIFamily), nullString(entry.Version), cleanCatalogText(entry.Name, 500), entry.Reference})
+	}
+	if _, err := w.Pool.CopyFrom(ctx, pgx.Identifier{"catalog_index_entries"}, []string{"organization_id", "source_id", "entry_id", "provider_id", "api_family", "api_version", "display_name", "entry_reference"}, pgx.CopyFromRows(indexRows)); err != nil {
+		return err
+	}
 	provenance := "catalog:" + w.Provider.ID()
 	if _, err := w.Pool.Exec(ctx, `UPDATE entities SET current=false,stale=true WHERE organization_id=$1 AND provenance @> ARRAY[$2::text]`, orgID, provenance); err != nil {
 		return err
@@ -111,7 +122,7 @@ func (w *CatalogWorker) enrichOrganization(ctx context.Context, orgID string) er
 	if _, err := w.Pool.Exec(ctx, `DELETE FROM catalog_matches WHERE organization_id=$1 AND source_id=$2`, orgID, w.Provider.ID()); err != nil {
 		return err
 	}
-	rows, err := w.Pool.Query(ctx, `SELECT id,COALESCE(attributes->>'host',''),COALESCE(attributes->>'provider_id','') FROM entities WHERE organization_id=$1 AND current=true AND kind IN ('mcp_server','api_service','model_server') AND (attributes ? 'host' OR attributes ? 'provider_id')`, orgID)
+	rows, err := w.Pool.Query(ctx, `SELECT id,COALESCE(attributes->>'host',''),COALESCE(attributes->>'provider_id','') FROM entities WHERE organization_id=$1 AND current=true AND kind IN ('mcp_server','api_service','model_server') AND ((attributes ? 'host' OR attributes ? 'provider_id') OR EXISTS(SELECT 1 FROM catalog_link_overrides o WHERE o.organization_id=entities.organization_id AND o.entity_id=entities.id AND o.source_id=$2))`, orgID, w.Provider.ID())
 	if err != nil {
 		return err
 	}
@@ -126,21 +137,45 @@ func (w *CatalogWorker) enrichOrganization(ctx context.Context, orgID string) er
 	rows.Close()
 	for _, candidate := range candidates {
 		matches := w.Provider.Match(w.index, candidate.host, candidate.provider)
+		var overrideReference string
+		if err := w.Pool.QueryRow(ctx, `SELECT entry_reference FROM catalog_link_overrides WHERE organization_id=$1 AND entity_id=$2 AND source_id=$3`, orgID, candidate.id, w.Provider.ID()).Scan(&overrideReference); err == nil {
+			matches = nil
+			for _, entry := range w.index.Entries {
+				if entry.Reference == overrideReference {
+					entry.MatchHost = candidate.host
+					matches = []catalog.Match{{Entry: entry, Confidence: "confirmed", Exact: true, Reason: "administrator-reviewed catalogue link"}}
+					break
+				}
+			}
+		}
 		for index, match := range matches {
 			if index >= 5 {
 				break
 			}
 			status := "suggested"
-			if match.Confidence == "confirmed" || match.Confidence == "likely" {
+			if match.Exact && match.Confidence == "confirmed" {
 				status = "linked"
 			}
-			metadata := map[string]any{"catalog_name": match.Entry.Name, "reason": match.Reason, "source_ref": match.Entry.Reference, "source_etag": w.state.ETag}
+			metadata := map[string]any{"catalog_id": match.Entry.ID, "catalog_name": match.Entry.Name, "provider": match.Entry.ProviderID, "api_family": match.Entry.APIFamily, "catalog_version": match.Entry.Version, "reason": match.Reason, "source_ref": match.Entry.Reference, "source_etag": w.state.ETag, "source_commit": w.state.SourceCommit}
 			apiID := match.Entry.ID
 			if status == "linked" {
-				document, fetchErr := w.Provider.Fetch(ctx, match.Entry, catalog.State{})
+				var cachedAPIID, cachedETag, cachedSHA string
+				var cachedMetadata []byte
+				_ = w.Pool.QueryRow(ctx, `SELECT api_id,COALESCE(etag,''),COALESCE(source_sha,''),metadata FROM catalog_documents WHERE organization_id=$1 AND source_id=$2 AND metadata->>'source_ref'=$3 ORDER BY cached_at DESC LIMIT 1`, orgID, w.Provider.ID(), match.Entry.Reference).Scan(&cachedAPIID, &cachedETag, &cachedSHA, &cachedMetadata)
+				document, fetchErr := w.Provider.Fetch(ctx, match.Entry, catalog.State{ETag: cachedETag, SourceCommit: cachedSHA})
 				if fetchErr != nil {
 					w.Logger.Debug("catalog detail fetch failed", "entry", match.Entry.ID, "error", fetchErr)
 					status = "suggested"
+				} else if document.API.ID == "" && cachedAPIID != "" {
+					apiID = cachedAPIID
+					prior := jsonObject(cachedMetadata)
+					for key, value := range metadata {
+						prior[key] = value
+					}
+					metadata = prior
+					if err := w.reactivateCapabilityGraph(ctx, orgID, candidate.id, apiID); err != nil {
+						return err
+					}
 				} else {
 					apiID = document.API.ID
 					if apiID == "" {
@@ -162,7 +197,16 @@ func (w *CatalogWorker) enrichOrganization(ctx context.Context, orgID string) er
 			}
 		}
 	}
+	_, _ = w.Pool.Exec(ctx, `INSERT INTO exposure_evaluation_jobs(organization_id,status,next_attempt_at,updated_at) VALUES($1,'pending',now(),now()) ON CONFLICT(organization_id) DO UPDATE SET status='pending',next_attempt_at=now(),updated_at=now()`, orgID)
 	return nil
+}
+
+func (w *CatalogWorker) reactivateCapabilityGraph(ctx context.Context, orgID, candidateID, apiID string) error {
+	serviceID := discovery.StableID(orgID, discovery.KindAPIService, "catalog:"+w.Provider.ID()+":api:"+apiID)
+	if _, err := w.Pool.Exec(ctx, `UPDATE entities SET current=true,stale=false,last_seen_at=now() WHERE organization_id=$1 AND id=$2`, orgID, serviceID); err != nil {
+		return err
+	}
+	return w.upsertCatalogRelationship(ctx, orgID, candidateID, serviceID, discovery.RelationshipConnectsTo, discovery.ConfidenceConfirmed)
 }
 
 func (w *CatalogWorker) upsertCapabilityGraph(ctx context.Context, orgID, candidateID, apiID, confidence string, document catalog.Document) error {
@@ -173,7 +217,8 @@ func (w *CatalogWorker) upsertCapabilityGraph(ctx context.Context, orgID, candid
 	if confidence == "confirmed" {
 		entityConfidence = discovery.ConfidenceConfirmed
 	}
-	operations, auth, _ := openAPIMetadata(document.OpenAPI)
+	operations := catalogOperations(document.OpenAPI)
+	auth := operationAuthTypes(operations)
 	workflows, _ := arazzoMetadata(document.Arazzo)
 	attributes := map[string]any{
 		"catalog_enriched": true, "catalog_provider": w.Provider.DisplayName(), "api_id": apiID,
@@ -204,35 +249,12 @@ func (w *CatalogWorker) upsertCapabilityGraph(ctx context.Context, orgID, candid
 	if err := w.upsertCatalogRelationship(ctx, orgID, candidateID, serviceID, discovery.RelationshipConnectsTo, entityConfidence); err != nil {
 		return err
 	}
-	for _, operation := range operations {
-		operation = cleanCatalogText(operation, 500)
-		if operation == "" {
-			continue
-		}
-		operationCanonical := canonical + ":operation:" + operation
-		operationID := discovery.StableID(orgID, discovery.KindAPIOperation, operationCanonical)
-		operationAttributes, _ := json.Marshal(map[string]any{"catalog_enriched": true, "catalog_provider": w.Provider.DisplayName(), "operation_id": operation})
-		_, err = w.Pool.Exec(ctx, `INSERT INTO entities(organization_id,id,kind,canonical_key,name,attributes,confidence,provenance,current,stale,first_seen_at,last_seen_at) VALUES($1,$2,'api_operation',$3,$4,$5,$6,ARRAY[$7::text],true,false,now(),now()) ON CONFLICT(organization_id,id) DO UPDATE SET name=EXCLUDED.name,attributes=EXCLUDED.attributes,confidence=EXCLUDED.confidence,provenance=EXCLUDED.provenance,current=true,stale=false,last_seen_at=now()`, orgID, operationID, operationCanonical, operation, operationAttributes, entityConfidence, provenance)
-		if err != nil {
-			return err
-		}
-		if err := w.upsertCatalogRelationship(ctx, orgID, serviceID, operationID, discovery.RelationshipProvides, entityConfidence); err != nil {
-			return err
-		}
+	if _, err := w.Pool.Exec(ctx, `DELETE FROM catalog_api_operations WHERE organization_id=$1 AND source_id=$2 AND api_id=$3`, orgID, w.Provider.ID(), apiID); err != nil {
+		return err
 	}
-	for _, workflow := range workflows {
-		workflow = cleanCatalogText(workflow, 500)
-		if workflow == "" {
-			continue
-		}
-		workflowCanonical := canonical + ":workflow:" + workflow
-		workflowID := discovery.StableID(orgID, discovery.KindWorkflow, workflowCanonical)
-		workflowAttributes, _ := json.Marshal(map[string]any{"catalog_enriched": true, "catalog_provider": w.Provider.DisplayName(), "workflow_id": workflow})
-		_, err = w.Pool.Exec(ctx, `INSERT INTO entities(organization_id,id,kind,canonical_key,name,attributes,confidence,provenance,current,stale,first_seen_at,last_seen_at) VALUES($1,$2,'workflow',$3,$4,$5,$6,ARRAY[$7::text],true,false,now(),now()) ON CONFLICT(organization_id,id) DO UPDATE SET name=EXCLUDED.name,attributes=EXCLUDED.attributes,confidence=EXCLUDED.confidence,provenance=EXCLUDED.provenance,current=true,stale=false,last_seen_at=now()`, orgID, workflowID, workflowCanonical, workflow, workflowAttributes, entityConfidence, provenance)
+	for _, operation := range operations {
+		_, err = w.Pool.Exec(ctx, `INSERT INTO catalog_api_operations(organization_id,source_id,api_id,operation_key,operation_id,method,path,summary,tags,capability_class,auth_scheme_types,auth_scopes) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, orgID, w.Provider.ID(), apiID, operation.Key, operation.ID, operation.Method, operation.Path, nullString(operation.Summary), operation.Tags, operation.Class, operation.AuthSchemes, operation.AuthScopes)
 		if err != nil {
-			return err
-		}
-		if err := w.upsertCatalogRelationship(ctx, orgID, serviceID, workflowID, discovery.RelationshipProvides, entityConfidence); err != nil {
 			return err
 		}
 	}
@@ -268,16 +290,11 @@ func mergeCatalogMetadata(base map[string]any, document catalog.Document) map[st
 	if document.API.Version != "" {
 		base["version"] = document.API.Version
 	}
-	operations, auth, scoring := openAPIMetadata(document.OpenAPI)
+	operations := catalogOperations(document.OpenAPI)
+	auth := operationAuthTypes(operations)
 	base["operation_count"] = len(operations)
-	if len(operations) > 0 {
-		base["operations"] = operations
-	}
 	if len(auth) > 0 {
 		base["auth_scheme_types"] = auth
-	}
-	if len(scoring) > 0 {
-		base["scoring_metadata"] = scoring
 	}
 	workflows, versions := arazzoMetadata(document.Arazzo)
 	base["workflow_count"] = len(workflows)
@@ -321,54 +338,120 @@ func arazzoMetadata(documents []map[string]any) ([]string, []string) {
 	return workflows, versions
 }
 
-func openAPIMetadata(document map[string]any) ([]string, []string, map[string]any) {
-	operations := []string{}
-	authSet := map[string]bool{}
-	scoring := map[string]any{}
-	paths, _ := document["paths"].(map[string]any)
-	for path, raw := range paths {
-		methods, _ := raw.(map[string]any)
-		for method, operation := range methods {
-			switch strings.ToLower(method) {
-			case "get", "put", "post", "delete", "options", "head", "patch", "trace":
-				if operationMap, ok := operation.(map[string]any); ok {
-					if id, ok := operationMap["operationId"].(string); ok {
-						operations = append(operations, id)
-					} else {
-						operations = append(operations, strings.ToUpper(method)+" "+path)
-					}
-				}
-			}
-		}
-	}
+type catalogOperation struct {
+	Key, ID, Method, Path, Summary, Class string
+	Tags, AuthSchemes, AuthScopes         []string
+}
+
+func catalogOperations(document map[string]any) []catalogOperation {
+	schemeTypes := map[string]string{}
 	components, _ := document["components"].(map[string]any)
 	schemes, _ := components["securitySchemes"].(map[string]any)
-	for _, raw := range schemes {
+	for name, raw := range schemes {
 		scheme, _ := raw.(map[string]any)
-		if kind, ok := scheme["type"].(string); ok {
-			authSet[kind] = true
+		if kind, _ := scheme["type"].(string); kind != "" {
+			schemeTypes[name] = kind
 		}
 	}
-	for key, value := range document {
-		lower := strings.ToLower(key)
-		if strings.HasPrefix(lower, "x-score") || strings.HasPrefix(lower, "x-quality") {
-			switch value.(type) {
-			case string, float64, bool:
-				scoring[key] = value
+	globalSecurity, globalSecuritySet := document["security"]
+	paths, _ := document["paths"].(map[string]any)
+	result := []catalogOperation{}
+	for path, raw := range paths {
+		methods, _ := raw.(map[string]any)
+		for method, operationRaw := range methods {
+			method = strings.ToUpper(method)
+			class := ""
+			switch method {
+			case "GET", "HEAD", "OPTIONS":
+				class = "read"
+			case "POST", "PUT", "PATCH":
+				class = "state_changing_potential"
+			case "DELETE":
+				class = "destructive_potential"
+			default:
+				continue
+			}
+			operation, ok := operationRaw.(map[string]any)
+			if !ok {
+				continue
+			}
+			id, _ := operation["operationId"].(string)
+			if id == "" {
+				id = method + " " + path
+			}
+			summary, _ := operation["summary"].(string)
+			tags := stringList(operation["tags"])
+			security := globalSecurity
+			securitySet := globalSecuritySet
+			if value, exists := operation["security"]; exists {
+				security, securitySet = value, true
+			}
+			authTypes, authScopes := effectiveSecurity(security, securitySet, schemeTypes)
+			result = append(result, catalogOperation{Key: discovery.ContentHash([]byte(method + "\x00" + path + "\x00" + id)), ID: cleanCatalogText(id, 500), Method: method, Path: cleanCatalogText(path, 1000), Summary: cleanCatalogText(summary, 1000), Class: class, Tags: tags, AuthSchemes: authTypes, AuthScopes: authScopes})
+		}
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Path == result[j].Path {
+			return result[i].Method < result[j].Method
+		}
+		return result[i].Path < result[j].Path
+	})
+	return result
+}
+
+func effectiveSecurity(raw any, set bool, schemeTypes map[string]string) ([]string, []string) {
+	if !set {
+		return []string{}, []string{}
+	}
+	requirements, _ := raw.([]any)
+	types, scopes := map[string]bool{}, map[string]bool{}
+	for _, requirementRaw := range requirements {
+		requirement, _ := requirementRaw.(map[string]any)
+		for schemeName, scopeRaw := range requirement {
+			kind := schemeTypes[schemeName]
+			if kind == "" {
+				kind = schemeName
+			}
+			types[kind] = true
+			for _, scope := range stringList(scopeRaw) {
+				scopes[scope] = true
 			}
 		}
 	}
-	auth := []string{}
-	for kind := range authSet {
-		auth = append(auth, kind)
-	}
-	sort.Strings(auth)
-	sort.Strings(operations)
-	if len(operations) > 2000 {
-		operations = operations[:2000]
-	}
-	return operations, auth, scoring
+	return sortedKeys(types), sortedKeys(scopes)
 }
+
+func stringList(raw any) []string {
+	items, _ := raw.([]any)
+	result := make([]string, 0, len(items))
+	for _, item := range items {
+		if value, ok := item.(string); ok && value != "" {
+			result = append(result, cleanCatalogText(value, 500))
+		}
+	}
+	sort.Strings(result)
+	return result
+}
+
+func sortedKeys(values map[string]bool) []string {
+	result := make([]string, 0, len(values))
+	for value := range values {
+		result = append(result, value)
+	}
+	sort.Strings(result)
+	return result
+}
+
+func operationAuthTypes(operations []catalogOperation) []string {
+	values := map[string]bool{}
+	for _, operation := range operations {
+		for _, kind := range operation.AuthSchemes {
+			values[kind] = true
+		}
+	}
+	return sortedKeys(values)
+}
+
 func cleanCatalogText(value string, limit int) string {
 	value = strings.TrimSpace(strings.Map(func(r rune) rune {
 		if r == '\x00' {
