@@ -55,12 +55,13 @@ Open `http://localhost:8080` and use the quickstart token `lens-local-admin`. Th
 
 For the Barrikade pilot, the compose stack opens the `org_local` tenant used by the managed collector. The [live-device customer-story demo](docs/demo-live-device.md) shows how to present one real finding and its evidence without loading sample inventory or implying that Lens makes approval decisions.
 
-From the Hub’s Coverage page, create a ten-minute enrollment code and run the one short command it provides:
+From the Hub’s Coverage page, generate the one-device install command and run it on the endpoint:
 
 ```sh
-npx barrikade-lens enroll ABCDE-FGHIJ --hub https://lens.example.com
-barrikade-lens service install
+npx --yes barrikade-lens enroll ABCDE-FGHIJ --hub https://lens.example.com --install
 ```
+
+The command exchanges the single-use ten-minute code, stores rotating collector credentials privately, installs a stable background collector, and starts reporting. Run it with administrator privileges for system-wide macOS or Windows coverage. Node.js 18 or newer is required for the npm launcher; managed fleets can continue to pre-position the native binary.
 
 Managed endpoint discovery performs an initial full scan, watches only known agent/configuration/skill roots, debounces relevant filesystem changes, reconciles processes and listeners every 15 minutes, and runs a jittered daily full scan. It does not install runtime hooks or capture prompts, tool calls, or commands.
 

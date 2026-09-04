@@ -255,17 +255,27 @@ button.system-row:hover, button.inventory-row:hover, button.target-row:hover { c
 .collector-row .complete { color: var(--green); }
 .collector-row .partial { color: var(--amber); }
 .collector-row time { color: var(--text-4); text-align: right; }
-.baseline-panel, .enrollment-panel { display: grid; grid-template-columns: minmax(250px,1fr) auto; gap: 20px; align-items: center; }
+.baseline-panel { display: grid; grid-template-columns: minmax(250px,1fr) auto; gap: 20px; align-items: center; }
+.enrollment-panel { display: grid; gap: 18px; }
 .baseline-panel h2, .enrollment-panel h2 { margin: 0 0 6px; font-size: 17px; }
 .baseline-panel > div:first-child > p:last-child, .enrollment-panel > div:first-child > p:last-child { max-width: 750px; margin: 0; color: var(--text-3); font-size: 9px; line-height: 1.6; }
 .baseline-form { display: flex; align-items: end; gap: 7px; }
 .baseline-form label { display: grid; width: 105px; gap: 5px; color: var(--text-4); font: 700 7px var(--mono); text-transform: uppercase; }
 .baseline-form input { min-height: 35px; }
 .form-status { grid-column: 1/-1; color: var(--text-3); }
-.enrollment-code { display: grid; grid-template-columns: auto auto; gap: 6px 10px; align-items: center; }
-.enrollment-code > span { font: 700 20px var(--mono); letter-spacing: .08em; }
-.enrollment-code button { display: inline-flex; align-items: center; gap: 5px; border: 0; color: var(--orange); background: none; font-size: 9px; }
-.enrollment-code small { grid-column: 1/-1; color: var(--text-4); font: 8px var(--mono); }
+.enrollment-head { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.enrollment-head > div > p:last-child { max-width: 750px; margin: 0; color: var(--text-3); font-size: 9px; line-height: 1.6; }
+.enrollment-setup { display: grid; gap: 10px; padding-top: 16px; border-top: 1px solid var(--line-soft); }
+.platform-tabs { display: flex; gap: 5px; }
+.platform-tabs button { min-height: 30px; padding: 0 12px; border: 1px solid var(--line); border-radius: 6px; color: var(--text-3); background: transparent; font-size: 9px; font-weight: 700; }
+.platform-tabs button.active { border-color: rgba(255,107,0,.5); color: var(--orange); background: var(--orange-soft); }
+.install-instruction { margin: 0; color: var(--text-3); font-size: 10px; line-height: 1.5; }
+.install-command { display: grid; grid-template-columns: minmax(0,1fr) auto; overflow: hidden; border: 1px solid var(--line); border-radius: 8px; background: rgba(0,0,0,.28); }
+.install-command code { overflow-x: auto; padding: 14px; color: var(--text-2); font: 10px/1.5 var(--mono); white-space: nowrap; }
+.install-command button { display: inline-flex; padding: 0 14px; align-items: center; gap: 6px; border: 0; border-left: 1px solid var(--line); color: var(--orange); background: var(--surface-soft); font-size: 9px; font-weight: 700; }
+.install-command button:hover { background: var(--surface-hover); }
+.enrollment-meta { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: var(--text-4); font: 8px var(--mono); }
+.enrollment-meta button { padding: 0; border: 0; color: var(--text-3); background: none; font: inherit; text-decoration: underline; text-underline-offset: 2px; }
 
 /* Changes */
 .change-log { padding-bottom: 10px; }
@@ -563,6 +573,10 @@ button.system-row:hover, button.inventory-row:hover, button.target-row:hover { c
   .executive-strip { grid-template-columns: 1fr; }
   .state-legend { grid-template-columns: 1fr 1fr; }
   .filters { display: grid; grid-template-columns: 1fr 1fr; }
+  .enrollment-head { align-items: stretch; flex-direction: column; }
+  .install-command { grid-template-columns: 1fr; }
+  .install-command button { min-height: 38px; justify-content: center; border-top: 1px solid var(--line); border-left: 0; }
+  .enrollment-meta { align-items: flex-start; flex-direction: column; }
   .select { min-width: 0; }
   .filter-bar { padding: 8px; }
   .coverage-card { grid-template-columns: 38px 1fr; }

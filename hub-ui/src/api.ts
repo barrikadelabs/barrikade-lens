@@ -362,7 +362,7 @@ export class API {
   }
 
   enrollment(uses = 1, expires = 600, source_type = "endpoint") {
-    return this.request<{ code: string; expires_at: string }>("/v1/admin/enrollment-codes", {
+    return this.request<{ code: string; expires_at: string; hub_url?: string }>("/v1/admin/enrollment-codes", {
       method: "POST",
       body: JSON.stringify({ uses, expires_in_seconds: expires, source_type }),
     });

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -26,9 +27,10 @@ import (
 var Version = "2.0.0-dev"
 
 type Dependencies struct {
-	In  io.Reader
-	Out io.Writer
-	Err io.Writer
+	In             io.Reader
+	Out            io.Writer
+	Err            io.Writer
+	InstallService func(context.Context, string, string) (servicecontrol.Status, error)
 }
 
 func Execute() int {
@@ -168,6 +170,7 @@ func newScanCommand(dependencies Dependencies, organizationID, packPath *string)
 
 func newEnrollCommand(dependencies Dependencies) *cobra.Command {
 	var hubURL, configPath string
+	var installService bool
 	command := &cobra.Command{
 		Use: "enroll [code]", Short: "Enroll this endpoint with a Lens Hub", Args: cobra.MaximumNArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
@@ -198,12 +201,26 @@ func newEnrollCommand(dependencies Dependencies) *cobra.Command {
 			if path == "" {
 				path, _ = lensconfig.Path()
 			}
-			fmt.Fprintf(dependencies.Out, "Enrolled %s with Lens Hub.\nConfiguration saved privately at %s.\nRun `barrikade-lens service install` to enable managed discovery.\n", cfg.SourceID, path)
+			fmt.Fprintf(dependencies.Out, "Enrolled %s with Lens Hub.\nConfiguration saved privately at %s.\n", cfg.SourceID, path)
+			if installService {
+				installer := dependencies.InstallService
+				if installer == nil {
+					installer = servicecontrol.Install
+				}
+				status, installErr := installer(command.Context(), "", path)
+				if installErr != nil {
+					return fmt.Errorf("endpoint enrollment succeeded, but the managed collector could not be installed: %w; retry with `barrikade-lens service install --config %q`", installErr, path)
+				}
+				fmt.Fprintf(dependencies.Out, "Collector service: %s\nOnboarding complete. This endpoint will now report to Lens.\n", status.State)
+				return nil
+			}
+			fmt.Fprintln(dependencies.Out, "Run `barrikade-lens service install` to enable managed discovery.")
 			return nil
 		},
 	}
 	command.Flags().StringVar(&hubURL, "hub", "", "Lens Hub base URL")
 	command.Flags().StringVar(&configPath, "config", "", "managed collector configuration path")
+	command.Flags().BoolVar(&installService, "install", false, "install and start the managed collector after enrollment")
 	return command
 }
 
@@ -244,7 +261,8 @@ func newServiceCommand(dependencies Dependencies) *cobra.Command {
 		if configPath == "" {
 			configPath, _ = lensconfig.Path()
 		}
-		return managed.Runner{ConfigPath: configPath, Version: Version}.Run(command.Context())
+		runner := managed.Runner{ConfigPath: configPath, Version: Version}
+		return servicecontrol.Run(command.Context(), runner.Run)
 	}}
 	command.AddCommand(run)
 	return command

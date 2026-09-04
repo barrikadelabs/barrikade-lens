@@ -79,7 +79,7 @@ func Save(path string, value Config) error {
 	if err := os.WriteFile(temporary, append(data, '\n'), 0o600); err != nil {
 		return err
 	}
-	if err := os.Chmod(temporary, 0o600); err != nil {
+	if err := protectFile(temporary); err != nil {
 		return err
 	}
 	return os.Rename(temporary, path)

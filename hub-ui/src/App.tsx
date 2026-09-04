@@ -258,8 +258,23 @@ function CoveragePage({ api, revision }: { api: API; revision: number }) {
   const overview = useRemote(() => api.overview("7d"), [api, revision]);
   const targets = useRemote(() => api.targets({ target_type: targetType, limit: 100 }), [api, revision, targetType]);
   const [expanded, setExpanded] = useState<string>();
-  const [enrollment, setEnrollment] = useState<{ code: string; expires_at: string }>();
+  const [enrollment, setEnrollment] = useState<{ code: string; expires_at: string; hub_url?: string }>();
   const [enrollError, setEnrollError] = useState("");
+  const [enrollmentPlatform, setEnrollmentPlatform] = useState<"macos" | "windows">("macos");
+  const [commandCopied, setCommandCopied] = useState(false);
+  const generateEnrollment = () => {
+    setEnrollError("");
+    setCommandCopied(false);
+    api.enrollment().then(setEnrollment).catch((reason) => setEnrollError(String(reason)));
+  };
+  const enrollmentHub = enrollment?.hub_url || location.origin;
+  const enrollmentCommand = enrollmentPlatform === "macos"
+    ? `sudo -E "$(command -v npx)" --yes barrikade-lens enroll ${enrollment?.code ?? "CODE"} --hub '${enrollmentHub}' --config '/Library/Application Support/Barrikade/Lens/config.json' --install`
+    : `npx --yes barrikade-lens enroll ${enrollment?.code ?? "CODE"} --hub '${enrollmentHub}' --install`;
+  const copyEnrollmentCommand = () => navigator.clipboard.writeText(enrollmentCommand).then(() => {
+    setCommandCopied(true);
+    window.setTimeout(() => setCommandCopied(false), 1800);
+  }).catch((reason) => setEnrollError(`Could not copy the command: ${String(reason)}`));
   if (overview.loading || targets.loading) return <Loading />;
   if (overview.error || targets.error || !overview.data || !targets.data) return <Failure error={overview.error || targets.error} retry={() => { overview.reload(); targets.reload(); }} />;
   return <div className="page-stack">
@@ -281,8 +296,20 @@ function CoveragePage({ api, revision }: { api: API; revision: number }) {
       </div>
     </section>
     <CoverageBaseline api={api} coverage={overview.data.coverage} onSaved={() => overview.reload()} />
-    <section className="panel enrollment-panel"><div><p className="eyebrow">EXPAND COVERAGE</p><h2>Enroll a managed endpoint</h2><p>Generate a single-device code valid for ten minutes. The endpoint creates its own persistent signing identity and keeps it across credential rotation.</p></div>
-      <div className="enrollment-action">{enrollment ? <div className="enrollment-code"><span>{enrollment.code}</span><button onClick={() => navigator.clipboard.writeText(enrollment.code)}><Copy size={15} /> Copy</button><small>Expires {new Date(enrollment.expires_at).toLocaleTimeString()}</small></div> : <button className="button primary" onClick={() => { setEnrollError(""); api.enrollment().then(setEnrollment).catch((reason) => setEnrollError(String(reason))); }}>Generate enrollment code</button>}{enrollError && <InlineError text={enrollError} />}</div>
+    <section className="panel enrollment-panel">
+      <div className="enrollment-head"><div><p className="eyebrow">EXPAND COVERAGE</p><h2>Enroll a managed endpoint</h2><p>Generate a private, single-device command that expires in ten minutes. It enrolls the endpoint and starts continuous discovery in one step.</p></div>
+        {!enrollment && <button className="button primary" onClick={generateEnrollment}>Generate install command</button>}
+      </div>
+      {enrollment && <div className="enrollment-setup">
+        <div className="platform-tabs" aria-label="Endpoint platform">
+          <button className={enrollmentPlatform === "macos" ? "active" : ""} onClick={() => { setEnrollmentPlatform("macos"); setCommandCopied(false); }}>macOS</button>
+          <button className={enrollmentPlatform === "windows" ? "active" : ""} onClick={() => { setEnrollmentPlatform("windows"); setCommandCopied(false); }}>Windows</button>
+        </div>
+        <p className="install-instruction">{enrollmentPlatform === "macos" ? "Open Terminal on the Mac. Paste this command and enter the administrator password when prompted. Requires Node.js 18+." : "Open PowerShell as Administrator on the Windows device, then paste this command. Requires Node.js 18+."}</p>
+        <div className="install-command"><code>{enrollmentCommand}</code><button onClick={copyEnrollmentCommand}><Copy size={15} /> {commandCopied ? "Copied" : "Copy command"}</button></div>
+        <div className="enrollment-meta"><span>One use · expires {new Date(enrollment.expires_at).toLocaleTimeString()}</span><button onClick={generateEnrollment}>Generate a new command</button></div>
+      </div>}
+      {enrollError && <InlineError text={enrollError} />}
     </section>
   </div>;
 }

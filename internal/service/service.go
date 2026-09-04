@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 )
 
 const serviceName = "barrikade-lens"
@@ -39,7 +40,14 @@ func Install(ctx context.Context, executable, configPath string) (Status, error)
 		}
 	}
 	executable, _ = filepath.Abs(executable)
-	if runtime.GOOS == "darwin" {
+	if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
+		stagedPath := filepath.Join(filepath.Dir(configPath), "bin", managedExecutableName())
+		if runtime.GOOS == "windows" {
+			if _, err := os.Stat(stagedPath); err == nil {
+				executable = stagedPath
+				return installWindows(ctx, executable, configPath)
+			}
+		}
 		staged, err := stageExecutable(executable, configPath)
 		if err != nil {
 			return Status{}, fmt.Errorf("stage managed collector executable: %w", err)
@@ -63,7 +71,7 @@ func stageExecutable(source, configPath string) (string, error) {
 	if err := os.MkdirAll(directory, 0o700); err != nil {
 		return "", err
 	}
-	destination := filepath.Join(directory, serviceName)
+	destination := filepath.Join(directory, managedExecutableName())
 	temporary, err := os.CreateTemp(directory, serviceName+"-*")
 	if err != nil {
 		return "", err
@@ -232,12 +240,48 @@ WantedBy=default.target
 
 func installWindows(ctx context.Context, executable, configPath string) (Status, error) {
 	binPath := fmt.Sprintf(`"%s" service run --config "%s"`, executable, configPath)
-	output, err := exec.CommandContext(ctx, "sc.exe", "create", "BarrikadeLens", "start=", "auto", "binPath=", binPath, "DisplayName=", "Barrikade Lens").CombinedOutput()
-	if err != nil {
-		return Status{}, fmt.Errorf("create Windows service: %s: %w", strings.TrimSpace(string(output)), err)
+	status := GetStatus(ctx)
+	action := "create"
+	arguments := []string{"create", "BarrikadeLens", "start=", "auto", "binPath=", binPath, "DisplayName=", "Barrikade Lens"}
+	if status.State != StateNotInstalled {
+		action = "update"
+		if status.State == StateRunning {
+			_ = exec.CommandContext(ctx, "sc.exe", "stop", "BarrikadeLens").Run()
+		}
+		arguments = []string{"config", "BarrikadeLens", "start=", "auto", "binPath=", binPath, "DisplayName=", "Barrikade Lens"}
 	}
-	_ = exec.CommandContext(ctx, "sc.exe", "start", "BarrikadeLens").Run()
-	return GetStatus(ctx), nil
+	output, err := exec.CommandContext(ctx, "sc.exe", arguments...).CombinedOutput()
+	if err != nil {
+		return Status{}, fmt.Errorf("%s Windows service: %s: %w", action, strings.TrimSpace(string(output)), err)
+	}
+	output, err = exec.CommandContext(ctx, "sc.exe", "start", "BarrikadeLens").CombinedOutput()
+	if err != nil {
+		return Status{}, fmt.Errorf("start Windows service: %s: %w", strings.TrimSpace(string(output)), err)
+	}
+	deadline := time.NewTimer(10 * time.Second)
+	defer deadline.Stop()
+	ticker := time.NewTicker(250 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		status = GetStatus(ctx)
+		if status.State == StateRunning {
+			return status, nil
+		}
+		select {
+		case <-ctx.Done():
+			return Status{}, ctx.Err()
+		case <-deadline.C:
+			return status, fmt.Errorf("Windows service did not reach the running state: %s", status.Detail)
+		case <-ticker.C:
+		}
+	}
+}
+
+func managedExecutableName() string {
+	if runtime.GOOS == "windows" {
+		return serviceName + ".exe"
+	}
+	return serviceName
 }
 
 func launchdTarget() (string, string, error) {

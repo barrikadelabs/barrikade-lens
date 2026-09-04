@@ -249,7 +249,7 @@ func (s *Server) createEnrollmentCode(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "database_error", "Could not save enrollment code")
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"code": code, "expires_at": expires.Format(time.RFC3339), "uses": request.Uses, "source_type": request.SourceType})
+	writeJSON(w, http.StatusCreated, map[string]any{"code": code, "expires_at": expires.Format(time.RFC3339), "uses": request.Uses, "source_type": request.SourceType, "hub_url": s.config.PublicURL})
 }
 
 func (s *Server) exchangeEnrollment(w http.ResponseWriter, r *http.Request) {
