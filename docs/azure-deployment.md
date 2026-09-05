@@ -32,8 +32,21 @@ The workflow uses an `azure-pilot` GitHub environment with these variables:
 The federated credential must trust this subject:
 
 ```text
-repo:barrikadelabs/barrikade-lens:environment:azure-pilot
+repo:barrikadelabs@274570617/barrikade-lens@1301339073:environment:azure-pilot
 ```
+
+This repository uses GitHub's ID-hardened OIDC subject prefix, so the
+organization and repository numeric IDs are part of the claim. Do not replace
+it with the legacy name-only `repo:barrikadelabs/barrikade-lens` prefix. Check
+the repository's current subject configuration before recreating the Azure
+federated credential:
+
+```bash
+gh api repos/barrikadelabs/barrikade-lens/actions/oidc/customization/sub
+```
+
+An `AADSTS700213` login failure means the issuer, audience, or complete subject
+in Azure does not exactly match the assertion printed by `azure/login`.
 
 The deployment identity only needs `AcrPush` on the pilot registry and
 `Container Apps Contributor` on the pilot Container App. The Container App's
