@@ -18,7 +18,7 @@ jobs:
       LENS_TEST_DATABASE_URL: postgres://lens:lens@127.0.0.1:5432/lens?sslmode=disable
       LENS_RUN_SCALE_TESTS: '1'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with: {go-version: '1.26.x', cache: true}
       - run: go test -run TestMillionEntityInventoryQueryUnderTwoSeconds -count=1 -timeout=20m ./internal/hub
