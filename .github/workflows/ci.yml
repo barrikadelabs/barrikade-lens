@@ -18,7 +18,7 @@ jobs:
     env:
       LENS_TEST_DATABASE_URL: postgres://lens:lens@127.0.0.1:5432/lens?sslmode=disable
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with: {go-version: '1.26.x', cache: true}
       - run: go vet ./...
@@ -30,7 +30,7 @@ jobs:
   typescript:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
         with: {node-version: 24, cache: npm}
       - run: npm ci --ignore-scripts
@@ -40,7 +40,7 @@ jobs:
     strategy: {fail-fast: false, matrix: {os: [macos-latest, windows-latest, ubuntu-latest]}}
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with: {go-version: '1.26.x'}
       - run: go test ./pkg/discovery ./internal/scanner/endpoint ./internal/tui ./internal/probe
@@ -48,7 +48,7 @@ jobs:
     strategy: {fail-fast: false, matrix: {os: [macos-latest, windows-latest, ubuntu-latest]}}
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with: {go-version: '1.26.x'}
       - uses: actions/setup-node@v6
@@ -76,7 +76,7 @@ jobs:
   kubernetes-rbac:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - uses: azure/setup-helm@v4
       - uses: helm/kind-action@v1.12.0
       - name: Lint and install discovery controller

@@ -45,7 +45,7 @@ jobs:
           echo "sha=$sha" >> "$GITHUB_OUTPUT"
           echo "short-sha=${sha:0:12}" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ steps.source.outputs.sha }}
 
