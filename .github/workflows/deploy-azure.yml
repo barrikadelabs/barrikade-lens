@@ -109,11 +109,17 @@ jobs:
           expected="gh-${SHORT_SHA}-${GITHUB_RUN_ATTEMPT}"
 
           for attempt in {1..30}; do
-            read -r latest ready status < <(az containerapp show \
+            revision_state=()
+            while IFS= read -r value; do
+              revision_state+=("$value")
+            done < <(az containerapp show \
               --resource-group "$AZURE_RESOURCE_GROUP" \
               --name "$AZURE_CONTAINER_APP" \
               --query '[properties.latestRevisionName,properties.latestReadyRevisionName,properties.runningStatus]' \
               --output tsv)
+            latest="${revision_state[0]:-}"
+            ready="${revision_state[1]:-}"
+            status="${revision_state[2]:-}"
             if [[ "$latest" == *"--$expected" && "$ready" == "$latest" && "$status" == "Running" ]]; then
               break
             fi
@@ -127,4 +133,3 @@ jobs:
           curl --fail --silent --show-error \
             --retry 6 --retry-all-errors --retry-delay 5 \
             "${{ steps.deploy.outputs.app-url }}/healthz"
-
