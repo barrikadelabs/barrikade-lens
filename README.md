@@ -53,6 +53,8 @@ docker compose up --build
 
 Open `http://localhost:8080` and use the quickstart token `lens-local-admin`. The compose credentials are deliberately development-only; use [the self-hosting guide](docs/self-hosting.md) for a real deployment.
 
+The Barrikade Azure pilot is deployed through the CI-gated [Azure deployment workflow](docs/azure-deployment.md).
+
 For the Barrikade pilot, the compose stack opens the `org_local` tenant used by the managed collector. The [live-device customer-story demo](docs/demo-live-device.md) shows how to present one real finding and its evidence without loading sample inventory or implying that Lens makes approval decisions.
 
 From the Hub’s Coverage page, generate the one-device install command and run it on the endpoint:
