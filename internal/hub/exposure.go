@@ -262,10 +262,9 @@ func loadExposureDestinations(ctx context.Context, q interface {
 // rowsConnQueryRow exists only to keep loadExposureDestinations usable with a
 // transaction in the evaluator and the pool in read handlers.
 func rowsConnQueryRow(ctx context.Context, q any, query string, args ...any) pgx.Row {
-	switch typed := q.(type) {
-	case pgx.Tx:
-		return typed.QueryRow(ctx, query, args...)
-	case *pgxpool.Pool:
+	if typed, ok := q.(interface {
+		QueryRow(context.Context, string, ...any) pgx.Row
+	}); ok {
 		return typed.QueryRow(ctx, query, args...)
 	}
 	return errorRow{fmt.Errorf("unsupported query source")}
@@ -366,7 +365,7 @@ func (s *Server) getEntityContext(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 403, "forbidden", err.Error())
 		return
 	}
-	contextValue, err := loadEntityContext(r.Context(), s.config.Pool, principal.OrganizationID, r.PathValue("id"))
+	contextValue, err := loadEntityContext(r.Context(), s.db(r.Context()), principal.OrganizationID, r.PathValue("id"))
 	if err != nil {
 		writeError(w, 500, "database_error", "Could not read context")
 		return
@@ -392,7 +391,7 @@ func (s *Server) putEntityContext(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "invalid_context", err.Error())
 		return
 	}
-	tx, err := s.config.Pool.BeginTx(r.Context(), pgx.TxOptions{})
+	tx, err := s.begin(r.Context())
 	if err != nil {
 		writeError(w, 500, "database_error", "Could not save context")
 		return
@@ -418,7 +417,7 @@ func (s *Server) putEntityContext(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "database_error", "Could not save context")
 		return
 	}
-	value, _ = loadEntityContext(r.Context(), s.config.Pool, principal.OrganizationID, r.PathValue("id"))
+	value, _ = loadEntityContext(r.Context(), s.db(r.Context()), principal.OrganizationID, r.PathValue("id"))
 	writeJSON(w, 200, value)
 }
 
@@ -483,7 +482,7 @@ func (s *Server) listExposures(w http.ResponseWriter, r *http.Request) {
 	}
 	args = append(args, limit)
 	query += fmt.Sprintf(` ORDER BY CASE f.severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,f.last_seen_at DESC,f.id DESC LIMIT $%d`, len(args))
-	rows, err := s.config.Pool.Query(r.Context(), query, args...)
+	rows, err := s.db(r.Context()).Query(r.Context(), query, args...)
 	if err != nil {
 		writeError(w, 500, "database_error", "Could not read exposures")
 		return
@@ -526,7 +525,7 @@ func (s *Server) getExposure(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 403, "forbidden", err.Error())
 		return
 	}
-	row := s.config.Pool.QueryRow(r.Context(), `SELECT f.id,f.root_entity_id,root.name,f.destination_entity_id,destination.name,f.rule_id,f.rule_version,f.severity,f.title,f.explanation,f.recommended_next_step,f.path,f.evidence_bases,f.first_seen_at,f.last_seen_at FROM exposure_findings f JOIN entities root ON root.organization_id=f.organization_id AND root.id=f.root_entity_id LEFT JOIN entities destination ON destination.organization_id=f.organization_id AND destination.id=f.destination_entity_id WHERE f.organization_id=$1 AND f.id=$2`, principal.OrganizationID, r.PathValue("id"))
+	row := s.db(r.Context()).QueryRow(r.Context(), `SELECT f.id,f.root_entity_id,root.name,f.destination_entity_id,destination.name,f.rule_id,f.rule_version,f.severity,f.title,f.explanation,f.recommended_next_step,f.path,f.evidence_bases,f.first_seen_at,f.last_seen_at FROM exposure_findings f JOIN entities root ON root.organization_id=f.organization_id AND root.id=f.root_entity_id LEFT JOIN entities destination ON destination.organization_id=f.organization_id AND destination.id=f.destination_entity_id WHERE f.organization_id=$1 AND f.id=$2`, principal.OrganizationID, r.PathValue("id"))
 	item, err := scanExposure(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, 404, "not_found", "Exposure not found")
@@ -565,7 +564,7 @@ func (s *Server) getExposureMap(w http.ResponseWriter, r *http.Request) {
 	orgID, id := principal.OrganizationID, r.PathValue("id")
 	var rootName, state string
 	var attrsRaw []byte
-	err = s.config.Pool.QueryRow(r.Context(), `SELECT e.name,e.attributes,p.discovery_state FROM entities e JOIN entity_posture p ON p.organization_id=e.organization_id AND p.entity_id=e.id WHERE e.organization_id=$1 AND e.id=$2 AND p.system_role='system'`, orgID, id).Scan(&rootName, &attrsRaw, &state)
+	err = s.db(r.Context()).QueryRow(r.Context(), `SELECT e.name,e.attributes,p.discovery_state FROM entities e JOIN entity_posture p ON p.organization_id=e.organization_id AND p.entity_id=e.id WHERE e.organization_id=$1 AND e.id=$2 AND p.system_role='system'`, orgID, id).Scan(&rootName, &attrsRaw, &state)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, 404, "not_found", "System not found")
 		return
@@ -574,15 +573,15 @@ func (s *Server) getExposureMap(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "database_error", "Could not read exposure map")
 		return
 	}
-	destinations, err := loadExposureDestinations(r.Context(), s.config.Pool, orgID, id)
+	destinations, err := loadExposureDestinations(r.Context(), s.db(r.Context()), orgID, id)
 	if err != nil {
 		writeError(w, 500, "database_error", "Could not read exposure map")
 		return
 	}
-	contextValue, _ := loadEntityContext(r.Context(), s.config.Pool, orgID, id)
+	contextValue, _ := loadEntityContext(r.Context(), s.db(r.Context()), orgID, id)
 	destinationItems := []map[string]any{}
 	for _, destination := range destinations {
-		destinationContext, _ := loadEntityContext(r.Context(), s.config.Pool, orgID, destination.ID)
+		destinationContext, _ := loadEntityContext(r.Context(), s.db(r.Context()), orgID, destination.ID)
 		item := map[string]any{"id": destination.ID, "kind": destination.Kind, "name": destination.Name, "host": destination.Host, "public_network": destination.Public, "credential_present": destination.Credential, "enabled": !explicitlyDisabled(destination.Attributes), "basis": "observed", "attributes": destination.Attributes}
 		item["context"] = destinationContext
 		if destination.Catalog != nil {
@@ -600,7 +599,7 @@ func (s *Server) getExposureMap(w http.ResponseWriter, r *http.Request) {
 		}
 		destinationItems = append(destinationItems, item)
 	}
-	rows, err := s.config.Pool.Query(r.Context(), `SELECT f.id,f.root_entity_id,root.name,f.destination_entity_id,destination.name,f.rule_id,f.rule_version,f.severity,f.title,f.explanation,f.recommended_next_step,f.path,f.evidence_bases,f.first_seen_at,f.last_seen_at FROM exposure_findings f JOIN entities root ON root.organization_id=f.organization_id AND root.id=f.root_entity_id LEFT JOIN entities destination ON destination.organization_id=f.organization_id AND destination.id=f.destination_entity_id WHERE f.organization_id=$1 AND f.root_entity_id=$2 AND f.current=true ORDER BY CASE f.severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END`, orgID, id)
+	rows, err := s.db(r.Context()).Query(r.Context(), `SELECT f.id,f.root_entity_id,root.name,f.destination_entity_id,destination.name,f.rule_id,f.rule_version,f.severity,f.title,f.explanation,f.recommended_next_step,f.path,f.evidence_bases,f.first_seen_at,f.last_seen_at FROM exposure_findings f JOIN entities root ON root.organization_id=f.organization_id AND root.id=f.root_entity_id LEFT JOIN entities destination ON destination.organization_id=f.organization_id AND destination.id=f.destination_entity_id WHERE f.organization_id=$1 AND f.root_entity_id=$2 AND f.current=true ORDER BY CASE f.severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END`, orgID, id)
 	findings := []map[string]any{}
 	if err == nil {
 		defer rows.Close()
@@ -624,7 +623,7 @@ func (s *Server) searchCatalog(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "invalid_query", "Search must be at most 200 characters")
 		return
 	}
-	rows, err := s.config.Pool.Query(r.Context(), `SELECT source_id,entry_id,provider_id,COALESCE(api_family,''),COALESCE(api_version,''),display_name FROM catalog_index_entries WHERE organization_id=$1 AND ($2='' OR provider_id ILIKE '%'||$2||'%' OR COALESCE(api_family,'') ILIKE '%'||$2||'%' OR display_name ILIKE '%'||$2||'%') ORDER BY provider_id,api_family,api_version LIMIT 50`, principal.OrganizationID, query)
+	rows, err := s.db(r.Context()).Query(r.Context(), `SELECT source_id,entry_id,provider_id,COALESCE(api_family,''),COALESCE(api_version,''),display_name FROM catalog_index_entries WHERE organization_id=$1 AND ($2='' OR provider_id ILIKE '%'||$2||'%' OR COALESCE(api_family,'') ILIKE '%'||$2||'%' OR display_name ILIKE '%'||$2||'%') ORDER BY provider_id,api_family,api_version LIMIT 50`, principal.OrganizationID, query)
 	if err != nil {
 		writeError(w, 500, "database_error", "Could not search catalogue")
 		return
@@ -654,7 +653,7 @@ func (s *Server) putCatalogLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var reference string
-	err = s.config.Pool.QueryRow(r.Context(), `SELECT entry_reference FROM catalog_index_entries WHERE organization_id=$1 AND source_id=$2 AND entry_id=$3`, principal.OrganizationID, request.SourceID, request.EntryID).Scan(&reference)
+	err = s.db(r.Context()).QueryRow(r.Context(), `SELECT entry_reference FROM catalog_index_entries WHERE organization_id=$1 AND source_id=$2 AND entry_id=$3`, principal.OrganizationID, request.SourceID, request.EntryID).Scan(&reference)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, 404, "not_found", "Catalogue entry not found")
 		return
@@ -663,7 +662,7 @@ func (s *Server) putCatalogLink(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "database_error", "Could not link catalogue entry")
 		return
 	}
-	_, err = s.config.Pool.Exec(r.Context(), `INSERT INTO catalog_link_overrides(organization_id,entity_id,source_id,api_id,entry_reference,selected_by) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(organization_id,entity_id,source_id) DO UPDATE SET api_id=EXCLUDED.api_id,entry_reference=EXCLUDED.entry_reference,selected_by=EXCLUDED.selected_by,selected_at=now()`, principal.OrganizationID, r.PathValue("id"), request.SourceID, request.EntryID, reference, principal.Subject)
+	_, err = s.db(r.Context()).Exec(r.Context(), `INSERT INTO catalog_link_overrides(organization_id,entity_id,source_id,api_id,entry_reference,selected_by) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(organization_id,entity_id,source_id) DO UPDATE SET api_id=EXCLUDED.api_id,entry_reference=EXCLUDED.entry_reference,selected_by=EXCLUDED.selected_by,selected_at=now()`, principal.OrganizationID, r.PathValue("id"), request.SourceID, request.EntryID, reference, principal.Subject)
 	if err != nil {
 		writeError(w, 500, "database_error", "Could not link catalogue entry")
 		return
@@ -676,7 +675,7 @@ func (s *Server) deleteCatalogLink(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 403, "forbidden", "Administrator context:write access is required")
 		return
 	}
-	tx, err := s.config.Pool.BeginTx(r.Context(), pgx.TxOptions{})
+	tx, err := s.begin(r.Context())
 	if err != nil {
 		writeError(w, 500, "database_error", "Could not remove catalogue link")
 		return
@@ -702,7 +701,7 @@ func (s *Server) deleteCatalogLink(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func exposureSummary(ctx context.Context, pool *pgxpool.Pool, orgID, rootID string) map[string]any {
+func exposureSummary(ctx context.Context, q database, orgID, rootID string) map[string]any {
 	query := `SELECT severity,count(*) FROM exposure_findings WHERE organization_id=$1 AND current=true`
 	args := []any{orgID}
 	if rootID != "" {
@@ -710,7 +709,7 @@ func exposureSummary(ctx context.Context, pool *pgxpool.Pool, orgID, rootID stri
 		args = append(args, rootID)
 	}
 	query += ` GROUP BY severity`
-	rows, err := pool.Query(ctx, query, args...)
+	rows, err := q.Query(ctx, query, args...)
 	counts := map[string]int{"critical": 0, "high": 0, "medium": 0, "low": 0}
 	if err == nil {
 		defer rows.Close()
@@ -725,9 +724,9 @@ func exposureSummary(ctx context.Context, pool *pgxpool.Pool, orgID, rootID stri
 	return map[string]any{"counts": counts, "total": counts["critical"] + counts["high"] + counts["medium"] + counts["low"]}
 }
 
-func exposureOverviewSummary(ctx context.Context, pool *pgxpool.Pool, orgID string) map[string]any {
-	result := exposureSummary(ctx, pool, orgID, "")
-	rows, err := pool.Query(ctx, `SELECT id,root_entity_id,rule_id,severity,title FROM exposure_findings WHERE organization_id=$1 AND current=true ORDER BY CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,last_seen_at DESC LIMIT 5`, orgID)
+func exposureOverviewSummary(ctx context.Context, q database, orgID string) map[string]any {
+	result := exposureSummary(ctx, q, orgID, "")
+	rows, err := q.Query(ctx, `SELECT id,root_entity_id,rule_id,severity,title FROM exposure_findings WHERE organization_id=$1 AND current=true ORDER BY CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,last_seen_at DESC LIMIT 5`, orgID)
 	top := []map[string]any{}
 	if err == nil {
 		defer rows.Close()

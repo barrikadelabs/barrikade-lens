@@ -8,7 +8,13 @@ import (
 	"github.com/google/uuid"
 )
 
-const SchemaVersion = "1.1"
+const (
+	// SchemaVersion is emitted by current collectors. Hub keeps accepting 1.1
+	// during the self-serve rollout so already-enrolled collectors do not need
+	// to upgrade in lockstep with cloud discovery.
+	SchemaVersion       = "1.2"
+	LegacySchemaVersion = "1.1"
+)
 
 type SourceType string
 
@@ -16,6 +22,7 @@ const (
 	SourceEndpoint   SourceType = "endpoint"
 	SourceRepository SourceType = "repository"
 	SourceKubernetes SourceType = "kubernetes"
+	SourceCloud      SourceType = "cloud"
 )
 
 type EntityKind string
@@ -38,6 +45,9 @@ const (
 	KindAPIOperation        EntityKind = "api_operation"
 	KindWorkflow            EntityKind = "workflow"
 	KindCredentialReference EntityKind = "credential_reference"
+	KindCloudEnvironment    EntityKind = "cloud_environment"
+	KindIdentity            EntityKind = "identity"
+	KindKnowledgeStore      EntityKind = "knowledge_store"
 )
 
 type RelationshipKind string
@@ -53,6 +63,8 @@ const (
 	RelationshipInvokes      RelationshipKind = "invokes"
 	RelationshipConfiguredBy RelationshipKind = "configured_by"
 	RelationshipOwnedBy      RelationshipKind = "owned_by"
+	RelationshipContainedIn  RelationshipKind = "contained_in"
+	RelationshipRunsAs       RelationshipKind = "runs_as"
 )
 
 type Confidence string

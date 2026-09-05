@@ -13,14 +13,26 @@ spec:
         - name: controller
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
+          {{- if .Values.existingSecret }}
           args: ["--config", "/var/lib/lens/config.json", "--bootstrap-config", "/var/run/lens-bootstrap/config.json", "--cluster-id", {{ .Values.clusterID | quote }}, "--cluster-name", {{ .Values.clusterName | quote }}]
+          {{- else }}
+          args: ["--config", "/var/lib/lens/config.json", "--cluster-id", {{ .Values.clusterID | quote }}, "--cluster-name", {{ .Values.clusterName | quote }}]
+          {{- end }}
+          {{- if or .Values.enrollmentCode .Values.hubURL }}
+          envFrom:
+            - secretRef: {name: {{ .Release.Name }}-lens-k8s-enrollment}
+          {{- end }}
           volumeMounts:
+            {{- if .Values.existingSecret }}
             - {name: collector-bootstrap, mountPath: /var/run/lens-bootstrap, readOnly: true}
+            {{- end }}
             - {name: collector-state, mountPath: /var/lib/lens}
           resources: {{ toYaml .Values.resources | nindent 12 }}
           securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: ["ALL"]}}
       volumes:
+        {{- if .Values.existingSecret }}
         - {name: collector-bootstrap, secret: {secretName: {{ .Values.existingSecret }}, defaultMode: 0400}}
+        {{- end }}
         {{- if .Values.persistence.enabled }}
         - {name: collector-state, persistentVolumeClaim: {claimName: {{ .Release.Name }}-lens-k8s-state}}
         {{- else }}

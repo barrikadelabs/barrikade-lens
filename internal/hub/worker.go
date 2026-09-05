@@ -114,9 +114,13 @@ func permanentNormalizationError(err error) bool {
 func normalizeSnapshot(ctx context.Context, tx pgx.Tx, snapshot discovery.Snapshot) error {
 	var lastSequence uint64
 	var targetID string
-	err := tx.QueryRow(ctx, `SELECT last_sequence,target_id FROM sources WHERE organization_id=$1 AND id=$2 FOR UPDATE`, snapshot.OrganizationID, snapshot.SourceID).Scan(&lastSequence, &targetID)
+	var revokedAt *time.Time
+	err := tx.QueryRow(ctx, `SELECT last_sequence,target_id,revoked_at FROM sources WHERE organization_id=$1 AND id=$2 FOR UPDATE`, snapshot.OrganizationID, snapshot.SourceID).Scan(&lastSequence, &targetID, &revokedAt)
 	if err != nil {
 		return fmt.Errorf("load source: %w", err)
+	}
+	if revokedAt != nil {
+		return fmt.Errorf("load source: source is revoked")
 	}
 	if snapshot.TargetID != targetID {
 		return fmt.Errorf("snapshot target_id does not match enrolled source target")

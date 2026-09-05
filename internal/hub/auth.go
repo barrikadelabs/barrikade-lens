@@ -6,13 +6,18 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
+	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -22,6 +27,7 @@ type Principal struct {
 	Subject        string
 	Scopes         map[string]bool
 	Admin          bool
+	Role           string
 }
 type principalKey struct{}
 
@@ -31,6 +37,8 @@ type Authenticator struct {
 	DevAdminToken         string
 	DefaultOrganizationID string
 	Issuer                string
+	ClerkVerifier         *oidc.IDTokenVerifier
+	ClerkAuthorizedParty  string
 }
 
 type collectorClaims struct {
@@ -39,7 +47,44 @@ type collectorClaims struct {
 	Scopes         []string `json:"scopes"`
 	TokenType      string   `json:"token_type"`
 	Admin          bool     `json:"admin,omitempty"`
+	Role           string   `json:"role,omitempty"`
 	jwt.RegisteredClaims
+}
+
+type clerkOrganizationClaims struct {
+	ID          string          `json:"id"`
+	Role        string          `json:"rol"`
+	Permissions claimStringList `json:"per"`
+}
+
+type clerkSessionClaims struct {
+	AuthorizedParty         string                   `json:"azp"`
+	Status                  string                   `json:"sts"`
+	NotBefore               int64                    `json:"nbf"`
+	OrganizationID          string                   `json:"org_id"`
+	OrganizationRole        string                   `json:"org_role"`
+	OrganizationPermissions claimStringList          `json:"org_permissions"`
+	Organization            *clerkOrganizationClaims `json:"o"`
+}
+
+type claimStringList []string
+
+func (s *claimStringList) UnmarshalJSON(value []byte) error {
+	var list []string
+	if err := json.Unmarshal(value, &list); err == nil {
+		*s = list
+		return nil
+	}
+	var compact string
+	if err := json.Unmarshal(value, &compact); err != nil {
+		return err
+	}
+	if compact == "" {
+		*s = nil
+	} else {
+		*s = strings.Split(compact, ",")
+	}
+	return nil
 }
 
 func (a *Authenticator) Middleware(next http.Handler) http.Handler {
@@ -51,7 +96,7 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 		}
 		raw := strings.TrimSpace(strings.TrimPrefix(header, "Bearer "))
 		if a.DevAdminToken != "" && subtle.ConstantTimeCompare([]byte(raw), []byte(a.DevAdminToken)) == 1 {
-			principal := Principal{OrganizationID: a.DefaultOrganizationID, Subject: "local-bootstrap-admin", Admin: true, Scopes: map[string]bool{"*": true}}
+			principal := Principal{OrganizationID: a.DefaultOrganizationID, Subject: "local-bootstrap-admin", Admin: true, Role: "owner", Scopes: map[string]bool{"*": true}}
 			next.ServeHTTP(writer, request.WithContext(context.WithValue(request.Context(), principalKey{}, principal)))
 			return
 		}
@@ -63,9 +108,15 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 			return a.JWTSecret, nil
 		}, jwt.WithIssuer(a.Issuer), jwt.WithExpirationRequired())
 		if err != nil || !token.Valid || claims.OrganizationID == "" || (claims.TokenType != "human" && claims.SourceID == "") {
+			if a.ClerkVerifier != nil {
+				if principal, clerkErr := a.authenticateClerk(request.Context(), raw); clerkErr == nil {
+					next.ServeHTTP(writer, request.WithContext(context.WithValue(request.Context(), principalKey{}, principal)))
+					return
+				}
+			}
 			principal, serviceErr := a.authenticateServiceAccount(request.Context(), raw)
 			if serviceErr != nil {
-				writeError(writer, http.StatusUnauthorized, "invalid_token", "The service token is invalid or expired")
+				writeError(writer, http.StatusUnauthorized, "invalid_token", "The bearer token is invalid, expired, or has no active workspace")
 				return
 			}
 			next.ServeHTTP(writer, request.WithContext(context.WithValue(request.Context(), principalKey{}, principal)))
@@ -75,9 +126,97 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 		for _, scope := range claims.Scopes {
 			scopes[scope] = true
 		}
-		principal := Principal{OrganizationID: claims.OrganizationID, SourceID: claims.SourceID, Subject: claims.Subject, Scopes: scopes, Admin: claims.Admin}
+		role := claims.Role
+		if role == "" && claims.Admin {
+			role = "owner"
+		}
+		principal := Principal{OrganizationID: claims.OrganizationID, SourceID: claims.SourceID, Subject: claims.Subject, Scopes: scopes, Admin: claims.Admin, Role: role}
 		next.ServeHTTP(writer, request.WithContext(context.WithValue(request.Context(), principalKey{}, principal)))
 	})
+}
+
+func (a *Authenticator) authenticateClerk(ctx context.Context, raw string) (Principal, error) {
+	verified, err := a.ClerkVerifier.Verify(ctx, raw)
+	if err != nil {
+		return Principal{}, err
+	}
+	var claims clerkSessionClaims
+	if err := verified.Claims(&claims); err != nil {
+		return Principal{}, err
+	}
+	if a.ClerkAuthorizedParty != "" && claims.AuthorizedParty != a.ClerkAuthorizedParty {
+		return Principal{}, fmt.Errorf("unexpected authorized party")
+	}
+	if claims.Status != "" && claims.Status != "active" {
+		return Principal{}, fmt.Errorf("Clerk session is not active")
+	}
+	if claims.NotBefore > 0 && time.Now().Add(30*time.Second).Unix() < claims.NotBefore {
+		return Principal{}, fmt.Errorf("Clerk session is not active yet")
+	}
+	organizationID, role, permissions := claims.OrganizationID, claims.OrganizationRole, claims.OrganizationPermissions
+	if claims.Organization != nil {
+		if organizationID == "" {
+			organizationID = claims.Organization.ID
+		}
+		if role == "" {
+			role = claims.Organization.Role
+		}
+		if len(permissions) == 0 {
+			permissions = claims.Organization.Permissions
+		}
+	}
+	if organizationID == "" || verified.Subject == "" {
+		return Principal{}, fmt.Errorf("active Clerk organization is required")
+	}
+	var accountStatus string
+	err = a.Pool.QueryRow(ctx, `SELECT status FROM managed_users WHERE user_id=$1`, "clerk:"+verified.Subject).Scan(&accountStatus)
+	if err == nil && accountStatus != "active" {
+		return Principal{}, fmt.Errorf("managed account is not active")
+	}
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return Principal{}, fmt.Errorf("validate managed account: %w", err)
+	}
+	var membershipStatus string
+	err = a.Pool.QueryRow(ctx, `SELECT status FROM workspace_memberships WHERE organization_id=$1 AND user_id=$2`, organizationID, "clerk:"+verified.Subject).Scan(&membershipStatus)
+	if err == nil && membershipStatus != "active" {
+		return Principal{}, fmt.Errorf("workspace membership is not active")
+	}
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return Principal{}, fmt.Errorf("validate workspace membership: %w", err)
+	}
+	role = normalizeWorkspaceRole(role)
+	scopes := scopesForWorkspaceRole(role)
+	for _, permission := range permissions {
+		scopes[permission] = true
+	}
+	return Principal{OrganizationID: organizationID, Subject: "clerk:" + verified.Subject, Role: role, Admin: role == "owner" || role == "admin", Scopes: scopes}, nil
+}
+
+func normalizeWorkspaceRole(value string) string {
+	value = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(value)), "org:")
+	switch value {
+	case "owner", "admin", "viewer":
+		return value
+	case "member":
+		return "viewer"
+	default:
+		return "viewer"
+	}
+}
+
+func scopesForWorkspaceRole(role string) map[string]bool {
+	result := map[string]bool{"inventory:read": true, "environment:read": true, "jobs:read": true}
+	if slices.Contains([]string{"owner", "admin"}, role) {
+		for _, scope := range []string{"environment:manage", "scan:run", "admin:enrollment", "admin:coverage", "context:write"} {
+			result[scope] = true
+		}
+	}
+	if role == "owner" {
+		for _, scope := range []string{"workspace:delete", "members:manage", "admin:webhooks", "admin:service_accounts"} {
+			result[scope] = true
+		}
+	}
+	return result
 }
 
 func principalFrom(ctx context.Context) (Principal, bool) {
@@ -90,7 +229,7 @@ func requireScope(request *http.Request, scope string) (Principal, error) {
 	if !ok {
 		return Principal{}, fmt.Errorf("missing principal")
 	}
-	if !principal.Admin && !principal.Scopes[scope] {
+	if !principal.Scopes["*"] && !principal.Scopes[scope] {
 		return Principal{}, fmt.Errorf("scope %s is required", scope)
 	}
 	return principal, nil
@@ -109,9 +248,13 @@ func (a *Authenticator) issueHumanToken(orgID, subject string, admin bool) (stri
 	expires := now.Add(time.Hour)
 	scopes := []string{"inventory:read"}
 	if admin {
-		scopes = append(scopes, "admin:enrollment", "admin:webhooks", "admin:coverage", "admin:service_accounts", "context:write")
+		scopes = append(scopes, "admin:enrollment", "admin:webhooks", "admin:coverage", "admin:service_accounts", "context:write", "environment:read", "environment:manage", "scan:run", "workspace:delete", "members:manage", "jobs:read")
 	}
-	claims := collectorClaims{OrganizationID: orgID, Scopes: scopes, TokenType: "human", Admin: admin, RegisteredClaims: jwt.RegisteredClaims{Issuer: a.Issuer, Subject: subject, IssuedAt: jwt.NewNumericDate(now), ExpiresAt: jwt.NewNumericDate(expires), ID: uuid.NewString()}}
+	role := "viewer"
+	if admin {
+		role = "owner"
+	}
+	claims := collectorClaims{OrganizationID: orgID, Scopes: scopes, TokenType: "human", Admin: admin, Role: role, RegisteredClaims: jwt.RegisteredClaims{Issuer: a.Issuer, Subject: subject, IssuedAt: jwt.NewNumericDate(now), ExpiresAt: jwt.NewNumericDate(expires), ID: uuid.NewString()}}
 	raw, err := jwt.NewWithClaims(jwt.SigningMethodHS256, claims).SignedString(a.JWTSecret)
 	return raw, expires, err
 }

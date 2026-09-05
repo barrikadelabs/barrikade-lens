@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,6 +24,61 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+func (s *Server) githubSetupCallback(w http.ResponseWriter, r *http.Request) {
+	state := strings.TrimSpace(r.URL.Query().Get("state"))
+	installationID, err := strconv.ParseInt(r.URL.Query().Get("installation_id"), 10, 64)
+	if state == "" || err != nil || installationID <= 0 {
+		writeError(w, 400, "invalid_setup_callback", "GitHub setup state or installation ID is invalid")
+		return
+	}
+	tx, err := s.begin(r.Context())
+	if err != nil {
+		writeError(w, 500, "database_error", "Could not finish GitHub setup")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	var setupID, environmentID uuid.UUID
+	var organizationID string
+	err = tx.QueryRow(r.Context(), `SELECT id,environment_id,organization_id FROM connector_setup_sessions WHERE token_hash=$1 AND kind='github_repository' AND state='pending' AND expires_at>now() FOR UPDATE`, tokenHash(normalizeCode(state))).Scan(&setupID, &environmentID, &organizationID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, 410, "setup_expired", "This GitHub setup session is invalid, expired, or already used")
+		return
+	}
+	if err == nil {
+		_, err = tx.Exec(r.Context(), `INSERT INTO github_installations(installation_id,organization_id,account_login) VALUES($1,$2,$3) ON CONFLICT(installation_id) DO UPDATE SET organization_id=EXCLUDED.organization_id`, installationID, organizationID, "installation:"+strconv.FormatInt(installationID, 10))
+	}
+	if err == nil {
+		_, err = tx.Exec(r.Context(), `UPDATE environment_connections SET configuration=jsonb_set(configuration,'{installation_id}',to_jsonb($3::bigint),true),updated_at=now() WHERE organization_id=$1 AND id=$2`, organizationID, environmentID, installationID)
+	}
+	if err == nil {
+		_, err = tx.Exec(r.Context(), `UPDATE connector_setup_sessions SET state='consumed',consumed_at=now() WHERE id=$1`, setupID)
+	}
+	if err != nil || tx.Commit(r.Context()) != nil {
+		writeError(w, 500, "database_error", "Could not bind the GitHub installation")
+		return
+	}
+	// Reconcile immediately so a webhook delivered before the setup callback is
+	// not required for first results.
+	token, _, tokenErr := s.config.GitHubClient.InstallationToken(r.Context(), installationID)
+	if tokenErr == nil {
+		repositories, listErr := s.config.GitHubClient.Repositories(r.Context(), token)
+		if listErr == nil {
+			reconcileTx, beginErr := s.begin(r.Context())
+			if beginErr == nil {
+				for _, repository := range repositories {
+					if err := enqueueRepositoryScan(r.Context(), reconcileTx, organizationID, installationID, repository.Owner, repository.Name, "resolve:setup:"+setupID.String()); err != nil {
+						reconcileTx.Rollback(r.Context())
+						writeError(w, 500, "database_error", "GitHub was connected, but initial repository scans could not be queued")
+						return
+					}
+				}
+				_ = reconcileTx.Commit(r.Context())
+			}
+		}
+	}
+	http.Redirect(w, r, strings.TrimSuffix(s.config.PublicURL, "/")+"/?github_setup=complete", http.StatusSeeOther)
+}
 
 func (s *Server) githubWebhook(w http.ResponseWriter, r *http.Request) {
 	delivery, event, signature := r.Header.Get("X-GitHub-Delivery"), r.Header.Get("X-GitHub-Event"), r.Header.Get("X-Hub-Signature-256")
@@ -43,7 +99,7 @@ func (s *Server) githubWebhook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 401, "invalid_signature", "GitHub webhook signature is invalid")
 		return
 	}
-	tx, err := s.config.Pool.BeginTx(r.Context(), pgx.TxOptions{})
+	tx, err := s.begin(r.Context())
 	if err != nil {
 		writeError(w, 500, "database_error", "Could not process webhook")
 		return
@@ -85,10 +141,15 @@ func (s *Server) githubWebhook(w http.ResponseWriter, r *http.Request) {
 				_, err = tx.Exec(r.Context(), `DELETE FROM github_installations WHERE installation_id=$1`, payload.Installation.ID)
 			}
 		} else {
-			_, err = tx.Exec(r.Context(), `INSERT INTO github_installations(installation_id,organization_id,account_login) VALUES($1,$2,$3) ON CONFLICT(installation_id) DO UPDATE SET account_login=EXCLUDED.account_login`, payload.Installation.ID, s.config.DefaultOrganizationID, payload.Installation.Account.Login)
-			if err == nil {
+			var organizationID string
+			err = tx.QueryRow(r.Context(), `UPDATE github_installations SET account_login=$2 WHERE installation_id=$1 RETURNING organization_id`, payload.Installation.ID, payload.Installation.Account.Login).Scan(&organizationID)
+			if errors.Is(err, pgx.ErrNoRows) {
+				// The signed setup callback binds the installation to a tenant. An
+				// unclaimed webhook is never assigned to a default organization.
+				err = nil
+			} else if err == nil {
 				for _, repository := range payload.Repositories {
-					err = enqueueRepositoryScan(r.Context(), tx, s.config.DefaultOrganizationID, payload.Installation.ID, repository.Owner.Login, repository.Name, "resolve:"+delivery)
+					err = enqueueRepositoryScan(r.Context(), tx, organizationID, payload.Installation.ID, repository.Owner.Login, repository.Name, "resolve:"+delivery)
 					if err != nil {
 						break
 					}
@@ -524,6 +585,9 @@ func (w RepositoryWorker) scan(ctx context.Context, orgID string, installationID
 	if err != nil {
 		return err
 	}
+	if err := connectGitHubEnvironment(ctx, w.Pool, orgID, installationID, owner, repository, sourceID, targetID); err != nil {
+		return err
+	}
 	snapshot, err := repositoryscanner.Scan(ctx, repositoryscanner.Options{OrganizationID: orgID, SourceID: sourceID, TargetID: targetID, Root: temporary, RepositoryURL: repositoryURL, CommitSHA: commit})
 	if err != nil {
 		return err
@@ -535,5 +599,21 @@ func (w RepositoryWorker) scan(ctx context.Context, orgID string, installationID
 		return err
 	}
 	_, err = w.Pool.Exec(ctx, `INSERT INTO ingestion_jobs(id,organization_id,source_id,snapshot_id,status,payload) VALUES($1,$2,$3,$4,'pending',$5) ON CONFLICT(organization_id,snapshot_id) DO NOTHING`, uuid.New(), orgID, sourceID, snapshot.SnapshotID, payload)
+	return err
+}
+
+func connectGitHubEnvironment(ctx context.Context, pool *pgxpool.Pool, organizationID string, installationID int64, owner, repository, sourceID, targetID string) error {
+	externalID := strings.ToLower(owner + "/" + repository)
+	var environmentID uuid.UUID
+	err := pool.QueryRow(ctx, `UPDATE environment_connections SET external_id=$3,display_name=$4,connection_status='connected',source_id=$5,target_id=$6,schedule_enabled=false,verified_at=COALESCE(verified_at,now()),last_error_code=NULL,last_error_message=NULL,updated_at=now()
+		WHERE organization_id=$1 AND id=(SELECT id FROM environment_connections WHERE organization_id=$1 AND kind='github_repository' AND (configuration->>'installation_id')::bigint=$2 AND connection_status<>'disconnected' AND (external_id IS NULL OR lower(external_id)=$3) ORDER BY external_id NULLS FIRST LIMIT 1) RETURNING id`, organizationID, installationID, externalID, owner+"/"+repository, sourceID, targetID).Scan(&environmentID)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return err
+	}
+	configuration := jsonBytes(map[string]any{"installation_id": installationID})
+	_, err = pool.Exec(ctx, `INSERT INTO environment_connections(id,organization_id,kind,provider,external_id,display_name,connection_status,configuration,target_id,source_id,schedule_enabled,verified_at,created_by) VALUES($1,$2,'github_repository','github',$3,$4,'connected',$5,$6,$7,false,now(),'github-app') ON CONFLICT DO NOTHING`, uuid.New(), organizationID, externalID, owner+"/"+repository, configuration, targetID, sourceID)
 	return err
 }

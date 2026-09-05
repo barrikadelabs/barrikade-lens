@@ -25,7 +25,7 @@ type evidenceSubject struct {
 }
 
 func (s *Server) evidenceForEntity(ctx context.Context, organizationID, entityID, entityName string, attributes map[string]any, limit int) []map[string]any {
-	rows, err := s.config.Pool.Query(ctx, `WITH observations AS (
+	rows, err := s.db(ctx).Query(ctx, `WITH observations AS (
 		SELECT eo.evidence_id,eo.source_id,eo.detector_id,eo.detector_version,eo.method,eo.family,eo.specificity,
 			eo.locator,eo.content_hash,eo.entity_ids,max(eo.observed_at) observed_at,count(*) observations,
 			row_number() OVER (PARTITION BY eo.source_id,eo.detector_id,eo.method,eo.family,COALESCE(eo.locator,'') ORDER BY max(eo.observed_at) DESC,eo.evidence_id DESC) version_rank

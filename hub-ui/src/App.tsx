@@ -1,22 +1,27 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
+  ClerkProvider, OrganizationSwitcher, SignIn as ClerkSignIn, SignUp as ClerkSignUp, UserButton,
+  useAuth, useClerk, useOrganization, useOrganizationList, useUser,
+} from "@clerk/react";
+import {
   Activity, AlertCircle, ArrowRight, Bot, Boxes, BrainCircuit, CheckCircle2, ChevronDown,
-  ChevronRight, CircleDot, Container, Copy, Database, Download, GitBranch, History,
+  ChevronRight, CircleDot, Cloud, Container, Copy, Database, Download, GitBranch, History,
   FileSearch, Fingerprint, LayoutDashboard, Link2, LogOut, MapPin, Menu, Monitor, Network, PackageSearch, PlugZap, Radar,
-  RefreshCw, Search, Server, SlidersHorizontal,
+  Plus, RefreshCw, Search, Server, ShieldCheck, SlidersHorizontal,
   TerminalSquare, UserRound, Workflow, X, type LucideIcon,
 } from "lucide-react";
 import {
   API, authConfig, exchangeOIDC, type AuthConfig, type Change, type Connection, type Entity, type Evidence,
-  type EntityDetail, type Overview, type SystemDetail, type SystemItem, type Target,
+  type EntityDetail, type Environment, type EnvironmentKind, type EnvironmentScan, type Overview, type SetupSession, type SystemDetail, type SystemItem, type Target,
 } from "./api";
 import { EvidenceGraphPage } from "./EvidenceGraph";
 import { InvestigationPage } from "./Investigation";
 
-type Page = "Overview" | "Exposure Map" | "Systems" | "Coverage" | "Changes" | "Technical inventory" | "Evidence graph";
+type Page = "Overview" | "Environments" | "Exposure Map" | "Systems" | "Coverage" | "Changes" | "Technical inventory" | "Evidence graph";
 
 const navigation: Array<{ page: Page; icon: LucideIcon; detail: string }> = [
   { page: "Overview", icon: LayoutDashboard, detail: "Organization posture" },
+  { page: "Environments", icon: Cloud, detail: "Connect and scan" },
   { page: "Exposure Map", icon: FileSearch, detail: "Reachability and findings" },
   { page: "Systems", icon: Bot, detail: "Organization systems" },
   { page: "Coverage", icon: Radar, detail: "Enrollment coverage" },
@@ -26,7 +31,8 @@ const navigation: Array<{ page: Page; icon: LucideIcon; detail: string }> = [
 ];
 
 const pageCopy: Record<Page, { eyebrow: string; title: string; detail: string }> = {
-  Overview: { eyebrow: "DISCOVERY", title: "Organization AI posture", detail: "Evidence-backed visibility across enrolled endpoints, repositories, and clusters." },
+  Overview: { eyebrow: "DISCOVERY", title: "Organization AI posture", detail: "Evidence-backed visibility across connected cloud accounts, endpoints, repositories, and clusters." },
+  Environments: { eyebrow: "SELF-SERVE", title: "Environments", detail: "Connect cloud accounts, endpoints, repositories, and clusters through one guided flow." },
   "Exposure Map": { eyebrow: "EXPOSURE", title: "Evidence-backed exposure map", detail: "Trace one system through configured connections, credential presence, operator context, and catalogue-derived potential." },
   Systems: { eyebrow: "INVENTORY", title: "Systems", detail: "Agents, agent-capable tools, and model runtimes—without supporting software or cached artifacts." },
   Coverage: { eyebrow: "VISIBILITY", title: "Reporting coverage", detail: "What is enrolled across the organization, where data is stale, and where expected population is unknown." },
@@ -39,9 +45,22 @@ const kindIcons: Record<string, LucideIcon> = {
   endpoint: Monitor, repository: GitBranch, cluster: Container, workload: Container, agent: Bot,
   runtime: TerminalSquare, framework: Boxes, mcp_server: PlugZap, skill: CheckCircle2, model: BrainCircuit,
   model_server: Server, api_service: Database, api_operation: Link2, workflow: Workflow, user: UserRound,
+  cloud_environment: Cloud, identity: Fingerprint, knowledge_store: Database,
 };
 
 export function App() {
+  const [config, setConfig] = useState<AuthConfig>();
+  const [configurationError, setConfigurationError] = useState("");
+  useEffect(() => { authConfig().then(setConfig).catch((reason) => setConfigurationError(String(reason))); }, []);
+  if (configurationError) return <Failure error={configurationError} retry={() => location.reload()} />;
+  if (!config) return <Loading />;
+  if (config.mode === "clerk" && config.clerk_publishable_key) {
+    return <ClerkProvider publishableKey={config.clerk_publishable_key}><ClerkApplication config={config} /></ClerkProvider>;
+  }
+  return <LegacyApplication config={config} />;
+}
+
+function LegacyApplication({ config }: { config: AuthConfig }) {
   const [token, setToken] = useState(() => sessionStorage.getItem("lens-token") ?? "");
   const [authError, setAuthError] = useState("");
   const saveToken = useCallback((value: string) => {
@@ -66,15 +85,60 @@ export function App() {
     }).catch((error) => setAuthError(String(error)));
   }, [saveToken]);
 
-  if (!token) return <SignIn onToken={saveToken} authError={authError} />;
-  return <Shell api={new API(token)} signOut={() => { sessionStorage.removeItem("lens-token"); setToken(""); }} />;
+  if (!token) return <LegacySignIn config={config} onToken={saveToken} authError={authError} />;
+  return <Shell api={new API(token)} signOut={() => { sessionStorage.removeItem("lens-token"); setToken(""); }} selfServe={config.self_serve_enabled} />;
 }
 
-function SignIn({ onToken, authError }: { onToken: (token: string) => void; authError: string }) {
-  const [config, setConfig] = useState<AuthConfig | null>(null);
+function ClerkApplication({ config }: { config: AuthConfig }) {
+  const { isLoaded, isSignedIn, getToken } = useAuth();
+  const { signOut } = useClerk();
+  const { user } = useUser();
+  const { organization } = useOrganization();
+  const memberships = useOrganizationList({ userMemberships: { infinite: true } });
+  const [bootstrapped, setBootstrapped] = useState("");
+  const [error, setError] = useState("");
+  const api = useMemo(() => new API(() => getToken()), [getToken]);
+
+  useEffect(() => {
+    if (!isLoaded || !isSignedIn || organization || !memberships.isLoaded || bootstrapped === "creating") return;
+    setBootstrapped("creating");
+    const existing = memberships.userMemberships.data?.[0]?.organization;
+    const activate = existing
+      ? memberships.setActive?.({ organization: existing.id })
+      : memberships.createOrganization?.({ name: `${user?.firstName || user?.username || "My"}'s workspace` }).then((created) => memberships.setActive?.({ organization: created.id }));
+    Promise.resolve(activate).catch((reason) => { setError(String(reason)); setBootstrapped(""); });
+  }, [bootstrapped, isLoaded, isSignedIn, memberships, organization, user]);
+
+  useEffect(() => {
+    if (!organization || bootstrapped === organization.id) return;
+    api.bootstrapWorkspace(organization.name).then(() => setBootstrapped(organization.id)).catch((reason) => setError(String(reason)));
+  }, [api, bootstrapped, organization]);
+
+  if (!isLoaded) return <Loading />;
+  if (!isSignedIn) return <ManagedSignIn />;
+  if (error) return <Failure error={error} retry={() => { setError(""); setBootstrapped(""); }} />;
+  if (!organization || bootstrapped !== organization.id) return <Loading />;
+  const controls = <div className="managed-account-controls"><OrganizationSwitcher hidePersonal organizationProfileMode="modal" afterCreateOrganizationUrl="/" afterSelectOrganizationUrl="/" /><UserButton userProfileMode="modal" /></div>;
+  return <Shell api={api} signOut={() => signOut()} accountControls={controls} selfServe={config.self_serve_enabled} />;
+}
+
+function ManagedSignIn() {
+  const [signUp, setSignUp] = useState(() => location.hash.includes("sign-up"));
+  useEffect(() => {
+    const changed = () => setSignUp(location.hash.includes("sign-up"));
+    window.addEventListener("hashchange", changed);
+    return () => window.removeEventListener("hashchange", changed);
+  }, []);
+  const appearance = { variables: { colorPrimary: "#ff6b00", colorBackground: "#131313", colorText: "#ffffff", colorInputBackground: "#0c0c0c", colorInputText: "#ffffff" } };
+  return <main className="signin managed-signin">
+    <section className="signin-story"><Brand /><div className="signin-copy"><span className="product-kicker"><Radar size={14} /> Autonomous agent discovery</span><h1>Bring the agent footprint into focus.</h1><p>Start free, connect the environments you choose, and see evidence-backed results without a score or write access.</p></div></section>
+    <section className="signin-access"><div className="managed-auth"><div className="managed-auth-tabs"><button className={!signUp ? "active" : ""} onClick={() => { location.hash = "sign-in"; setSignUp(false); }}>Sign in</button><button className={signUp ? "active" : ""} onClick={() => { location.hash = "sign-up"; setSignUp(true); }}>Create account</button></div>{signUp ? <ClerkSignUp routing="hash" signInUrl="#sign-in" appearance={appearance} /> : <ClerkSignIn routing="hash" signUpUrl="#sign-up" appearance={appearance} />}</div></section>
+  </main>;
+}
+
+function LegacySignIn({ config, onToken, authError }: { config: AuthConfig; onToken: (token: string) => void; authError: string }) {
   const [value, setValue] = useState("");
   const [error, setError] = useState(authError);
-  useEffect(() => { authConfig().then(setConfig).catch((reason) => setError(String(reason))); }, []);
 
   const beginOIDC = async () => {
     if (!config?.authorization_endpoint || !config.client_id || !config.redirect_uri) return;
@@ -111,7 +175,7 @@ function SignIn({ onToken, authError }: { onToken: (token: string) => void; auth
   </main>;
 }
 
-function Shell({ api, signOut }: { api: API; signOut: () => void }) {
+function Shell({ api, signOut, accountControls, selfServe = true }: { api: API; signOut: () => void; accountControls?: ReactNode; selfServe?: boolean }) {
   const [page, setPage] = useState<Page>("Overview");
   const [graphSystem, setGraphSystem] = useState("");
   const [menuOpen, setMenuOpen] = useState(false);
@@ -124,11 +188,12 @@ function Shell({ api, signOut }: { api: API; signOut: () => void }) {
     <aside className={menuOpen ? "sidebar open" : "sidebar"}>
       <div className="sidebar-brand"><Brand /></div>
       <nav className="main-nav">
-        {navigation.filter((item) => item.page !== "Exposure Map" || exposureEnabled).map(({ page: item, icon: Icon, detail }) => <button key={item} className={page === item ? "active" : ""} onClick={() => { setPage(item); setMenuOpen(false); }}>
+        {navigation.filter((item) => (item.page !== "Exposure Map" || exposureEnabled) && (item.page !== "Environments" || selfServe)).map(({ page: item, icon: Icon, detail }) => <button key={item} className={page === item ? "active" : ""} onClick={() => { setPage(item); setMenuOpen(false); }}>
           <Icon size={17} /><span><b>{item}</b><small>{detail}</small></span>{page === item && <ChevronRight size={14} />}
         </button>)}
       </nav>
       <div className="sidebar-footer">
+        {accountControls}
         <button onClick={() => setAbout(true)}><CircleDot size={14} /> {exposureEnabled ? "Discover + assess" : "Discover only"}</button>
         <button className="logout" onClick={signOut} aria-label="Sign out"><LogOut size={16} /></button>
       </div>
@@ -141,6 +206,7 @@ function Shell({ api, signOut }: { api: API; signOut: () => void }) {
           <div className="page-actions"><button className="icon-button" onClick={() => setRevision((value) => value + 1)} title="Refresh"><RefreshCw size={16} /></button><ExportMenu api={api} /></div>
         </header>
         {page === "Overview" && <OverviewPage api={api} revision={revision} go={setPage} />}
+        {page === "Environments" && <EnvironmentsPage api={api} revision={revision} onResults={() => setPage("Overview")} />}
         {page === "Exposure Map" && <InvestigationPage api={api} revision={revision} onOpenGraph={(systemID) => { setGraphSystem(systemID); setPage("Evidence graph"); }} />}
         {page === "Systems" && <SystemsPage api={api} revision={revision} />}
         {page === "Coverage" && <CoveragePage api={api} revision={revision} />}
@@ -253,30 +319,116 @@ function SystemsPage({ api, revision }: { api: API; revision: number }) {
   </div>;
 }
 
+const environmentCatalog: Array<{ kind: EnvironmentKind; title: string; detail: string; identifier: string; icon: LucideIcon; connector: string }> = [
+  { kind: "aws_account", title: "AWS account", detail: "Bedrock, AgentCore, and SageMaker", identifier: "12-digit account ID", icon: Cloud, connector: "aws" },
+  { kind: "azure_subscription", title: "Azure subscription", detail: "Foundry, Azure AI, and Azure ML", identifier: "Subscription ID", icon: Cloud, connector: "azure" },
+  { kind: "gcp_project", title: "GCP project", detail: "Vertex AI and Agent Registry", identifier: "Project ID", icon: Cloud, connector: "gcp" },
+  { kind: "endpoint", title: "Endpoint", detail: "macOS, Windows, or Linux", identifier: "Optional device reference", icon: Monitor, connector: "endpoint" },
+  { kind: "github_repository", title: "Repository", detail: "GitHub App or generic CI", identifier: "owner/repository (optional)", icon: GitBranch, connector: "github" },
+  { kind: "kubernetes_cluster", title: "Kubernetes", detail: "Read-only cluster collector", identifier: "Optional cluster reference", icon: Container, connector: "kubernetes" },
+];
+
+function EnvironmentsPage({ api, revision, onResults }: { api: API; revision: number; onResults: () => void }) {
+  const environments = useRemote(() => api.environments(), [api, revision]);
+  const session = useRemote(() => api.session(), [api]);
+  const [wizard, setWizard] = useState(false);
+  const [kind, setKind] = useState<EnvironmentKind>();
+  const [name, setName] = useState("");
+  const [externalID, setExternalID] = useState("");
+  const [tenantID, setTenantID] = useState("");
+	const [projectNumber, setProjectNumber] = useState("");
+  const [setup, setSetup] = useState<SetupSession>();
+  const [scan, setScan] = useState<EnvironmentScan>();
+  const [collectorConnected, setCollectorConnected] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [connectors, setConnectors] = useState<Record<string, boolean>>({});
+  useEffect(() => { authConfig().then((value) => setConnectors(value.connectors)).catch(() => undefined); }, []);
+
+  useEffect(() => {
+    if (!setup || !scan || ["complete", "partial", "failed", "cancelled"].includes(scan.status)) return;
+    const timer = window.setTimeout(() => api.environmentScan(setup.environment_id, scan.id).then(setScan).catch((reason) => setError(String(reason))), 1500);
+    return () => window.clearTimeout(timer);
+  }, [api, scan, setup]);
+
+  useEffect(() => {
+    if (!setup || scan || collectorConnected || ["aws_account", "azure_subscription", "gcp_project"].includes(setup.kind)) return;
+    const poll = () => api.environment(setup.environment_id).then((value) => {
+      if (value.connection_status === "connected") {
+        setCollectorConnected(true);
+        setMessage("Environment connected. Lens is ingesting the first collector snapshot.");
+        environments.reload();
+      }
+    }).catch(() => undefined);
+    void poll();
+    const timer = window.setInterval(poll, 2000);
+    return () => window.clearInterval(timer);
+  }, [api, collectorConnected, environments, scan, setup]);
+
+  const canManage = session.data?.role === "owner" || session.data?.role === "admin";
+  const selected = environmentCatalog.find((item) => item.kind === kind);
+  const reset = () => { setWizard(false); setKind(undefined); setName(""); setExternalID(""); setTenantID(""); setProjectNumber(""); setSetup(undefined); setScan(undefined); setCollectorConnected(false); setMessage(""); setError(""); };
+  const createSetup = () => {
+    if (!kind) return;
+    setBusy(true); setError("");
+    const configuration = kind === "azure_subscription" ? { tenant_id: tenantID } : kind === "gcp_project" ? { project_number: projectNumber } : {};
+    api.createEnvironmentSetup({ kind, display_name: name, external_id: externalID || undefined, configuration })
+      .then(setSetup).catch((reason) => setError(String(reason))).finally(() => setBusy(false));
+  };
+  const verify = () => {
+    if (!setup) return;
+    setBusy(true); setError(""); setMessage("");
+    api.verifyEnvironment(setup.environment_id).then((result) => {
+      setMessage(result.message || "Access verified. Lens started the first scan.");
+      if (result.scan) setScan({ ...result.scan, environment_id: setup.environment_id, trigger: "first_scan", phase: "queued", progress: {}, created_at: new Date().toISOString() });
+      environments.reload();
+    }).catch((reason) => setError(String(reason))).finally(() => setBusy(false));
+  };
+  const runScan = (environment: Environment) => {
+    setError("");
+    api.scanEnvironment(environment.id).then((result) => {
+      setSetup({ id: "manual", environment_id: environment.id, kind: environment.kind, expires_at: "", token_displayed_once: false, setup: { method: "manual" } });
+      setScan({ ...result, environment_id: environment.id, trigger: "manual", phase: "queued", progress: {}, created_at: new Date().toISOString() });
+    }).catch((reason) => setError(String(reason)));
+  };
+  const disconnect = (environment: Environment) => {
+    if (!window.confirm(`Disconnect ${environment.display_name}? Lens access stops immediately; historical results are retained for 90 days.`)) return;
+    api.disconnectEnvironment(environment.id).then(() => environments.reload()).catch((reason) => setError(String(reason)));
+  };
+
+  if (environments.loading || session.loading) return <Loading />;
+  if (environments.error || session.error || !environments.data) return <Failure error={environments.error || session.error} retry={() => { environments.reload(); session.reload(); }} />;
+  return <div className="page-stack environments-page">
+    <section className="panel environment-summary"><div><p className="eyebrow">UNMETERED MVP</p><h2>{environments.data.items.filter((item) => item.connection_status === "connected").length} connected environments</h2><p>Add the environments you choose. There are no plan limits, scan credits, resource allowances, or member caps.</p></div>{canManage && <button className="button primary" onClick={() => setWizard(true)}><Plus size={16} /> Add environment</button>}</section>
+    {error && <InlineError text={error} />}
+    <section className="environment-list">
+      {environments.data.items.map((environment) => {
+        const catalog = environmentCatalog.find((item) => item.kind === environment.kind);
+        const Icon = catalog?.icon ?? Cloud;
+        return <article className="environment-card" key={environment.id}><span className="environment-icon"><Icon size={20} /></span><div className="environment-card-copy"><span><b>{environment.display_name}</b><small>{catalog?.title ?? pretty(environment.kind)}{environment.external_id ? ` · ${environment.external_id}` : ""}</small></span><p>{environment.last_error_message || (environment.verified_at ? `Verified ${relative(environment.verified_at)}` : "Setup has not been verified yet")}</p></div><span className={`connection-status ${environment.connection_status}`}><i />{pretty(environment.connection_status)}</span><div className="environment-actions">{canManage && environment.connection_status === "connected" && ["aws", "azure", "gcp"].includes(environment.provider || "") && <button className="button subtle" onClick={() => runScan(environment)}><RefreshCw size={14} /> Scan now</button>}{canManage && environment.connection_status !== "disconnected" && <button className="button quiet" onClick={() => disconnect(environment)}>Disconnect</button>}</div></article>;
+      })}
+      {!environments.data.items.length && <Empty icon={Cloud} title="No environments connected" detail={canManage ? "Add a cloud account, endpoint, repository, or cluster to start the first scan." : "Ask a workspace owner or admin to connect an environment."} />}
+    </section>
+    {scan && <section className={`panel scan-progress ${scan.status}`}><div><span className="scan-spinner"><RefreshCw size={18} /></span><div><p className="eyebrow">SCAN STATUS</p><h2>{pretty(scan.phase || scan.status)}</h2><p>{scan.status === "complete" ? "Discovery is complete and results are ready." : scan.status === "partial" ? "Useful results are ready; some detectors or locations could not be read." : scan.safe_error?.message || "Lens is collecting inventory and coverage. Partial results remain visible if one detector fails."}</p></div></div>{["complete", "partial"].includes(scan.status) && <button className="button primary" onClick={onResults}>View results <ArrowRight size={15} /></button>}</section>}
+    {wizard && <div className="modal-overlay environment-wizard-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) reset(); }}><section className="environment-wizard"><button className="drawer-close" onClick={reset}><X size={18} /></button><header><p className="eyebrow">ADD ENVIRONMENT</p><h2>{setup ? "Complete provider setup" : kind ? `Connect ${selected?.title}` : "What do you want Lens to scan?"}</h2><p>{setup ? "The generated setup is least-privilege and expires shortly. Lens stores no long-lived cloud keys." : "Every verified environment scans immediately and refreshes daily."}</p></header>
+      {!kind && <div className="environment-catalog">{environmentCatalog.map(({ kind: value, title, detail, icon: Icon, connector }) => { const enabled = connectors[connector] !== false; return <button key={value} disabled={!enabled} onClick={() => { setKind(value); setName(title); }}><Icon size={20} /><span><b>{title}</b><small>{enabled ? detail : "Not enabled in this deployment"}</small></span><ChevronRight size={15} /></button>; })}</div>}
+      {kind && !setup && <div className="environment-details"><button className="wizard-back" onClick={() => setKind(undefined)}>← Choose another type</button><label>Display name<input value={name} onChange={(event) => setName(event.target.value)} placeholder="Production AI" autoFocus /></label><label>{selected?.identifier}<input value={externalID} onChange={(event) => setExternalID(event.target.value)} placeholder={kind === "aws_account" ? "123456789012" : kind === "azure_subscription" ? "00000000-0000-0000-0000-000000000000" : kind === "gcp_project" ? "my-project-id" : "Optional"} /></label>{kind === "azure_subscription" && <label>Microsoft Entra tenant ID<input value={tenantID} onChange={(event) => setTenantID(event.target.value)} placeholder="00000000-0000-0000-0000-000000000000" /></label>}{kind === "gcp_project" && <label>GCP project number<input value={projectNumber} onChange={(event) => setProjectNumber(event.target.value)} placeholder="123456789012" /></label>}<div className="wizard-boundary"><ShieldCheck size={18} /><p><b>Read-only by design</b><span>Lens inventories resources and relationships. It does not invoke models, read prompts or outputs, retrieve secrets, or remediate resources.</span></p></div><button className="button primary full" disabled={busy || !name.trim()} onClick={createSetup}>{busy ? "Preparing…" : "Generate least-privilege setup"}</button></div>}
+      {setup && <div className="setup-result"><div className="setup-read"><div><h3>Lens will read</h3>{setup.setup.what_lens_reads?.map((item) => <span key={item}><CheckCircle2 size={14} />{item}</span>)}</div><div><h3>Lens will not read</h3>{setup.setup.excluded?.map((item) => <span key={item}><X size={14} />{item}</span>)}</div></div>{setup.setup.install_url && <a className="button primary full" href={setup.setup.install_url} target="_blank" rel="noreferrer">Open provider setup <ArrowRight size={15} /></a>}{setup.setup.command && <CopyBlock value={setup.setup.command} />}{setup.setup.commands && (Array.isArray(setup.setup.commands) ? setup.setup.commands : Object.values(setup.setup.commands)).map((command) => <CopyBlock value={command} key={command} />)}{setup.setup.template && <details className="setup-template" open><summary>Generated setup template <ChevronDown size={13} /></summary><pre>{setup.setup.template}</pre><button className="button subtle" onClick={() => navigator.clipboard.writeText(setup.setup.template || "")}><Copy size={14} /> Copy template</button></details>}{collectorConnected ? <button className="button primary full" onClick={onResults}>View results <ArrowRight size={15} /></button> : <button className="button primary full" disabled={busy} onClick={verify}>{busy ? "Verifying…" : ["aws_account", "azure_subscription", "gcp_project"].includes(setup.kind) ? "I've completed setup — verify access" : "Check connection"}</button>}{message && <p className="form-status">{message}</p>}{error && <InlineError text={error} />}<small className="setup-expiry">Setup session expires {new Date(setup.expires_at).toLocaleTimeString()}.</small></div>}
+    </section></div>}
+  </div>;
+}
+
+function CopyBlock({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+  return <div className="install-command"><code>{value}</code><button onClick={() => navigator.clipboard.writeText(value).then(() => { setCopied(true); window.setTimeout(() => setCopied(false), 1500); })}><Copy size={15} />{copied ? "Copied" : "Copy"}</button></div>;
+}
+
 function CoveragePage({ api, revision }: { api: API; revision: number }) {
   const [targetType, setTargetType] = useState("");
   const overview = useRemote(() => api.overview("7d"), [api, revision]);
   const targets = useRemote(() => api.targets({ target_type: targetType, limit: 100 }), [api, revision, targetType]);
   const [expanded, setExpanded] = useState<string>();
-  const [enrollment, setEnrollment] = useState<{ code: string; expires_at: string; hub_url?: string; collector_version?: string }>();
-  const [enrollError, setEnrollError] = useState("");
-  const [enrollmentPlatform, setEnrollmentPlatform] = useState<"macos" | "windows">("macos");
-  const [commandCopied, setCommandCopied] = useState(false);
-  const generateEnrollment = () => {
-    setEnrollError("");
-    setCommandCopied(false);
-    api.enrollment().then(setEnrollment).catch((reason) => setEnrollError(String(reason)));
-  };
-  const enrollmentHub = enrollment?.hub_url || location.origin;
-  const collectorVersion = enrollment?.collector_version && !enrollment.collector_version.endsWith("-dev") ? enrollment.collector_version : "latest";
-  const collectorPackage = `barrikade-lens@${collectorVersion}`;
-  const enrollmentCommand = enrollmentPlatform === "macos"
-    ? `sudo -E "$(command -v npx)" --yes --no-audit --no-fund ${collectorPackage} enroll ${enrollment?.code ?? "CODE"} --hub '${enrollmentHub}' --config '/Library/Application Support/Barrikade/Lens/config.json' --install`
-    : `npx --yes --no-audit --no-fund ${collectorPackage} enroll ${enrollment?.code ?? "CODE"} --hub '${enrollmentHub}' --install`;
-  const copyEnrollmentCommand = () => navigator.clipboard.writeText(enrollmentCommand).then(() => {
-    setCommandCopied(true);
-    window.setTimeout(() => setCommandCopied(false), 1800);
-  }).catch((reason) => setEnrollError(`Could not copy the command: ${String(reason)}`));
   if (overview.loading || targets.loading) return <Loading />;
   if (overview.error || targets.error || !overview.data || !targets.data) return <Failure error={overview.error || targets.error} retry={() => { overview.reload(); targets.reload(); }} />;
   return <div className="page-stack">
@@ -298,21 +450,6 @@ function CoveragePage({ api, revision }: { api: API; revision: number }) {
       </div>
     </section>
     <CoverageBaseline api={api} coverage={overview.data.coverage} onSaved={() => overview.reload()} />
-    <section className="panel enrollment-panel">
-      <div className="enrollment-head"><div><p className="eyebrow">EXPAND COVERAGE</p><h2>Enroll a managed endpoint</h2><p>Generate a private, single-device command that expires in ten minutes. It enrolls the endpoint and starts continuous discovery in one step.</p></div>
-        {!enrollment && <button className="button primary" onClick={generateEnrollment}>Generate install command</button>}
-      </div>
-      {enrollment && <div className="enrollment-setup">
-        <div className="platform-tabs" aria-label="Endpoint platform">
-          <button className={enrollmentPlatform === "macos" ? "active" : ""} onClick={() => { setEnrollmentPlatform("macos"); setCommandCopied(false); }}>macOS</button>
-          <button className={enrollmentPlatform === "windows" ? "active" : ""} onClick={() => { setEnrollmentPlatform("windows"); setCommandCopied(false); }}>Windows</button>
-        </div>
-        <p className="install-instruction">{enrollmentPlatform === "macos" ? "Open Terminal on the Mac. Paste this command and enter the administrator password when prompted. Requires Node.js 18+." : "Open PowerShell as Administrator on the Windows device, then paste this command. Requires Node.js 18+."}</p>
-        <div className="install-command"><code>{enrollmentCommand}</code><button onClick={copyEnrollmentCommand}><Copy size={15} /> {commandCopied ? "Copied" : "Copy command"}</button></div>
-        <div className="enrollment-meta"><span>One use · expires {new Date(enrollment.expires_at).toLocaleTimeString()}</span><button onClick={generateEnrollment}>Generate a new command</button></div>
-      </div>}
-      {enrollError && <InlineError text={enrollError} />}
-    </section>
   </div>;
 }
 
@@ -327,7 +464,7 @@ function ChangesPage({ api, revision }: { api: API; revision: number }) {
     <Select label="Window" value={filters.window} onChange={(value) => update("window", value)} options={{ "24h": "Last 24 hours", "7d": "Last 7 days", "30d": "Last 30 days", "90d": "Last 90 days" }} />
     <Select label="Category" value={filters.category} onChange={(value) => update("category", value)} options={{ "": "All material changes", state: "State", network_scope: "Network scope", attribution: "Attribution", capability: "Capability", confidence: "Confidence", identity: "Identity", freshness: "Freshness" }} />
     <Select label="System type" value={filters.system_type} onChange={(value) => update("system_type", value)} options={{ "": "All systems", autonomous_agent: "Autonomous agent", agent_tool: "Agent-capable tool", model_runtime: "Model runtime" }} />
-    <Select label="Surface" value={filters.surface} onChange={(value) => update("surface", value)} options={{ "": "All surfaces", endpoint: "Endpoint", repository: "Repository", kubernetes: "Kubernetes" }} />
+    <Select label="Surface" value={filters.surface} onChange={(value) => update("surface", value)} options={{ "": "All surfaces", endpoint: "Endpoint", repository: "Repository", kubernetes: "Kubernetes", cloud: "Cloud" }} />
   </FilterBar>
     <section className="panel change-log"><PanelHeading title="System change history" detail="Changes to root systems and their connected capabilities; routine re-observation is suppressed" count={items.length} /><ChangeList items={items} expanded />
       {remote.loading && <InlineLoading />}{remote.error && <InlineError text={remote.error} />}{remote.data?.next_cursor && !remote.loading && <button className="load-more" onClick={() => setCursor(remote.data!.next_cursor!)}>Load more changes <ChevronDown size={15} /></button>}
@@ -417,26 +554,26 @@ function CoverageBaseline({ api, coverage, onSaved }: { api: API; coverage: Over
   const [editing, setEditing] = useState(false);
   const [status, setStatus] = useState("");
   const save = () => {
-    const baselines = ["endpoint", "repository", "kubernetes"].map((target_type) => ({ target_type, expected_count: values[target_type] === "" ? null : Number(values[target_type]) }));
+    const baselines = ["endpoint", "repository", "kubernetes", "cloud"].map((target_type) => ({ target_type, expected_count: values[target_type] === "" ? null : Number(values[target_type]) }));
     api.setBaselines(baselines).then(() => { setStatus("Coverage baseline saved"); setEditing(false); onSaved(); }).catch((reason) => setStatus(String(reason)));
   };
   return <section className="panel baseline-panel"><div><p className="eyebrow">EXPECTED POPULATION</p><h2>Coverage denominator</h2><p>Optional manual baselines let Lens compare reporting targets with a known population. Blank values remain explicitly unknown.</p></div>
-    {editing ? <div className="baseline-form">{["endpoint", "repository", "kubernetes"].map((type) => <label key={type}>{pretty(type)}<input type="number" min="0" placeholder="Unknown" value={values[type] ?? ""} onChange={(event) => setValues((current) => ({ ...current, [type]: event.target.value }))} /></label>)}<button className="button primary" onClick={save}>Save baselines</button><button className="button subtle" onClick={() => setEditing(false)}>Cancel</button></div> : <button className="button subtle" onClick={() => setEditing(true)}><SlidersHorizontal size={15} /> Configure baselines</button>}
+    {editing ? <div className="baseline-form">{["endpoint", "repository", "kubernetes", "cloud"].map((type) => <label key={type}>{pretty(type)}<input type="number" min="0" placeholder="Unknown" value={values[type] ?? ""} onChange={(event) => setValues((current) => ({ ...current, [type]: event.target.value }))} /></label>)}<button className="button primary" onClick={save}>Save baselines</button><button className="button subtle" onClick={() => setEditing(false)}>Cancel</button></div> : <button className="button subtle" onClick={() => setEditing(true)}><SlidersHorizontal size={15} /> Configure baselines</button>}
     {status && <small className="form-status">{status}</small>}
   </section>;
 }
 
 function CoverageCard({ item, onClick, active }: { item: Overview["coverage"][number]; onClick?: () => void; active?: boolean }) {
-  const Icon = item.target_type === "endpoint" ? Monitor : item.target_type === "repository" ? GitBranch : Container;
-  const label = ({ endpoint: "Endpoints", repository: "Repositories", kubernetes: "Kubernetes" } as Record<string, string>)[item.target_type] ?? pretty(item.target_type);
+  const Icon = item.target_type === "endpoint" ? Monitor : item.target_type === "repository" ? GitBranch : item.target_type === "cloud" ? Cloud : Container;
+  const label = ({ endpoint: "Endpoints", repository: "Repositories", kubernetes: "Kubernetes", cloud: "Cloud environments" } as Record<string, string>)[item.target_type] ?? pretty(item.target_type);
   const status = item.reporting === 0 ? "Not reporting" : [item.fresh ? `${item.fresh} fresh` : "", item.stale ? `${item.stale} stale` : "", item.partial ? `${item.partial} partial` : ""].filter(Boolean).join(" · ");
   const body = <><span className="coverage-icon"><Icon size={19} /></span><div><p>{label}</p><strong>{item.reporting}</strong><span>{item.population_configured ? `of ${item.expected_count} expected` : "reporting targets"}</span></div><div className={item.stale || item.partial ? "coverage-card-status needs-review" : item.reporting ? "coverage-card-status reporting" : "coverage-card-status quiet"}><b>{status}</b><small>{item.population_configured ? "Manual baseline" : "Expected population unknown"}</small></div></>;
   return onClick ? <button className={active ? "coverage-card active" : "coverage-card"} onClick={onClick}>{body}</button> : <div className="coverage-card">{body}</div>;
 }
 
 function CoverageSummaryRow({ item, onClick }: { item: Overview["coverage"][number]; onClick: () => void }) {
-  const Icon = item.target_type === "endpoint" ? Monitor : item.target_type === "repository" ? GitBranch : Container;
-  const label = ({ endpoint: "Endpoints", repository: "Repositories", kubernetes: "Kubernetes" } as Record<string, string>)[item.target_type] ?? pretty(item.target_type);
+  const Icon = item.target_type === "endpoint" ? Monitor : item.target_type === "repository" ? GitBranch : item.target_type === "cloud" ? Cloud : Container;
+  const label = ({ endpoint: "Endpoints", repository: "Repositories", kubernetes: "Kubernetes", cloud: "Cloud environments" } as Record<string, string>)[item.target_type] ?? pretty(item.target_type);
   const statusText = item.reporting === 0 ? "Not reporting" : `${item.reporting} reporting${item.stale ? ` · ${item.stale} stale` : ""}${item.partial ? ` · ${item.partial} partial` : ""}`;
   const baseline = item.population_configured ? `${item.expected_count} expected` : "Expected population unknown";
   return <button className="coverage-summary-row" onClick={onClick}><span className="coverage-summary-icon"><Icon size={16} /></span><span><b>{label}</b><small>{baseline}</small></span><span className={item.stale || item.partial ? "coverage-status needs-review" : item.reporting ? "coverage-status reporting" : "coverage-status quiet"}>{statusText}</span><ChevronRight size={14} /></button>;
@@ -511,7 +648,7 @@ function ExportMenu({ api }: { api: API }) {
 }
 
 function About({ onClose }: { onClose: () => void }) {
-  return <div className="modal-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="about-modal"><button onClick={onClose}><X size={18} /></button><Brand /><p className="eyebrow">PRODUCT BOUNDARY</p><h2>Lens discovers and assesses exposure.</h2><p>It observes, normalizes, correlates, and reports factual inventory, operator context, and clearly labelled catalogue potential.</p><div className="boundary-grid"><span><CheckCircle2 size={15} /> Discovers systems and connections</span><span><CheckCircle2 size={15} /> Preserves sanitized evidence</span><span><CheckCircle2 size={15} /> Explains categorical findings</span><span><X size={15} /> No composite risk score</span><span><X size={15} /> No authorization verification or invocation</span><span><X size={15} /> No remediation or enforcement</span></div><small>Discovery Snapshot 1.1 remains unchanged. Exposure is a Hub-side derived projection.</small></section></div>;
+  return <div className="modal-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="about-modal"><button onClick={onClose}><X size={18} /></button><Brand /><p className="eyebrow">PRODUCT BOUNDARY</p><h2>Lens discovers and assesses exposure.</h2><p>It observes, normalizes, correlates, and reports factual inventory, operator context, and clearly labelled catalogue potential.</p><div className="boundary-grid"><span><CheckCircle2 size={15} /> Discovers systems and connections</span><span><CheckCircle2 size={15} /> Preserves sanitized evidence</span><span><CheckCircle2 size={15} /> Explains categorical findings</span><span><X size={15} /> No composite risk score</span><span><X size={15} /> No authorization verification or invocation</span><span><X size={15} /> No remediation or enforcement</span></div><small>Discovery Snapshot 1.2 adds cloud inventory while Hub continues accepting 1.1 collectors.</small></section></div>;
 }
 
 function Loading() { return <div className="loading"><Radar size={25} /><span>Resolving discovery posture…</span></div>; }

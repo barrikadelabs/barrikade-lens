@@ -12,6 +12,18 @@ paths:
     get: {security: [], operationId: authConfig, responses: {'200': {description: OIDC and quickstart access configuration}}}
   /v1/auth/exchange:
     post: {security: [], operationId: exchangeOIDCCode, requestBody: {required: true, content: {application/json: {schema: {type: object, required: [code, redirect_uri, code_verifier], properties: {code: {type: string}, redirect_uri: {type: string, format: uri}, code_verifier: {type: string, minLength: 43}}}}}}, responses: {'200': {description: Lens human session token}}}
+  /v1/auth/clerk/webhook:
+    post: {security: [], operationId: receiveClerkWebhook, description: Signed and idempotent asynchronous membership and account cleanup., responses: {'202': {description: Clerk lifecycle event accepted}, '401': {description: Invalid Svix signature}}}
+  /v1/session:
+    get: {operationId: getSession, responses: {'200': {description: Active user, workspace, role, and permissions}, '401': {description: Session expired, revoked, banned, or has no active organization}}}
+  /v1/workspaces/bootstrap:
+    post: {operationId: bootstrapWorkspace, description: Idempotently provisions the active Clerk organization without depending on webhook delivery., responses: {'200': {description: Existing workspace activated}, '201': {description: First workspace provisioned}}}
+  /v1/workspaces/current:
+    delete:
+      operationId: deleteWorkspace
+      description: Owner-only immediate workspace data purge.
+      requestBody: {required: true, content: {application/json: {schema: {type: object, additionalProperties: false, required: [confirmation], properties: {confirmation: {type: string}}}}}}
+      responses: {'204': {description: Workspace permanently deleted}, '403': {description: Owner role required}}
   /v1/enrollment/exchange:
     post: {security: [], operationId: enrollCollector, requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/Enrollment'}}}}, responses: {'200': {description: Source-scoped rotating collector credentials}}}
   /v1/collector/token:
@@ -29,12 +41,36 @@ paths:
     post:
       operationId: submitDiscoverySnapshot
       requestBody: {required: true, content: {application/json: {schema: {$ref: './schema/discovery-snapshot-v1.json'}}}}
-      responses: {'202': {description: Snapshot accepted into the PostgreSQL ingestion queue}, '422': {description: Snapshot failed schema or privacy validation}, '426': {description: Collector must upgrade to DiscoverySnapshot 1.1}}
+      responses: {'202': {description: Snapshot accepted into the PostgreSQL ingestion queue}, '422': {description: Snapshot failed schema or privacy validation}, '426': {description: Collector must use supported Discovery Snapshot version 1.1 or 1.2}}
   /v1/discovery/jobs/{id}:
     get:
       operationId: getDiscoveryJob
       parameters: [{$ref: '#/components/parameters/ID'}]
       responses: {'200': {description: Ingestion job status}, '404': {description: Job not found in the caller organization/source}}
+  /v1/environments:
+    get: {operationId: listEnvironments, responses: {'200': {description: Environments in the active workspace}}}
+  /v1/environments/setup-sessions:
+    post:
+      operationId: createEnvironmentSetupSession
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/EnvironmentSetupRequest'}}}}
+      responses: {'201': {description: Short-lived single-use setup with least-privilege instructions}, '403': {description: Environment management permission required}}
+  /v1/environments/{id}:
+    get: {operationId: getEnvironment, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Environment connection state and safe setup metadata}, '404': {description: Environment not found}}}
+    patch:
+      operationId: updateEnvironment
+      parameters: [{$ref: '#/components/parameters/ID'}]
+      requestBody: {required: true, content: {application/json: {schema: {type: object, additionalProperties: false, properties: {display_name: {type: string, maxLength: 160}, daily_schedule_enabled: {type: boolean}}}}}}
+      responses: {'200': {description: Display name or daily schedule updated}}
+    delete: {operationId: disconnectEnvironment, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Access revoked immediately and historical findings scheduled for purge after 90 days}}}
+  /v1/environments/{id}/verify:
+    post: {operationId: verifyEnvironment, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'202': {description: Access verified and first scan queued, or collector enrollment awaited}, '401': {description: Provider rejected the temporary Lens identity}}}
+  /v1/environments/{id}/scans:
+    post: {operationId: createEnvironmentScan, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'202': {description: Manual scan queued or coalesced with the active scan}, '409': {description: Environment is not connected}}}
+  /v1/environments/{id}/scans/{scanId}:
+    get:
+      operationId: getEnvironmentScan
+      parameters: [{$ref: '#/components/parameters/ID'}, {name: scanId, in: path, required: true, schema: {type: string, format: uuid}}]
+      responses: {'200': {description: Live phase, progress, coverage, and safe error}, '404': {description: Scan not found in the active workspace and environment}}
   /v1/entities:
     get:
       operationId: listEntities
@@ -67,7 +103,7 @@ paths:
   /v1/catalog/search:
     get: {operationId: searchCapabilityCatalog, parameters: [{name: q, in: query, schema: {type: string, maxLength: 200}}], responses: {'200': {description: Catalogue suggestions that require explicit review unless uniquely identified}}}
   /v1/targets:
-    get: {operationId: listTargets, parameters: [{name: target_type, in: query, schema: {enum: [endpoint, repository, kubernetes]}}, {name: search, in: query, schema: {type: string}}, {$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}], responses: {'200': {description: Unique discovery targets with nested active collectors}}}
+    get: {operationId: listTargets, parameters: [{name: target_type, in: query, schema: {enum: [endpoint, repository, kubernetes, cloud]}}, {name: search, in: query, schema: {type: string}}, {$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}], responses: {'200': {description: Unique discovery targets with nested active collectors}}}
   /v1/targets/{id}:
     get: {operationId: getTarget, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Discovery target, freshness, scan coverage, and collectors}, '404': {description: Target not found}}}
   /v1/coverage:
@@ -93,8 +129,16 @@ components:
     Enrollment:
       type: object
       additionalProperties: false
-      required: [code, hostname, platform, architecture, collector_version, identity_public_key, identity_proof]
-      properties: {code: {type: string}, hostname: {type: string}, platform: {type: string}, architecture: {type: string}, collector_version: {type: string}, identity_public_key: {type: string, description: Base64url-encoded Ed25519 public key}, identity_proof: {type: string, description: Ed25519 signature over the enrollment request}}
+      required: [code, platform, architecture, collector_version, identity_public_key, identity_proof]
+      properties: {code: {type: string}, source_type: {enum: [endpoint, repository, kubernetes]}, hostname: {type: string}, target_identity: {type: string, description: Stable cluster UID or owner/repository identity for non-endpoint collectors}, display_name: {type: string}, platform: {type: string}, architecture: {type: string}, collector_version: {type: string}, identity_public_key: {type: string, description: Base64url-encoded Ed25519 public key}, identity_proof: {type: string, description: Ed25519 signature over the type-aware enrollment request}}
+    EnvironmentSetupRequest:
+      type: object
+      additionalProperties: false
+      required: [kind]
+      properties:
+        kind: {enum: [aws_account, azure_subscription, gcp_project, endpoint, github_repository, kubernetes_cluster]}
+        display_name: {type: string, minLength: 1, maxLength: 160}
+        configuration: {type: object, description: Provider identifiers only; secret-like fields are rejected., additionalProperties: true}
     CoverageBaselineRequest:
       type: object
       additionalProperties: false
@@ -103,13 +147,13 @@ components:
         baselines:
           type: array
           minItems: 1
-          maxItems: 3
+          maxItems: 4
           items:
             type: object
             additionalProperties: false
             required: [target_type, expected_count]
             properties:
-              target_type: {enum: [endpoint, repository, kubernetes]}
+              target_type: {enum: [endpoint, repository, kubernetes, cloud]}
               expected_count: {type: [integer, 'null'], minimum: 0}
     EntityContext:
       type: object
