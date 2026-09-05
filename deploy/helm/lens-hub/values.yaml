@@ -5,6 +5,37 @@ image:
   pullPolicy: IfNotPresent
 existingSecret: lens-hub
 publicURL: https://lens.example.com
+auth:
+  mode: oidc
+  clerk:
+    issuer: ""
+    publishableKey: ""
+    authorizedParty: ""
+github:
+  appSlug: ""
+  appID: ""
+  privateKeySecret: ""
+  privateKeyKey: private-key.pem
+selfServe:
+  enabled: false
+  connectors:
+    aws: false
+    azure: false
+    gcp: false
+  aws:
+    brokerRoleARN: ""
+    federationAudience: ""
+    regions: ""
+  azure:
+    applicationID: ""
+    assertionAudience: api://AzureADTokenExchange
+  gcp:
+    workloadIssuer: ""
+    workloadAudience: ""
+    assertionAudience: ""
+  managedIdentity:
+    clientID: ""
+    principalID: ""
 catalog:
   enabled: true
   manifest: https://raw.githubusercontent.com/jentic/jentic-public-apis/refs/heads/main/apis/openapi/apis.json

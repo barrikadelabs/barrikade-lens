@@ -98,7 +98,7 @@ flowchart LR
 | Path | Purpose |
 |---|---|
 | `cmd/barrikade-lens` | Native CLI and managed endpoint service |
-| `cmd/lens-hub` | Hub API and PostgreSQL workers |
+| `cmd/lens-hub` | Hub API and PostgreSQL workers, including the optional managed self-serve flow |
 | `cmd/lens-k8s` | Informer-based Kubernetes collector |
 | `pkg/discovery` | Stable public discovery contract, privacy validation, identities |
 | `internal/scanner` | Endpoint, repository, and Kubernetes analyzers |

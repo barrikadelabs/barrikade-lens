@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/barrikadelabs/barrikade-lens/internal/cloud"
 	"github.com/barrikadelabs/barrikade-lens/internal/githubapp"
 	"github.com/barrikadelabs/barrikade-lens/internal/identity"
 	"github.com/barrikadelabs/barrikade-lens/pkg/discovery"
@@ -25,23 +26,41 @@ import (
 )
 
 type Config struct {
-	Pool                    *pgxpool.Pool
-	JWTSecret               []byte
-	DevAdminToken           string
-	DefaultOrganizationID   string
-	DefaultOrganizationName string
-	PublicURL               string
-	Issuer                  string
-	Logger                  *slog.Logger
-	UIDir                   string
-	OIDCIssuer              string
-	OIDCClientID            string
-	OIDCClientSecret        string
-	OIDCRedirectURI         string
-	OIDCAdminGroup          string
-	GitHubWebhookSecret     []byte
-	GitHubClient            *githubapp.Client
-	ExposureEnabled         bool
+	Pool                       *pgxpool.Pool
+	WorkerPool                 *pgxpool.Pool
+	JWTSecret                  []byte
+	AuthMode                   string
+	DevAdminToken              string
+	DefaultOrganizationID      string
+	DefaultOrganizationName    string
+	PublicURL                  string
+	Issuer                     string
+	Logger                     *slog.Logger
+	UIDir                      string
+	OIDCIssuer                 string
+	OIDCClientID               string
+	OIDCClientSecret           string
+	OIDCRedirectURI            string
+	OIDCAdminGroup             string
+	ClerkIssuer                string
+	ClerkPublishableKey        string
+	ClerkAuthorizedParty       string
+	ClerkWebhookSecret         string
+	GitHubWebhookSecret        []byte
+	GitHubClient               *githubapp.Client
+	GitHubAppSlug              string
+	ExposureEnabled            bool
+	SelfServeEnabled           bool
+	AWSConnectorEnabled        bool
+	AzureConnectorEnabled      bool
+	GCPConnectorEnabled        bool
+	CloudAdapters              cloud.Registry
+	AWSBrokerRoleARN           string
+	AzureApplicationID         string
+	GCPWorkloadIssuer          string
+	GCPWorkloadAudience        string
+	GCPAssertionAudience       string
+	ManagedIdentityPrincipalID string
 }
 
 type Server struct {
@@ -56,6 +75,9 @@ type Server struct {
 func NewServer(ctx context.Context, config Config) (*Server, error) {
 	if config.Pool == nil {
 		return nil, fmt.Errorf("database pool is required")
+	}
+	if config.WorkerPool == nil {
+		config.WorkerPool = config.Pool
 	}
 	if len(config.JWTSecret) < 32 {
 		return nil, fmt.Errorf("JWT secret must contain at least 32 bytes")
@@ -72,12 +94,37 @@ func NewServer(ctx context.Context, config Config) (*Server, error) {
 	if config.Logger == nil {
 		config.Logger = slog.Default()
 	}
-	if _, err := config.Pool.Exec(ctx, `INSERT INTO organizations(id,name) VALUES($1,$2) ON CONFLICT(id) DO NOTHING`, config.DefaultOrganizationID, config.DefaultOrganizationName); err != nil {
+	if config.AuthMode == "" {
+		switch {
+		case config.ClerkIssuer != "":
+			config.AuthMode = "clerk"
+		case config.OIDCIssuer != "":
+			config.AuthMode = "oidc"
+		default:
+			config.AuthMode = "development"
+		}
+	}
+	if config.AuthMode != "clerk" && config.AuthMode != "oidc" && config.AuthMode != "development" {
+		return nil, fmt.Errorf("auth mode must be clerk, oidc, or development")
+	}
+	if config.AuthMode == "clerk" {
+		if config.ClerkIssuer == "" || config.ClerkPublishableKey == "" || config.ClerkAuthorizedParty == "" {
+			return nil, fmt.Errorf("Clerk issuer, publishable key, and authorized party are required in Clerk auth mode")
+		}
+	} else if _, err := config.WorkerPool.Exec(ctx, `INSERT INTO organizations(id,name) VALUES($1,$2) ON CONFLICT(id) DO NOTHING`, config.DefaultOrganizationID, config.DefaultOrganizationName); err != nil {
 		return nil, err
 	}
 	server := &Server{config: config, mux: http.NewServeMux()}
-	server.auth = &Authenticator{Pool: config.Pool, JWTSecret: config.JWTSecret, DevAdminToken: config.DevAdminToken, DefaultOrganizationID: config.DefaultOrganizationID, Issuer: config.Issuer}
-	if config.OIDCIssuer != "" {
+	server.auth = &Authenticator{Pool: config.WorkerPool, JWTSecret: config.JWTSecret, DevAdminToken: config.DevAdminToken, DefaultOrganizationID: config.DefaultOrganizationID, Issuer: config.Issuer}
+	if config.AuthMode == "clerk" {
+		provider, err := oidc.NewProvider(ctx, config.ClerkIssuer)
+		if err != nil {
+			return nil, fmt.Errorf("discover Clerk issuer: %w", err)
+		}
+		server.auth.ClerkVerifier = provider.Verifier(&oidc.Config{SkipClientIDCheck: true})
+		server.auth.ClerkAuthorizedParty = config.ClerkAuthorizedParty
+	}
+	if config.AuthMode == "oidc" {
 		if config.OIDCClientID == "" || config.OIDCRedirectURI == "" {
 			return nil, fmt.Errorf("OIDC client ID and redirect URI are required when an issuer is configured")
 		}
@@ -103,10 +150,27 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /v1/collector/token", s.rotateCollectorToken)
 	s.mux.HandleFunc("GET /v1/auth/config", s.oidcConfig)
 	s.mux.HandleFunc("POST /v1/auth/exchange", s.oidcExchange)
+	if s.config.ClerkWebhookSecret != "" {
+		s.mux.HandleFunc("POST /v1/auth/clerk/webhook", s.clerkWebhook)
+	}
 	if len(s.config.GitHubWebhookSecret) > 0 {
 		s.mux.HandleFunc("POST /v1/connectors/github/webhook", s.githubWebhook)
 	}
+	if s.config.GitHubClient != nil {
+		s.mux.HandleFunc("GET /v1/connectors/github/setup", s.githubSetupCallback)
+	}
 	authenticated := http.NewServeMux()
+	authenticated.HandleFunc("GET /v1/session", s.getSession)
+	authenticated.HandleFunc("POST /v1/workspaces/bootstrap", s.bootstrapWorkspace)
+	authenticated.HandleFunc("DELETE /v1/workspaces/current", s.deleteWorkspace)
+	authenticated.HandleFunc("GET /v1/environments", s.listEnvironments)
+	authenticated.HandleFunc("GET /v1/environments/{id}", s.getEnvironment)
+	authenticated.HandleFunc("POST /v1/environments/setup-sessions", s.createEnvironmentSetupSession)
+	authenticated.HandleFunc("POST /v1/environments/{id}/verify", s.verifyEnvironment)
+	authenticated.HandleFunc("PATCH /v1/environments/{id}", s.updateEnvironment)
+	authenticated.HandleFunc("POST /v1/environments/{id}/scans", s.createEnvironmentScan)
+	authenticated.HandleFunc("GET /v1/environments/{id}/scans/{scanId}", s.getEnvironmentScan)
+	authenticated.HandleFunc("DELETE /v1/environments/{id}", s.disconnectEnvironment)
 	authenticated.HandleFunc("POST /v1/admin/enrollment-codes", s.createEnrollmentCode)
 	authenticated.HandleFunc("POST /v1/admin/service-accounts", s.createServiceAccount)
 	authenticated.HandleFunc("DELETE /v1/admin/service-accounts/{id}", s.revokeServiceAccount)
@@ -136,7 +200,7 @@ func (s *Server) routes() {
 		authenticated.HandleFunc("PUT /v1/entities/{id}/catalog-link", s.putCatalogLink)
 		authenticated.HandleFunc("DELETE /v1/entities/{id}/catalog-link", s.deleteCatalogLink)
 	}
-	s.mux.Handle("/v1/", s.auth.Middleware(authenticated))
+	s.mux.Handle("/v1/", s.auth.Middleware(s.tenantTransaction(authenticated)))
 	if s.config.UIDir != "" {
 		s.mux.Handle("/", http.FileServer(http.Dir(s.config.UIDir)))
 	}
@@ -173,7 +237,7 @@ func (s *Server) createServiceAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := uuid.New()
-	_, err = s.config.Pool.Exec(r.Context(), `INSERT INTO service_accounts(id,organization_id,name,token_hash,scopes) VALUES($1,$2,$3,$4,$5)`, id, principal.OrganizationID, request.Name, tokenHash(raw), request.Scopes)
+	_, err = s.db(r.Context()).Exec(r.Context(), `INSERT INTO service_accounts(id,organization_id,name,token_hash,scopes) VALUES($1,$2,$3,$4,$5)`, id, principal.OrganizationID, request.Name, tokenHash(raw), request.Scopes)
 	if err != nil {
 		writeError(w, http.StatusConflict, "service_account_conflict", "A service account with this name already exists")
 		return
@@ -192,7 +256,7 @@ func (s *Server) revokeServiceAccount(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_id", "Service account ID is invalid")
 		return
 	}
-	result, err := s.config.Pool.Exec(r.Context(), `UPDATE service_accounts SET revoked_at=now() WHERE organization_id=$1 AND id=$2 AND revoked_at IS NULL`, principal.OrganizationID, id)
+	result, err := s.db(r.Context()).Exec(r.Context(), `UPDATE service_accounts SET revoked_at=now() WHERE organization_id=$1 AND id=$2 AND revoked_at IS NULL`, principal.OrganizationID, id)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "database_error", "Could not revoke the service account")
 		return
@@ -245,7 +309,7 @@ func (s *Server) createEnrollmentCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	expires := time.Now().UTC().Add(time.Duration(request.ExpiresInSeconds) * time.Second)
-	if _, err := s.config.Pool.Exec(r.Context(), `INSERT INTO enrollment_codes(code_hash,organization_id,expires_at,uses_remaining,source_type) VALUES($1,$2,$3,$4,$5)`, tokenHash(normalizeCode(code)), principal.OrganizationID, expires, request.Uses, request.SourceType); err != nil {
+	if _, err := s.db(r.Context()).Exec(r.Context(), `INSERT INTO enrollment_codes(code_hash,organization_id,expires_at,uses_remaining,source_type) VALUES($1,$2,$3,$4,$5)`, tokenHash(normalizeCode(code)), principal.OrganizationID, expires, request.Uses, request.SourceType); err != nil {
 		writeError(w, 500, "database_error", "Could not save enrollment code")
 		return
 	}
@@ -261,24 +325,18 @@ func (s *Server) exchangeEnrollment(w http.ResponseWriter, r *http.Request) {
 		CollectorVersion  string `json:"collector_version"`
 		IdentityPublicKey string `json:"identity_public_key"`
 		IdentityProof     string `json:"identity_proof"`
+		SourceType        string `json:"source_type"`
+		TargetIdentity    string `json:"target_identity"`
+		DisplayName       string `json:"display_name"`
 	}
 	if err := decodeJSON(w, r, &request, 64<<10); err != nil {
 		return
 	}
-	if request.Code == "" || request.Hostname == "" || request.IdentityPublicKey == "" || request.IdentityProof == "" {
-		writeError(w, 400, "invalid_enrollment", "Code, hostname, and endpoint identity proof are required; upgrade the Lens collector if identity fields are unavailable")
+	if request.Code == "" || request.IdentityPublicKey == "" || request.IdentityProof == "" {
+		writeError(w, 400, "invalid_enrollment", "Code and persistent collector identity proof are required; upgrade the Lens collector if identity fields are unavailable")
 		return
 	}
-	if err := identity.Verify(request.IdentityPublicKey, request.IdentityProof, request.Code, request.Hostname, request.Platform, request.Architecture, request.CollectorVersion); err != nil {
-		writeError(w, 401, "invalid_endpoint_identity", "The endpoint identity proof is invalid")
-		return
-	}
-	fingerprint, err := identity.Fingerprint(request.IdentityPublicKey)
-	if err != nil {
-		writeError(w, 400, "invalid_endpoint_identity", "The endpoint identity is invalid")
-		return
-	}
-	tx, err := s.config.Pool.BeginTx(r.Context(), pgx.TxOptions{})
+	tx, err := s.begin(r.Context())
 	if err != nil {
 		writeError(w, 500, "database_error", "Could not start enrollment")
 		return
@@ -296,13 +354,65 @@ func (s *Server) exchangeEnrollment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "database_error", "Could not validate enrollment code")
 		return
 	}
-	targetID := discovery.StableID(orgID, discovery.KindEndpoint, "installation-key:"+fingerprint)
+	if request.SourceType != "" && request.SourceType != sourceType {
+		writeError(w, 401, "source_type_mismatch", "The enrollment code was issued for a different collector type")
+		return
+	}
+	targetIdentity, displayName := strings.TrimSpace(request.TargetIdentity), strings.TrimSpace(request.DisplayName)
+	targetKind := discovery.KindEndpoint
+	identityLabel := request.Hostname
+	switch sourceType {
+	case "endpoint":
+		if request.Hostname == "" {
+			writeError(w, 400, "invalid_enrollment", "Endpoint hostname is required")
+			return
+		}
+		targetIdentity, displayName = request.Hostname, request.Hostname
+	case "kubernetes":
+		targetKind = discovery.KindCluster
+		identityLabel = targetIdentity
+		if targetIdentity == "" {
+			writeError(w, 400, "invalid_enrollment", "A persistent Kubernetes cluster identity is required")
+			return
+		}
+		if displayName == "" {
+			displayName = targetIdentity
+		}
+	case "repository":
+		targetKind = discovery.KindRepository
+		targetIdentity = strings.ToLower(targetIdentity)
+		identityLabel = targetIdentity
+		if !repositoryPattern.MatchString(targetIdentity) {
+			writeError(w, 400, "invalid_enrollment", "Repository identity must be owner/name")
+			return
+		}
+		if displayName == "" {
+			displayName = targetIdentity
+		}
+	default:
+		writeError(w, 400, "invalid_source_type", "Enrollment code has an unsupported collector type")
+		return
+	}
+	if err := identity.Verify(request.IdentityPublicKey, request.IdentityProof, request.Code, identityLabel, request.Platform, request.Architecture, request.CollectorVersion); err != nil {
+		writeError(w, 401, "invalid_collector_identity", "The collector identity proof is invalid")
+		return
+	}
+	fingerprint, err := identity.Fingerprint(request.IdentityPublicKey)
+	if err != nil {
+		writeError(w, 400, "invalid_collector_identity", "The collector identity is invalid")
+		return
+	}
+	targetKey := sourceType + ":" + targetIdentity
+	if sourceType == "endpoint" {
+		targetKey = "installation-key:" + fingerprint
+	}
+	targetID := discovery.StableID(orgID, targetKind, targetKey)
 	publicKey, _ := base64.RawURLEncoding.DecodeString(request.IdentityPublicKey)
 	err = tx.QueryRow(r.Context(), `INSERT INTO discovery_targets(organization_id,id,target_type,identity_fingerprint,identity_public_key,identity_quality,name,platform,architecture)
 		VALUES($1,$2,$3,$4,$5,'persistent',$6,$7,$8)
 		ON CONFLICT(organization_id,identity_fingerprint) WHERE identity_fingerprint IS NOT NULL
 		DO UPDATE SET name=EXCLUDED.name,platform=EXCLUDED.platform,architecture=EXCLUDED.architecture,current=true
-		RETURNING id`, orgID, targetID, sourceType, fingerprint, publicKey, request.Hostname, request.Platform, request.Architecture).Scan(&targetID)
+		RETURNING id`, orgID, targetID, sourceType, fingerprint, publicKey, displayName, request.Platform, request.Architecture).Scan(&targetID)
 	if err != nil {
 		writeError(w, 500, "database_error", "Could not create discovery target")
 		return
@@ -316,15 +426,33 @@ func (s *Server) exchangeEnrollment(w http.ResponseWriter, r *http.Request) {
 			sourceUUID = uuid.New()
 		}
 		sourceID = "source:" + sourceUUID.String()
-		_, err = tx.Exec(r.Context(), `INSERT INTO sources(organization_id,id,target_id,source_type,name,platform,architecture,collector_version) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, orgID, sourceID, targetID, sourceType, request.Hostname, request.Platform, request.Architecture, request.CollectorVersion)
+		_, err = tx.Exec(r.Context(), `INSERT INTO sources(organization_id,id,target_id,source_type,name,platform,architecture,collector_version) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, orgID, sourceID, targetID, sourceType, displayName, request.Platform, request.Architecture, request.CollectorVersion)
 	} else if err == nil {
-		_, err = tx.Exec(r.Context(), `UPDATE sources SET name=$4,platform=$5,architecture=$6,collector_version=$7 WHERE organization_id=$1 AND id=$2 AND target_id=$3`, orgID, sourceID, targetID, request.Hostname, request.Platform, request.Architecture, request.CollectorVersion)
+		_, err = tx.Exec(r.Context(), `UPDATE sources SET name=$4,platform=$5,architecture=$6,collector_version=$7 WHERE organization_id=$1 AND id=$2 AND target_id=$3`, orgID, sourceID, targetID, displayName, request.Platform, request.Architecture, request.CollectorVersion)
 		if err == nil {
 			_, err = tx.Exec(r.Context(), `DELETE FROM collector_refresh_tokens WHERE organization_id=$1 AND source_id=$2`, orgID, sourceID)
 		}
 	}
 	if err != nil {
 		writeError(w, 500, "database_error", "Could not create or rotate discovery source")
+		return
+	}
+	setupKind := map[string]string{"endpoint": "endpoint", "repository": "github_repository", "kubernetes": "kubernetes_cluster"}[sourceType]
+	var setupEnvironmentID uuid.UUID
+	setupErr := tx.QueryRow(r.Context(), `SELECT environment_id FROM connector_setup_sessions WHERE organization_id=$1 AND token_hash=$2 AND kind=$3 AND state='pending' AND expires_at>now() FOR UPDATE`, orgID, tokenHash(normalizeCode(request.Code)), setupKind).Scan(&setupEnvironmentID)
+	if setupErr == nil {
+		_, err = tx.Exec(r.Context(), `UPDATE environment_connections SET external_id=COALESCE(NULLIF(external_id,''),$3),display_name=COALESCE(NULLIF(display_name,''),$4),connection_status='connected',target_id=$5,source_id=$6,verified_at=now(),last_error_code=NULL,last_error_message=NULL,updated_at=now() WHERE organization_id=$1 AND id=$2`, orgID, setupEnvironmentID, targetIdentity, displayName, targetID, sourceID)
+		if err == nil {
+			_, err = tx.Exec(r.Context(), `UPDATE connector_setup_sessions SET state='consumed',consumed_at=now() WHERE organization_id=$1 AND environment_id=$2 AND state='pending'`, orgID, setupEnvironmentID)
+		}
+		if err == nil {
+			_, err = tx.Exec(r.Context(), `INSERT INTO workspace_audit_events(id,organization_id,actor_id,event_type,target_type,target_id,metadata) VALUES($1,$2,'collector:enrollment','environment.verified','environment',$3,$4)`, uuid.New(), orgID, setupEnvironmentID.String(), jsonBytes(map[string]any{"provider": sourceType}))
+		}
+	} else if !errors.Is(setupErr, pgx.ErrNoRows) {
+		err = setupErr
+	}
+	if err != nil {
+		writeError(w, 500, "database_error", "Could not activate the environment")
 		return
 	}
 	if uses <= 1 {
@@ -370,7 +498,7 @@ func (s *Server) rotateCollectorToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "invalid_request", "Refresh token is required")
 		return
 	}
-	tx, err := s.config.Pool.BeginTx(r.Context(), pgx.TxOptions{})
+	tx, err := s.begin(r.Context())
 	if err != nil {
 		writeError(w, 500, "database_error", "Could not rotate token")
 		return
@@ -420,8 +548,8 @@ func (s *Server) submitSnapshot(w http.ResponseWriter, r *http.Request) {
 	if err := decodeJSON(w, r, &snapshot, 32<<20); err != nil {
 		return
 	}
-	if snapshot.SchemaVersion != discovery.SchemaVersion {
-		writeError(w, http.StatusUpgradeRequired, "collector_upgrade_required", "This Lens Hub requires DiscoverySnapshot schema "+discovery.SchemaVersion)
+	if !discovery.IsSupportedSchemaVersion(snapshot.SchemaVersion) {
+		writeError(w, http.StatusUpgradeRequired, "collector_upgrade_required", "This Lens Hub accepts DiscoverySnapshot schemas "+discovery.LegacySchemaVersion+" and "+discovery.SchemaVersion)
 		return
 	}
 	if err := snapshot.Validate(); err != nil {
@@ -434,7 +562,7 @@ func (s *Server) submitSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	var revokedAt *time.Time
 	var expectedSourceType, expectedTargetID string
-	if err := s.config.Pool.QueryRow(r.Context(), `SELECT source_type,target_id,revoked_at FROM sources WHERE organization_id=$1 AND id=$2`, snapshot.OrganizationID, snapshot.SourceID).Scan(&expectedSourceType, &expectedTargetID, &revokedAt); err != nil || revokedAt != nil {
+	if err := s.db(r.Context()).QueryRow(r.Context(), `SELECT source_type,target_id,revoked_at FROM sources WHERE organization_id=$1 AND id=$2`, snapshot.OrganizationID, snapshot.SourceID).Scan(&expectedSourceType, &expectedTargetID, &revokedAt); err != nil || revokedAt != nil {
 		writeError(w, 403, "source_revoked", "The discovery source is unknown or revoked")
 		return
 	}
@@ -454,7 +582,7 @@ func (s *Server) submitSnapshot(w http.ResponseWriter, r *http.Request) {
 	jobID := uuid.New()
 	var id uuid.UUID
 	var status string
-	err = s.config.Pool.QueryRow(r.Context(), `INSERT INTO ingestion_jobs(id,organization_id,source_id,snapshot_id,status,payload) VALUES($1,$2,$3,$4,'pending',$5) ON CONFLICT(organization_id,snapshot_id) DO UPDATE SET snapshot_id=EXCLUDED.snapshot_id RETURNING id,status`, jobID, snapshot.OrganizationID, snapshot.SourceID, snapshot.SnapshotID, payload).Scan(&id, &status)
+	err = s.db(r.Context()).QueryRow(r.Context(), `INSERT INTO ingestion_jobs(id,organization_id,source_id,snapshot_id,status,payload) VALUES($1,$2,$3,$4,'pending',$5) ON CONFLICT(organization_id,snapshot_id) DO UPDATE SET snapshot_id=EXCLUDED.snapshot_id RETURNING id,status`, jobID, snapshot.OrganizationID, snapshot.SourceID, snapshot.SnapshotID, payload).Scan(&id, &status)
 	if err != nil {
 		writeError(w, 500, "database_error", "Could not queue snapshot")
 		return
@@ -468,7 +596,7 @@ func (s *Server) revokeSource(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 403, "forbidden", "Administrator access is required")
 		return
 	}
-	tx, err := s.config.Pool.BeginTx(r.Context(), pgx.TxOptions{})
+	tx, err := s.begin(r.Context())
 	if err != nil {
 		writeError(w, 500, "database_error", "Could not revoke source")
 		return
@@ -560,7 +688,7 @@ func (s *Server) getJob(w http.ResponseWriter, r *http.Request) {
 		query += ` AND source_id=$3`
 		args = append(args, principal.SourceID)
 	}
-	err = s.config.Pool.QueryRow(r.Context(), query, args...).Scan(&status, &errorCode, &errorMessage, &created, &completed)
+	err = s.db(r.Context()).QueryRow(r.Context(), query, args...).Scan(&status, &errorCode, &errorMessage, &created, &completed)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, 404, "not_found", "Job not found")
 		return

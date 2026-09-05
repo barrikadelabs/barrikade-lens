@@ -9,7 +9,24 @@ import (
 )
 
 func (s *Server) oidcConfig(w http.ResponseWriter, r *http.Request) {
-	response := map[string]any{"enabled": s.oidcProvider != nil, "development_bootstrap": s.config.DevAdminToken != "", "exposure_enabled": s.config.ExposureEnabled}
+	response := map[string]any{
+		"mode":                  s.config.AuthMode,
+		"enabled":               s.oidcProvider != nil,
+		"development_bootstrap": s.config.DevAdminToken != "",
+		"exposure_enabled":      s.config.ExposureEnabled,
+		"self_serve_enabled":    s.config.SelfServeEnabled,
+		"connectors": map[string]bool{
+			"aws":        s.config.AWSConnectorEnabled,
+			"azure":      s.config.AzureConnectorEnabled,
+			"gcp":        s.config.GCPConnectorEnabled,
+			"endpoint":   true,
+			"github":     s.config.GitHubClient != nil,
+			"kubernetes": true,
+		},
+	}
+	if s.config.AuthMode == "clerk" {
+		response["clerk_publishable_key"] = s.config.ClerkPublishableKey
+	}
 	if s.oidcProvider != nil {
 		response["authorization_endpoint"] = s.oauthConfig.Endpoint.AuthURL
 		response["client_id"] = s.oauthConfig.ClientID

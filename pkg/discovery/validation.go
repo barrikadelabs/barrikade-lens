@@ -9,14 +9,17 @@ import (
 )
 
 func (s *Snapshot) Validate() error {
-	if s.SchemaVersion != SchemaVersion {
-		return fmt.Errorf("schema_version must be %q", SchemaVersion)
+	if !IsSupportedSchemaVersion(s.SchemaVersion) {
+		return fmt.Errorf("schema_version must be %q or %q", LegacySchemaVersion, SchemaVersion)
 	}
 	if s.SnapshotID == "" || s.OrganizationID == "" || s.SourceID == "" || s.TargetID == "" {
 		return fmt.Errorf("snapshot_id, organization_id, source_id, and target_id are required")
 	}
-	if s.SourceType != SourceEndpoint && s.SourceType != SourceRepository && s.SourceType != SourceKubernetes {
+	if s.SourceType != SourceEndpoint && s.SourceType != SourceRepository && s.SourceType != SourceKubernetes && s.SourceType != SourceCloud {
 		return fmt.Errorf("unsupported source_type %q", s.SourceType)
+	}
+	if s.SchemaVersion == LegacySchemaVersion && s.SourceType == SourceCloud {
+		return fmt.Errorf("source_type %q requires schema_version %q", s.SourceType, SchemaVersion)
 	}
 	if _, err := time.Parse(time.RFC3339Nano, s.ObservedAt); err != nil {
 		return fmt.Errorf("observed_at: %w", err)
@@ -72,6 +75,10 @@ func (s *Snapshot) Validate() error {
 		}
 	}
 	return nil
+}
+
+func IsSupportedSchemaVersion(version string) bool {
+	return version == LegacySchemaVersion || version == SchemaVersion
 }
 
 func validateConfidence(value Confidence) error {

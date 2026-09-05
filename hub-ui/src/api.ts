@@ -2,7 +2,7 @@ export type Confidence = "confirmed" | "likely" | "possible";
 export type SystemType = "autonomous_agent" | "agent_tool" | "model_runtime";
 
 export type CoverageSummary = {
-  target_type: "endpoint" | "repository" | "kubernetes";
+  target_type: "endpoint" | "repository" | "kubernetes" | "cloud";
   reporting: number;
   fresh: number;
   stale: number;
@@ -189,7 +189,7 @@ export type Collector = {
 
 export type Target = {
   id: string;
-  target_type: "endpoint" | "repository" | "kubernetes";
+  target_type: "endpoint" | "repository" | "kubernetes" | "cloud";
   identity_quality: "persistent" | "legacy_identity";
   name: string;
   platform?: string;
@@ -248,13 +248,82 @@ export type Relationship = {
 export type PageResult<T> = { items: T[]; limit: number; next_cursor?: string };
 
 export type AuthConfig = {
+  mode: "clerk" | "oidc" | "development";
   enabled: boolean;
   development_bootstrap: boolean;
   exposure_enabled: boolean;
+  self_serve_enabled: boolean;
+  clerk_publishable_key?: string;
+  connectors: Record<string, boolean>;
   authorization_endpoint?: string;
   client_id?: string;
   redirect_uri?: string;
   scopes?: string[];
+};
+
+export type Session = {
+  user: { id: string };
+  workspace: { id: string; name: string };
+  role: "owner" | "admin" | "viewer";
+  permissions: string[];
+  needs_bootstrap: boolean;
+  can_delete_account: boolean;
+};
+
+export type EnvironmentKind = "aws_account" | "azure_subscription" | "gcp_project" | "endpoint" | "github_repository" | "kubernetes_cluster";
+export type ConnectionStatus = "setup_pending" | "verifying" | "connected" | "auth_error" | "disconnected";
+export type ScanStatus = "queued" | "running" | "ingesting" | "complete" | "partial" | "failed" | "cancelled";
+
+export type Environment = {
+  id: string;
+  kind: EnvironmentKind;
+  provider?: string;
+  external_id?: string;
+  display_name: string;
+  connection_status: ConnectionStatus;
+  configuration: Record<string, unknown>;
+  target_id?: string;
+  source_id?: string;
+  schedule_enabled: boolean;
+  next_scan_at?: string;
+  verified_at?: string;
+  disconnected_at?: string;
+  purge_after?: string;
+  last_error_code?: string;
+  last_error_message?: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type SetupSession = {
+  id: string;
+  environment_id: string;
+  kind: EnvironmentKind;
+  expires_at: string;
+  token_displayed_once: boolean;
+  setup: {
+    method: string;
+    command?: string;
+    commands?: Record<string, string> | string[];
+    install_url?: string;
+    template?: string;
+    what_lens_reads?: string[];
+    excluded?: string[];
+    [key: string]: unknown;
+  };
+};
+
+export type EnvironmentScan = {
+  id: string;
+  environment_id: string;
+  status: ScanStatus;
+  phase: string;
+  trigger: string;
+  progress: Record<string, unknown>;
+  safe_error?: { code?: string; message?: string };
+  created_at: string;
+  started_at?: string;
+  completed_at?: string;
 };
 
 export async function authConfig() {
@@ -283,18 +352,59 @@ function queryPath(path: string, values: Record<string, string | number | boolea
 }
 
 export class API {
-  constructor(private token: string) {}
+  constructor(private tokenSource: string | (() => Promise<string | null>)) {}
+
+  private async token() {
+    const value = typeof this.tokenSource === "string" ? this.tokenSource : await this.tokenSource();
+    if (!value) throw new Error("Your Lens session has expired. Sign in again.");
+    return value;
+  }
 
   private async request<T>(path: string, init?: RequestInit): Promise<T> {
     const headers = new Headers(init?.headers);
-    headers.set("Authorization", `Bearer ${this.token}`);
+    headers.set("Authorization", `Bearer ${await this.token()}`);
     if (init?.body) headers.set("Content-Type", "application/json");
     const response = await fetch(path, { ...init, headers });
     if (!response.ok) {
       const body = await response.json().catch(() => null) as { error?: { message?: string } } | null;
       throw new Error(body?.error?.message ?? `Lens Hub returned ${response.status}`);
     }
+    if (response.status === 204) return undefined as T;
     return response.json() as Promise<T>;
+  }
+
+  session() { return this.request<Session>("/v1/session"); }
+
+  bootstrapWorkspace(name: string) {
+    return this.request<{ id: string; name: string; role: string; created: boolean }>("/v1/workspaces/bootstrap", { method: "POST", body: JSON.stringify({ name }) });
+  }
+
+  environments() { return this.request<{ items: Environment[] }>("/v1/environments"); }
+
+  environment(id: string) { return this.request<Environment>(`/v1/environments/${encodeURIComponent(id)}`); }
+
+  createEnvironmentSetup(input: { kind: EnvironmentKind; display_name: string; external_id?: string; configuration?: Record<string, unknown> }) {
+    return this.request<SetupSession>("/v1/environments/setup-sessions", { method: "POST", body: JSON.stringify(input) });
+  }
+
+  verifyEnvironment(id: string) {
+    return this.request<{ environment_id: string; connection_status: ConnectionStatus; verification?: { principal: string; permissions: string[] }; scan?: { id: string; status: ScanStatus }; message?: string }>(`/v1/environments/${encodeURIComponent(id)}/verify`, { method: "POST" });
+  }
+
+  scanEnvironment(id: string) {
+    return this.request<{ id: string; status: ScanStatus; coalesced: boolean }>(`/v1/environments/${encodeURIComponent(id)}/scans`, { method: "POST" });
+  }
+
+  environmentScan(environmentID: string, scanID: string) {
+    return this.request<EnvironmentScan>(`/v1/environments/${encodeURIComponent(environmentID)}/scans/${encodeURIComponent(scanID)}`);
+  }
+
+  updateEnvironment(id: string, input: { display_name?: string; daily_schedule_enabled?: boolean }) {
+    return this.request<Environment>(`/v1/environments/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(input) });
+  }
+
+  disconnectEnvironment(id: string) {
+    return this.request<{ id: string; connection_status: "disconnected"; purge_after_days: number; teardown: string[] }>(`/v1/environments/${encodeURIComponent(id)}`, { method: "DELETE" });
   }
 
   overview(window = "7d") {
@@ -369,7 +479,7 @@ export class API {
   }
 
   async downloadExport(format: "lens" | "ndjson" | "cyclonedx") {
-    const response = await fetch(`/v1/exports?format=${format}`, { headers: { Authorization: `Bearer ${this.token}` } });
+    const response = await fetch(`/v1/exports?format=${format}`, { headers: { Authorization: `Bearer ${await this.token()}` } });
     if (!response.ok) throw new Error(`Lens Hub returned ${response.status}`);
     const blob = await response.blob();
     const href = URL.createObjectURL(blob);

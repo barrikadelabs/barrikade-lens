@@ -103,7 +103,7 @@ func (s *Server) listEntities(w http.ResponseWriter, r *http.Request) {
 	}
 	query += fmt.Sprintf(` LIMIT $%d`, index)
 	args = append(args, limit)
-	rows, err := s.config.Pool.Query(r.Context(), query, args...)
+	rows, err := s.db(r.Context()).Query(r.Context(), query, args...)
 	if err != nil {
 		writeError(w, 500, "database_error", "Could not query entities")
 		return
@@ -148,7 +148,7 @@ func (s *Server) getEntity(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 403, "forbidden", err.Error())
 		return
 	}
-	row := s.config.Pool.QueryRow(r.Context(), `SELECT id,kind,canonical_key,name,attributes,confidence,provenance,current,stale,first_seen_at,last_seen_at FROM entities WHERE organization_id=$1 AND id=$2`, principal.OrganizationID, r.PathValue("id"))
+	row := s.db(r.Context()).QueryRow(r.Context(), `SELECT id,kind,canonical_key,name,attributes,confidence,provenance,current,stale,first_seen_at,last_seen_at FROM entities WHERE organization_id=$1 AND id=$2`, principal.OrganizationID, r.PathValue("id"))
 	item, err := scanEntity(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, 404, "not_found", "Entity not found")
@@ -161,7 +161,7 @@ func (s *Server) getEntity(w http.ResponseWriter, r *http.Request) {
 	var targetID, surface, systemRole, systemType, state, network, productID, productCategory, targetName, targetType *string
 	var targetLastSeen *time.Time
 	var attributed *bool
-	postureErr := s.config.Pool.QueryRow(r.Context(), `SELECT p.target_id,p.surface,p.system_role,p.system_type,p.discovery_state,p.network_scope,p.attributed,p.product_id,p.product_category,t.name,t.target_type,t.last_seen_at FROM entity_posture p LEFT JOIN discovery_targets t ON t.organization_id=p.organization_id AND t.id=p.target_id WHERE p.organization_id=$1 AND p.entity_id=$2`, principal.OrganizationID, r.PathValue("id")).Scan(&targetID, &surface, &systemRole, &systemType, &state, &network, &attributed, &productID, &productCategory, &targetName, &targetType, &targetLastSeen)
+	postureErr := s.db(r.Context()).QueryRow(r.Context(), `SELECT p.target_id,p.surface,p.system_role,p.system_type,p.discovery_state,p.network_scope,p.attributed,p.product_id,p.product_category,t.name,t.target_type,t.last_seen_at FROM entity_posture p LEFT JOIN discovery_targets t ON t.organization_id=p.organization_id AND t.id=p.target_id WHERE p.organization_id=$1 AND p.entity_id=$2`, principal.OrganizationID, r.PathValue("id")).Scan(&targetID, &surface, &systemRole, &systemType, &state, &network, &attributed, &productID, &productCategory, &targetName, &targetType, &targetLastSeen)
 	if postureErr == nil {
 		targetFreshness := "unknown"
 		if targetType != nil {
@@ -172,6 +172,7 @@ func (s *Server) getEntity(w http.ResponseWriter, r *http.Request) {
 	attributes, _ := item["attributes"].(map[string]any)
 	name, _ := item["name"].(string)
 	item["evidence"] = s.evidenceForEntity(r.Context(), principal.OrganizationID, r.PathValue("id"), name, attributes, 500)
+	s.trackFirstResultViewed(r.Context(), principal, "entity")
 	writeJSON(w, 200, item)
 }
 
@@ -239,7 +240,7 @@ func (s *Server) listRelationships(w http.ResponseWriter, r *http.Request) {
 	}
 	query += fmt.Sprintf(` ORDER BY r.last_seen_at DESC,r.id DESC LIMIT $%d`, index)
 	args = append(args, limit)
-	rows, err := s.config.Pool.Query(r.Context(), query, args...)
+	rows, err := s.db(r.Context()).Query(r.Context(), query, args...)
 	if err != nil {
 		writeError(w, 500, "database_error", "Could not query relationships")
 		return
@@ -309,7 +310,7 @@ func (s *Server) listChanges(w http.ResponseWriter, r *http.Request) {
 	}
 	args = append(args, limit)
 	query += fmt.Sprintf(` ORDER BY c.changed_at DESC,c.id DESC LIMIT $%d`, len(args))
-	rows, err := s.config.Pool.Query(r.Context(), query, args...)
+	rows, err := s.db(r.Context()).Query(r.Context(), query, args...)
 	if err != nil {
 		writeError(w, 500, "database_error", "Could not query changes")
 		return
@@ -343,7 +344,7 @@ func (s *Server) coverage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 403, "forbidden", err.Error())
 		return
 	}
-	rows, err := s.config.Pool.Query(r.Context(), `SELECT s.id,s.target_id,s.source_type,s.name,s.platform,s.collector_version,s.last_seen_at,s.last_full_at,s.last_sequence,s.latest_partial,s.latest_error_count,s.latest_coverage,COUNT(se.entity_id) FILTER(WHERE se.current),COUNT(se.entity_id) FILTER(WHERE se.stale AND se.current) FROM sources s LEFT JOIN source_entities se ON se.organization_id=s.organization_id AND se.source_id=s.id WHERE s.organization_id=$1 AND s.revoked_at IS NULL GROUP BY s.organization_id,s.id ORDER BY s.name`, principal.OrganizationID)
+	rows, err := s.db(r.Context()).Query(r.Context(), `SELECT s.id,s.target_id,s.source_type,s.name,s.platform,s.collector_version,s.last_seen_at,s.last_full_at,s.last_sequence,s.latest_partial,s.latest_error_count,s.latest_coverage,COUNT(se.entity_id) FILTER(WHERE se.current),COUNT(se.entity_id) FILTER(WHERE se.stale AND se.current) FROM sources s LEFT JOIN source_entities se ON se.organization_id=s.organization_id AND se.source_id=s.id WHERE s.organization_id=$1 AND s.revoked_at IS NULL GROUP BY s.organization_id,s.id ORDER BY s.name`, principal.OrganizationID)
 	if err != nil {
 		writeError(w, 500, "database_error", "Could not query coverage")
 		return
@@ -364,10 +365,10 @@ func (s *Server) coverage(w http.ResponseWriter, r *http.Request) {
 		items = append(items, map[string]any{"source_id": id, "target_id": targetID, "source_type": sourceType, "name": name, "platform": platform, "collector_version": version, "last_seen_at": lastSeen, "last_full_at": lastFull, "sequence": sequence, "partial": partial, "error_count": errorCount, "latest_coverage": jsonObject(latestCoverage), "current_entities": current, "stale_entities": stale})
 	}
 	targetTypes := []map[string]any{}
-	for _, targetType := range []string{"endpoint", "repository", "kubernetes"} {
+	for _, targetType := range []string{"endpoint", "repository", "kubernetes", "cloud"} {
 		var reporting, fresh, stale, partial int
 		var expected *int
-		err := s.config.Pool.QueryRow(r.Context(), `SELECT COUNT(*) FILTER(WHERE current AND last_seen_at IS NOT NULL),COUNT(*) FILTER(WHERE current AND last_seen_at >= now()-CASE target_type WHEN 'endpoint' THEN interval '60 minutes' WHEN 'repository' THEN interval '36 hours' ELSE interval '12 hours' END),COUNT(*) FILTER(WHERE current AND last_seen_at IS NOT NULL AND last_seen_at < now()-CASE target_type WHEN 'endpoint' THEN interval '60 minutes' WHEN 'repository' THEN interval '36 hours' ELSE interval '12 hours' END),COUNT(*) FILTER(WHERE current AND EXISTS(SELECT 1 FROM sources s WHERE s.organization_id=discovery_targets.organization_id AND s.target_id=discovery_targets.id AND s.revoked_at IS NULL AND s.latest_partial)),(SELECT expected_count FROM coverage_baselines WHERE organization_id=$1 AND target_type=$2) FROM discovery_targets WHERE organization_id=$1 AND target_type=$2`, principal.OrganizationID, targetType).Scan(&reporting, &fresh, &stale, &partial, &expected)
+		err := s.db(r.Context()).QueryRow(r.Context(), `SELECT COUNT(*) FILTER(WHERE current AND last_seen_at IS NOT NULL),COUNT(*) FILTER(WHERE current AND last_seen_at >= now()-CASE target_type WHEN 'endpoint' THEN interval '60 minutes' WHEN 'kubernetes' THEN interval '12 hours' ELSE interval '36 hours' END),COUNT(*) FILTER(WHERE current AND last_seen_at IS NOT NULL AND last_seen_at < now()-CASE target_type WHEN 'endpoint' THEN interval '60 minutes' WHEN 'kubernetes' THEN interval '12 hours' ELSE interval '36 hours' END),COUNT(*) FILTER(WHERE current AND EXISTS(SELECT 1 FROM sources s WHERE s.organization_id=discovery_targets.organization_id AND s.target_id=discovery_targets.id AND s.revoked_at IS NULL AND s.latest_partial)),(SELECT expected_count FROM coverage_baselines WHERE organization_id=$1 AND target_type=$2) FROM discovery_targets WHERE organization_id=$1 AND target_type=$2`, principal.OrganizationID, targetType).Scan(&reporting, &fresh, &stale, &partial, &expected)
 		if err != nil {
 			writeError(w, 500, "database_error", "Could not compute target coverage")
 			return
@@ -389,7 +390,7 @@ func (s *Server) exports(w http.ResponseWriter, r *http.Request) {
 	}
 	snapshot := discovery.NewSnapshot(principal.OrganizationID, "hub-export", discovery.SourceRepository, discovery.Collector{ID: "lens-hub", Name: "Lens Hub", Version: Version, Mode: "export"})
 	snapshot.Scope.Name = "Lens Hub current inventory"
-	rows, err := s.config.Pool.Query(r.Context(), `SELECT id,kind,canonical_key,name,attributes,confidence,provenance FROM entities WHERE organization_id=$1 AND current=true ORDER BY id`, principal.OrganizationID)
+	rows, err := s.db(r.Context()).Query(r.Context(), `SELECT id,kind,canonical_key,name,attributes,confidence,provenance FROM entities WHERE organization_id=$1 AND current=true ORDER BY id`, principal.OrganizationID)
 	if err != nil {
 		writeError(w, 500, "database_error", "Could not export entities")
 		return
@@ -410,7 +411,7 @@ func (s *Server) exports(w http.ResponseWriter, r *http.Request) {
 		snapshot.Entities = append(snapshot.Entities, entity)
 	}
 	rows.Close()
-	relationRows, err := s.config.Pool.Query(r.Context(), `SELECT id,kind,from_entity,to_entity,attributes,confidence FROM relationships WHERE organization_id=$1 AND current=true ORDER BY id`, principal.OrganizationID)
+	relationRows, err := s.db(r.Context()).Query(r.Context(), `SELECT id,kind,from_entity,to_entity,attributes,confidence FROM relationships WHERE organization_id=$1 AND current=true ORDER BY id`, principal.OrganizationID)
 	if err != nil {
 		writeError(w, 500, "database_error", "Could not export relationships")
 		return
@@ -474,7 +475,7 @@ func (s *Server) createWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := uuid.New()
-	_, err = s.config.Pool.Exec(r.Context(), `INSERT INTO webhook_endpoints(id,organization_id,url,signing_secret) VALUES($1,$2,$3,$4)`, id, principal.OrganizationID, endpoint.String(), []byte(secret))
+	_, err = s.db(r.Context()).Exec(r.Context(), `INSERT INTO webhook_endpoints(id,organization_id,url,signing_secret) VALUES($1,$2,$3,$4)`, id, principal.OrganizationID, endpoint.String(), []byte(secret))
 	if err != nil {
 		writeError(w, 500, "database_error", "Could not create webhook")
 		return

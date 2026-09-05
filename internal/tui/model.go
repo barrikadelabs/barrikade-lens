@@ -154,10 +154,12 @@ func (m Model) surfaceLabel(width int) string {
 			surfaces["repository"] = true
 		case discovery.KindCluster:
 			surfaces["kubernetes"] = true
+		case discovery.KindCloudEnvironment:
+			surfaces["cloud"] = true
 		}
 	}
 	labels := []string{}
-	for _, surface := range []string{"endpoint", "repository", "kubernetes"} {
+	for _, surface := range []string{"endpoint", "repository", "kubernetes", "cloud"} {
 		if surfaces[surface] {
 			label := surface
 			if width < 70 && surface == "repository" {

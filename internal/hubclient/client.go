@@ -25,13 +25,16 @@ type Client struct {
 }
 
 type EnrollmentRequest struct {
-	Code             string `json:"code"`
-	Hostname         string `json:"hostname"`
-	Platform         string `json:"platform"`
-	Architecture     string `json:"architecture"`
-	CollectorVersion string `json:"collector_version"`
+	Code              string `json:"code"`
+	Hostname          string `json:"hostname,omitempty"`
+	Platform          string `json:"platform"`
+	Architecture      string `json:"architecture"`
+	CollectorVersion  string `json:"collector_version"`
 	IdentityPublicKey string `json:"identity_public_key"`
 	IdentityProof     string `json:"identity_proof"`
+	SourceType        string `json:"source_type,omitempty"`
+	TargetIdentity    string `json:"target_identity,omitempty"`
+	DisplayName       string `json:"display_name,omitempty"`
 }
 type EnrollmentResponse struct {
 	HubURL               string `json:"hub_url"`
@@ -53,11 +56,22 @@ func New(version string) *Client {
 }
 
 func (c *Client) Enroll(ctx context.Context, hubURL, code, configPath string) (lensconfig.Config, error) {
+	hostname, _ := os.Hostname()
+	return c.EnrollTarget(ctx, hubURL, code, configPath, "endpoint", hostname, hostname)
+}
+
+func (c *Client) EnrollTarget(ctx context.Context, hubURL, code, configPath, sourceType, targetIdentity, displayName string) (lensconfig.Config, error) {
 	base, err := validateHubURL(hubURL)
 	if err != nil {
 		return lensconfig.Config{}, err
 	}
-	hostname, _ := os.Hostname()
+	hostname := targetIdentity
+	if sourceType == "endpoint" && hostname == "" {
+		hostname, _ = os.Hostname()
+	}
+	if sourceType != "endpoint" && strings.TrimSpace(targetIdentity) == "" {
+		return lensconfig.Config{}, fmt.Errorf("persistent target identity is required for %s enrollment", sourceType)
+	}
 	if configPath == "" {
 		configPath, err = lensconfig.Path()
 		if err != nil {
@@ -72,7 +86,10 @@ func (c *Client) Enroll(ctx context.Context, hubURL, code, configPath string) (l
 	if err != nil {
 		return lensconfig.Config{}, err
 	}
-	request := EnrollmentRequest{Code: strings.TrimSpace(code), Hostname: hostname, Platform: runtime.GOOS, Architecture: runtime.GOARCH, CollectorVersion: c.Version, IdentityPublicKey: state.PublicKey, IdentityProof: proof}
+	request := EnrollmentRequest{Code: strings.TrimSpace(code), Platform: runtime.GOOS, Architecture: runtime.GOARCH, CollectorVersion: c.Version, IdentityPublicKey: state.PublicKey, IdentityProof: proof, SourceType: sourceType, TargetIdentity: targetIdentity, DisplayName: displayName}
+	if sourceType == "endpoint" {
+		request.Hostname = hostname
+	}
 	var response EnrollmentResponse
 	if err := c.doJSON(ctx, http.MethodPost, base+"/v1/enrollment/exchange", "", request, &response); err != nil {
 		return lensconfig.Config{}, err

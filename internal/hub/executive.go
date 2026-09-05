@@ -67,6 +67,8 @@ func freshnessState(targetType string, lastSeen *time.Time, now time.Time) strin
 		threshold = 36 * time.Hour
 	case "kubernetes":
 		threshold = 12 * time.Hour
+	case "cloud":
+		threshold = 36 * time.Hour
 	}
 	if now.Sub(*lastSeen) > threshold {
 		return "stale"
@@ -89,13 +91,13 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC()
 
 	coverage := []map[string]any{}
-	for _, targetType := range []string{"endpoint", "repository", "kubernetes"} {
+	for _, targetType := range []string{"endpoint", "repository", "kubernetes", "cloud"} {
 		var reporting, fresh, stale, partial, collectors int
 		var expected *int
-		err = s.config.Pool.QueryRow(r.Context(), `SELECT
+		err = s.db(r.Context()).QueryRow(r.Context(), `SELECT
 			COUNT(DISTINCT t.id) FILTER(WHERE t.current AND t.last_seen_at IS NOT NULL),
-			COUNT(DISTINCT t.id) FILTER(WHERE t.current AND t.last_seen_at IS NOT NULL AND t.last_seen_at >= now()-CASE t.target_type WHEN 'endpoint' THEN interval '60 minutes' WHEN 'repository' THEN interval '36 hours' ELSE interval '12 hours' END),
-			COUNT(DISTINCT t.id) FILTER(WHERE t.current AND t.last_seen_at IS NOT NULL AND t.last_seen_at < now()-CASE t.target_type WHEN 'endpoint' THEN interval '60 minutes' WHEN 'repository' THEN interval '36 hours' ELSE interval '12 hours' END),
+			COUNT(DISTINCT t.id) FILTER(WHERE t.current AND t.last_seen_at IS NOT NULL AND t.last_seen_at >= now()-CASE t.target_type WHEN 'endpoint' THEN interval '60 minutes' WHEN 'kubernetes' THEN interval '12 hours' ELSE interval '36 hours' END),
+			COUNT(DISTINCT t.id) FILTER(WHERE t.current AND t.last_seen_at IS NOT NULL AND t.last_seen_at < now()-CASE t.target_type WHEN 'endpoint' THEN interval '60 minutes' WHEN 'kubernetes' THEN interval '12 hours' ELSE interval '36 hours' END),
 			COUNT(DISTINCT t.id) FILTER(WHERE t.current AND EXISTS(SELECT 1 FROM sources s2 WHERE s2.organization_id=t.organization_id AND s2.target_id=t.id AND s2.revoked_at IS NULL AND s2.latest_partial)),
 			COUNT(DISTINCT s.id) FILTER(WHERE s.revoked_at IS NULL),(SELECT b.expected_count FROM coverage_baselines b WHERE b.organization_id=$1 AND b.target_type=$2)
 			FROM discovery_targets t
@@ -120,7 +122,7 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 
 	attention := map[string]int{}
 	var newSystems int
-	_ = s.config.Pool.QueryRow(r.Context(), `SELECT count(*) FROM entity_posture WHERE organization_id=$1 AND current=true AND system_role='system' AND first_seen_at >= $2 AND (`+freshPostureTargetSQL("entity_posture")+`)`, orgID, now.Add(-window)).Scan(&newSystems)
+	_ = s.db(r.Context()).QueryRow(r.Context(), `SELECT count(*) FROM entity_posture WHERE organization_id=$1 AND current=true AND system_role='system' AND first_seen_at >= $2 AND (`+freshPostureTargetSQL("entity_posture")+`)`, orgID, now.Add(-window)).Scan(&newSystems)
 	attention["newly_discovered_systems"] = newSystems
 	for key, query := range map[string]string{
 		"non_loopback_services": `SELECT count(*) FROM entity_posture p JOIN entities e ON e.organization_id=p.organization_id AND e.id=p.entity_id WHERE p.organization_id=$1 AND p.current=true AND p.network_scope IN ('network','external') AND e.kind IN ('model_server','mcp_server','api_service') AND (` + freshPostureTargetSQL("p") + `)`,
@@ -128,21 +130,21 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 		"possible_only_systems": `SELECT count(*) FROM entity_posture WHERE organization_id=$1 AND current=true AND system_role='system' AND confidence='possible' AND (` + freshPostureTargetSQL("entity_posture") + `)`,
 	} {
 		var count int
-		_ = s.config.Pool.QueryRow(r.Context(), query, orgID).Scan(&count)
+		_ = s.db(r.Context()).QueryRow(r.Context(), query, orgID).Scan(&count)
 		attention[key] = count
 	}
 	for key, query := range map[string]string{
 		"partial_scans":                 `SELECT count(DISTINCT target_id) FROM sources WHERE organization_id=$1 AND revoked_at IS NULL AND latest_partial=true`,
-		"stale_targets":                 `SELECT count(*) FROM discovery_targets WHERE organization_id=$1 AND current=true AND last_seen_at IS NOT NULL AND last_seen_at < now()-CASE target_type WHEN 'endpoint' THEN interval '60 minutes' WHEN 'repository' THEN interval '36 hours' ELSE interval '12 hours' END`,
+		"stale_targets":                 `SELECT count(*) FROM discovery_targets WHERE organization_id=$1 AND current=true AND last_seen_at IS NOT NULL AND last_seen_at < now()-CASE target_type WHEN 'endpoint' THEN interval '60 minutes' WHEN 'kubernetes' THEN interval '12 hours' ELSE interval '36 hours' END`,
 		"possible_duplicate_identities": `SELECT COALESCE(sum(count),0) FROM (SELECT count(*) FROM discovery_targets WHERE organization_id=$1 AND current=true GROUP BY target_type,lower(name) HAVING count(*)>1) duplicates`,
 		"fact_conflicts":                `SELECT count(*) FROM data_quality_conflicts WHERE organization_id=$1 AND resolved_at IS NULL`,
 	} {
 		var count int
-		_ = s.config.Pool.QueryRow(r.Context(), query, orgID).Scan(&count)
+		_ = s.db(r.Context()).QueryRow(r.Context(), query, orgID).Scan(&count)
 		attention[key] = count
 	}
 
-	changeRows, err := s.config.Pool.Query(r.Context(), `SELECT c.id::text,c.entity_id,c.event_type,c.category,c.summary,c.changed_at,c.details,e.name,ep.system_type,ep.surface
+	changeRows, err := s.db(r.Context()).Query(r.Context(), `SELECT c.id::text,c.entity_id,c.event_type,c.category,c.summary,c.changed_at,c.details,e.name,ep.system_type,ep.surface
 		FROM changes c LEFT JOIN entities e ON e.organization_id=c.organization_id AND e.id=c.entity_id LEFT JOIN entity_posture ep ON ep.organization_id=c.organization_id AND ep.entity_id=c.entity_id
 		WHERE c.organization_id=$1 AND c.changed_at >= $2 AND ep.system_role='system' ORDER BY c.changed_at DESC,c.id DESC LIMIT 8`, orgID, now.Add(-window))
 	if err != nil {
@@ -168,7 +170,7 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 		"data_quality": map[string]any{"confidence": confidence, "confidence_note": "Confirmed requires an authoritative descriptor or independent high-specificity evidence.", "coverage_note": "Expected population is shown only when an administrator configures a baseline."},
 	}
 	if s.config.ExposureEnabled {
-		response["exposure_summary"] = exposureOverviewSummary(r.Context(), s.config.Pool, orgID)
+		response["exposure_summary"] = exposureOverviewSummary(r.Context(), s.db(r.Context()), orgID)
 	}
 	writeJSON(w, 200, response)
 }
@@ -178,7 +180,7 @@ func (s *Server) countProjection(r *http.Request, organizationID, column, predic
 	if !allowed[column] {
 		return nil, fmt.Errorf("unsupported projection")
 	}
-	rows, err := s.config.Pool.Query(r.Context(), `SELECT COALESCE(`+column+`,'unknown'),count(*) FROM entity_posture WHERE organization_id=$1 AND `+predicate+` GROUP BY `+column, organizationID)
+	rows, err := s.db(r.Context()).Query(r.Context(), `SELECT COALESCE(`+column+`,'unknown'),count(*) FROM entity_posture WHERE organization_id=$1 AND `+predicate+` GROUP BY `+column, organizationID)
 	if err != nil {
 		return nil, err
 	}
@@ -196,11 +198,11 @@ func (s *Server) countProjection(r *http.Request, organizationID, column, predic
 }
 
 func freshTargetSQL(postureAlias, targetAlias string) string {
-	return `(` + postureAlias + `.target_id IS NULL OR (` + targetAlias + `.current=true AND ` + targetAlias + `.last_seen_at IS NOT NULL AND ` + targetAlias + `.last_seen_at>=now()-CASE ` + targetAlias + `.target_type WHEN 'endpoint' THEN interval '60 minutes' WHEN 'repository' THEN interval '36 hours' ELSE interval '12 hours' END))`
+	return `(` + postureAlias + `.target_id IS NULL OR (` + targetAlias + `.current=true AND ` + targetAlias + `.last_seen_at IS NOT NULL AND ` + targetAlias + `.last_seen_at>=now()-CASE ` + targetAlias + `.target_type WHEN 'endpoint' THEN interval '60 minutes' WHEN 'kubernetes' THEN interval '12 hours' ELSE interval '36 hours' END))`
 }
 
 func freshPostureTargetSQL(postureAlias string) string {
-	return postureAlias + `.target_id IS NULL OR EXISTS(SELECT 1 FROM discovery_targets freshness_target WHERE freshness_target.organization_id=` + postureAlias + `.organization_id AND freshness_target.id=` + postureAlias + `.target_id AND freshness_target.current=true AND freshness_target.last_seen_at IS NOT NULL AND freshness_target.last_seen_at>=now()-CASE freshness_target.target_type WHEN 'endpoint' THEN interval '60 minutes' WHEN 'repository' THEN interval '36 hours' ELSE interval '12 hours' END)`
+	return postureAlias + `.target_id IS NULL OR EXISTS(SELECT 1 FROM discovery_targets freshness_target WHERE freshness_target.organization_id=` + postureAlias + `.organization_id AND freshness_target.id=` + postureAlias + `.target_id AND freshness_target.current=true AND freshness_target.last_seen_at IS NOT NULL AND freshness_target.last_seen_at>=now()-CASE freshness_target.target_type WHEN 'endpoint' THEN interval '60 minutes' WHEN 'kubernetes' THEN interval '12 hours' ELSE interval '36 hours' END)`
 }
 
 func (s *Server) listSystems(w http.ResponseWriter, r *http.Request) {
@@ -283,7 +285,7 @@ func (s *Server) listSystems(w http.ResponseWriter, r *http.Request) {
 	}
 	args = append(args, limit)
 	query += fmt.Sprintf(` LIMIT $%d`, len(args))
-	rows, err := s.config.Pool.Query(r.Context(), query, args...)
+	rows, err := s.db(r.Context()).Query(r.Context(), query, args...)
 	if err != nil {
 		writeError(w, 500, "database_error", "Could not query systems")
 		return
@@ -308,7 +310,7 @@ func (s *Server) listSystems(w http.ResponseWriter, r *http.Request) {
 		}
 		item := map[string]any{"id": id, "kind": kind, "name": name, "attributes": jsonObject(attributes), "target_id": targetID, "target_name": targetName, "target_freshness": targetFreshness, "surface": surface, "system_type": systemType, "product_id": productID, "product_category": productCategory, "state": discoveryState, "network_scope": networkScope, "attributed": attributed, "confidence": confidence, "first_seen_at": firstSeen, "last_seen_at": lastSeen}
 		if s.config.ExposureEnabled {
-			item["exposure_summary"] = exposureSummary(r.Context(), s.config.Pool, principal.OrganizationID, id)
+			item["exposure_summary"] = exposureSummary(r.Context(), s.db(r.Context()), principal.OrganizationID, id)
 		}
 		items = append(items, item)
 		next = pageCursor{Sort: sortBy, ID: id, Value: lastSeen.Format(time.RFC3339Nano)}
@@ -330,7 +332,7 @@ func (s *Server) getSystem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	row := s.config.Pool.QueryRow(r.Context(), `SELECT e.id,e.kind,e.name,e.attributes,p.target_id,p.surface,p.system_type,p.product_id,p.product_category,p.discovery_state,p.network_scope,p.attributed,p.confidence,p.first_seen_at,p.last_seen_at,t.name,t.target_type,t.last_seen_at
+	row := s.db(r.Context()).QueryRow(r.Context(), `SELECT e.id,e.kind,e.name,e.attributes,p.target_id,p.surface,p.system_type,p.product_id,p.product_category,p.discovery_state,p.network_scope,p.attributed,p.confidence,p.first_seen_at,p.last_seen_at,t.name,t.target_type,t.last_seen_at
 		FROM entity_posture p JOIN entities e ON e.organization_id=p.organization_id AND e.id=p.entity_id LEFT JOIN discovery_targets t ON t.organization_id=p.organization_id AND t.id=p.target_id
 		WHERE p.organization_id=$1 AND p.entity_id=$2 AND p.system_role='system'`, principal.OrganizationID, id)
 	var entityID, kind, name, surface, state, network, confidence string
@@ -354,7 +356,7 @@ func (s *Server) getSystem(w http.ResponseWriter, r *http.Request) {
 	}
 	result := map[string]any{"id": entityID, "kind": kind, "name": name, "attributes": jsonObject(attributes), "target_id": targetID, "target_name": targetName, "target_freshness": targetFreshness, "surface": surface, "system_type": systemType, "product_id": productID, "product_category": productCategory, "state": state, "network_scope": network, "attributed": attributed, "confidence": confidence, "first_seen_at": firstSeen, "last_seen_at": lastSeen}
 
-	rows, err := s.config.Pool.Query(r.Context(), `SELECT r.id,r.kind,r.from_entity,r.to_entity,r.attributes,r.confidence,e.id,e.kind,e.name,e.attributes
+	rows, err := s.db(r.Context()).Query(r.Context(), `SELECT r.id,r.kind,r.from_entity,r.to_entity,r.attributes,r.confidence,e.id,e.kind,e.name,e.attributes
 		FROM relationships r JOIN entities e ON e.organization_id=r.organization_id AND e.id=CASE WHEN r.from_entity=$2 THEN r.to_entity ELSE r.from_entity END
 		WHERE r.organization_id=$1 AND r.current=true AND (r.from_entity=$2 OR r.to_entity=$2) ORDER BY r.kind,e.name LIMIT 500`, principal.OrganizationID, id)
 	connections := []map[string]any{}
@@ -378,8 +380,9 @@ func (s *Server) getSystem(w http.ResponseWriter, r *http.Request) {
 	result["connections"] = connections
 	result["evidence"] = s.evidenceForEntity(r.Context(), principal.OrganizationID, id, name, jsonObject(attributes), 250)
 	if s.config.ExposureEnabled {
-		result["exposure_summary"] = exposureSummary(r.Context(), s.config.Pool, principal.OrganizationID, id)
+		result["exposure_summary"] = exposureSummary(r.Context(), s.db(r.Context()), principal.OrganizationID, id)
 	}
+	s.trackFirstResultViewed(r.Context(), principal, "system")
 	writeJSON(w, 200, result)
 }
 
@@ -415,7 +418,7 @@ func (s *Server) listTargets(w http.ResponseWriter, r *http.Request) {
 	query += ` GROUP BY t.organization_id,t.id ORDER BY lower(t.name),t.id`
 	args = append(args, limit)
 	query += fmt.Sprintf(` LIMIT $%d`, len(args))
-	rows, err := s.config.Pool.Query(r.Context(), query, args...)
+	rows, err := s.db(r.Context()).Query(r.Context(), query, args...)
 	if err != nil {
 		writeError(w, 500, "database_error", "Could not query targets")
 		return
@@ -464,7 +467,7 @@ func (s *Server) getTarget(w http.ResponseWriter, r *http.Request) {
 	var firstSeen time.Time
 	var lastSeen, lastFull *time.Time
 	var current bool
-	err = s.config.Pool.QueryRow(r.Context(), `SELECT id,target_type,identity_quality,name,platform,architecture,first_seen_at,last_seen_at,last_full_at,current FROM discovery_targets WHERE organization_id=$1 AND id=$2`, principal.OrganizationID, r.PathValue("id")).Scan(&id, &targetType, &identityQuality, &name, &platform, &architecture, &firstSeen, &lastSeen, &lastFull, &current)
+	err = s.db(r.Context()).QueryRow(r.Context(), `SELECT id,target_type,identity_quality,name,platform,architecture,first_seen_at,last_seen_at,last_full_at,current FROM discovery_targets WHERE organization_id=$1 AND id=$2`, principal.OrganizationID, r.PathValue("id")).Scan(&id, &targetType, &identityQuality, &name, &platform, &architecture, &firstSeen, &lastSeen, &lastFull, &current)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, 404, "not_found", "Target not found")
 		return
@@ -473,7 +476,7 @@ func (s *Server) getTarget(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "database_error", "Could not read target")
 		return
 	}
-	collectorRows, _ := s.config.Pool.Query(r.Context(), `SELECT id,source_type,name,collector_version,last_sequence,last_seen_at,last_full_at,latest_partial,latest_error_count,latest_coverage,revoked_at FROM sources WHERE organization_id=$1 AND target_id=$2 ORDER BY created_at`, principal.OrganizationID, id)
+	collectorRows, _ := s.db(r.Context()).Query(r.Context(), `SELECT id,source_type,name,collector_version,last_sequence,last_seen_at,last_full_at,latest_partial,latest_error_count,latest_coverage,revoked_at FROM sources WHERE organization_id=$1 AND target_id=$2 ORDER BY created_at`, principal.OrganizationID, id)
 	collectors := []map[string]any{}
 	if collectorRows != nil {
 		for collectorRows.Next() {
@@ -508,11 +511,11 @@ func (s *Server) putCoverageBaselines(w http.ResponseWriter, r *http.Request) {
 	if err := decodeJSON(w, r, &request, 64<<10); err != nil {
 		return
 	}
-	if len(request.Baselines) == 0 || len(request.Baselines) > 3 {
+	if len(request.Baselines) == 0 || len(request.Baselines) > 4 {
 		writeError(w, 400, "invalid_baselines", "Provide one baseline per target type")
 		return
 	}
-	tx, err := s.config.Pool.Begin(r.Context())
+	tx, err := s.begin(r.Context())
 	if err != nil {
 		writeError(w, 500, "database_error", "Could not update baselines")
 		return
@@ -520,7 +523,7 @@ func (s *Server) putCoverageBaselines(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback(r.Context())
 	seen := map[string]bool{}
 	for _, baseline := range request.Baselines {
-		if seen[baseline.TargetType] || (baseline.TargetType != "endpoint" && baseline.TargetType != "repository" && baseline.TargetType != "kubernetes") || (baseline.ExpectedCount != nil && *baseline.ExpectedCount < 0) {
+		if seen[baseline.TargetType] || (baseline.TargetType != "endpoint" && baseline.TargetType != "repository" && baseline.TargetType != "kubernetes" && baseline.TargetType != "cloud") || (baseline.ExpectedCount != nil && *baseline.ExpectedCount < 0) {
 			writeError(w, 400, "invalid_baselines", "Target types must be unique and counts cannot be negative")
 			return
 		}
