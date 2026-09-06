@@ -43,7 +43,7 @@ func run() error {
 	catalogManifest := flag.String("catalog-manifest", env("LENS_CATALOG_MANIFEST", catalog.PublicCatalogManifest), "OAK-compatible compact catalog manifest")
 	exposureEnabled := flag.Bool("exposure-enabled", env("LENS_EXPOSURE_ENABLED", "false") == "true", "enable evidence-backed exposure maps and findings")
 	uiDir := flag.String("ui-dir", os.Getenv("LENS_UI_DIR"), "directory containing the built Lens Hub UI")
-	authMode := flag.String("auth-mode", os.Getenv("LENS_AUTH_MODE"), "authentication mode: clerk, oidc, or development")
+	authMode := flag.String("auth-mode", env("LENS_AUTH_MODE", "development"), "authentication mode: clerk, oidc, or development")
 	oidcIssuer := flag.String("oidc-issuer", os.Getenv("LENS_OIDC_ISSUER"), "OIDC issuer URL")
 	oidcClientID := flag.String("oidc-client-id", os.Getenv("LENS_OIDC_CLIENT_ID"), "OIDC client ID")
 	oidcClientSecret := flag.String("oidc-client-secret", os.Getenv("LENS_OIDC_CLIENT_SECRET"), "OIDC client secret, if required")

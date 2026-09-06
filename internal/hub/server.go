@@ -95,14 +95,7 @@ func NewServer(ctx context.Context, config Config) (*Server, error) {
 		config.Logger = slog.Default()
 	}
 	if config.AuthMode == "" {
-		switch {
-		case config.ClerkIssuer != "":
-			config.AuthMode = "clerk"
-		case config.OIDCIssuer != "":
-			config.AuthMode = "oidc"
-		default:
-			config.AuthMode = "development"
-		}
+		config.AuthMode = "development"
 	}
 	if config.AuthMode != "clerk" && config.AuthMode != "oidc" && config.AuthMode != "development" {
 		return nil, fmt.Errorf("auth mode must be clerk, oidc, or development")
@@ -110,6 +103,9 @@ func NewServer(ctx context.Context, config Config) (*Server, error) {
 	if config.AuthMode == "clerk" {
 		if config.ClerkIssuer == "" || config.ClerkPublishableKey == "" || config.ClerkAuthorizedParty == "" {
 			return nil, fmt.Errorf("Clerk issuer, publishable key, and authorized party are required in Clerk auth mode")
+		}
+		if config.DevAdminToken != "" {
+			return nil, fmt.Errorf("development bootstrap token must be unset in Clerk auth mode")
 		}
 	} else if _, err := config.WorkerPool.Exec(ctx, `INSERT INTO organizations(id,name) VALUES($1,$2) ON CONFLICT(id) DO NOTHING`, config.DefaultOrganizationID, config.DefaultOrganizationName); err != nil {
 		return nil, err

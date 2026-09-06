@@ -45,13 +45,34 @@ Probes reject credential-bearing URLs and metadata targets, use strict limits, a
 
 Lens Hub aggregates sources in PostgreSQL and exposes an open API, signed webhooks, Lens JSON/JSONL, and CycloneDX 1.7 exports. Its interactive evidence graph maps each fresh root system to connected inventory and supporting findings. Evidence drawers resolve the exact linked resource, then lead with what was found, where it was observed, safe descriptor facts, related entities, the detector rationale, and an investigation prompt. Validated skill findings name the skill and show its declared purpose, actionable descriptor location, scope, provider, format, and optional compatibility, license, and allowed-tool declarations. Content and locator hashes remain available as secondary integrity references.
 
-For a local quickstart:
+For a local development-token quickstart:
 
 ```sh
-docker compose up --build
+docker compose --profile development up --build
 ```
 
 Open `http://localhost:8080` and use the quickstart token `lens-local-admin`. The compose credentials are deliberately development-only; use [the self-hosting guide](docs/self-hosting.md) for a real deployment.
+
+The Compose profiles are intentionally separate and use independent PostgreSQL
+volumes:
+
+| Profile | Authentication | Purpose |
+|---|---|---|
+| `development` | Local bootstrap token | Contributor and collector testing |
+| `self-hosted` | Generic OIDC | Customer-operated Lens Hub |
+| `managed` | Clerk | Lens self-serve SaaS and real-user acceptance testing |
+
+To run the managed self-serve experience locally, copy
+`.env.managed.example` to the ignored `.env.managed.local`, add the Clerk
+development-instance values, and run:
+
+```sh
+docker compose --env-file .env.managed.local --profile managed up --build
+```
+
+`LENS_AUTH_MODE` is authoritative. Lens never selects Clerk merely because a
+Clerk variable happens to be present, and the managed profile never exposes the
+development bootstrap token.
 
 For the Barrikade pilot, the compose stack opens the `org_local` tenant used by the managed collector. The [live-device customer-story demo](docs/demo-live-device.md) shows how to present one real finding and its evidence without loading sample inventory or implying that Lens makes approval decisions.
 

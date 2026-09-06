@@ -1,29 +1,106 @@
+x-postgres-common: &postgres-common
+  image: postgres:18-alpine
+  environment:
+    POSTGRES_DB: lens
+    POSTGRES_USER: lens
+    POSTGRES_PASSWORD: lens-compose-only
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U lens -d lens"]
+    interval: 3s
+    timeout: 3s
+    retries: 20
+
+x-hub-common: &hub-common
+  build: .
+  ports: ["8080:8080"]
+
+x-hub-environment: &hub-environment
+  LENS_PUBLIC_URL: http://localhost:8080
+  LENS_CATALOG_ENABLED: "true"
+  LENS_EXPOSURE_ENABLED: "true"
+
 services:
-  postgres:
-    image: postgres:18-alpine
-    environment:
-      POSTGRES_DB: lens
-      POSTGRES_USER: lens
-      POSTGRES_PASSWORD: lens-quickstart-only
-    volumes: ["lens-postgres:/var/lib/postgresql"]
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U lens"]
-      interval: 3s
-      timeout: 3s
-      retries: 20
-  hub:
-    build: .
-    ports: ["8080:8080"]
+  postgres-development:
+    <<: *postgres-common
+    profiles: ["development"]
+    volumes: ["lens-development-postgres:/var/lib/postgresql"]
+
+  hub-development:
+    <<: *hub-common
+    profiles: ["development"]
     depends_on:
-      postgres: {condition: service_healthy}
+      postgres-development: {condition: service_healthy}
     environment:
-      LENS_DATABASE_URL: postgres://lens:lens-quickstart-only@postgres:5432/lens?sslmode=disable
-      LENS_PUBLIC_URL: http://localhost:8080
+      <<: *hub-environment
+      LENS_DATABASE_URL: postgres://lens:lens-compose-only@postgres-development:5432/lens?sslmode=disable
+      LENS_AUTH_MODE: development
       LENS_ORGANIZATION_ID: org_local
       LENS_ORGANIZATION_NAME: Barrikade Pilot
       LENS_JWT_SECRET: replace-this-quickstart-signing-key-before-production
       LENS_DEV_ADMIN_TOKEN: lens-local-admin
-      LENS_CATALOG_ENABLED: "true"
-      LENS_EXPOSURE_ENABLED: "true"
+      LENS_SELF_SERVE_ENABLED: "true"
+
+  postgres-self-hosted:
+    <<: *postgres-common
+    profiles: ["self-hosted"]
+    volumes: ["lens-self-hosted-postgres:/var/lib/postgresql"]
+
+  hub-self-hosted:
+    <<: *hub-common
+    profiles: ["self-hosted"]
+    depends_on:
+      postgres-self-hosted: {condition: service_healthy}
+    environment:
+      <<: *hub-environment
+      LENS_DATABASE_URL: postgres://lens:lens-compose-only@postgres-self-hosted:5432/lens?sslmode=disable
+      LENS_AUTH_MODE: oidc
+      LENS_JWT_SECRET: ${LENS_JWT_SECRET:-}
+      LENS_OIDC_ISSUER: ${LENS_OIDC_ISSUER:-}
+      LENS_OIDC_CLIENT_ID: ${LENS_OIDC_CLIENT_ID:-}
+      LENS_OIDC_CLIENT_SECRET: ${LENS_OIDC_CLIENT_SECRET:-}
+      LENS_OIDC_REDIRECT_URI: ${LENS_OIDC_REDIRECT_URI:-http://localhost:8080/auth/callback}
+      LENS_OIDC_ADMIN_GROUP: ${LENS_OIDC_ADMIN_GROUP:-}
+      LENS_SELF_SERVE_ENABLED: "false"
+
+  postgres-managed:
+    <<: *postgres-common
+    profiles: ["managed"]
+    volumes: ["lens-managed-postgres:/var/lib/postgresql"]
+
+  hub-managed:
+    <<: *hub-common
+    profiles: ["managed"]
+    depends_on:
+      postgres-managed: {condition: service_healthy}
+    environment:
+      <<: *hub-environment
+      LENS_DATABASE_URL: postgres://lens:lens-compose-only@postgres-managed:5432/lens?sslmode=disable
+      LENS_AUTH_MODE: clerk
+      LENS_JWT_SECRET: ${LENS_JWT_SECRET:-}
+      LENS_CLERK_ISSUER: ${LENS_CLERK_ISSUER:-}
+      LENS_CLERK_PUBLISHABLE_KEY: ${LENS_CLERK_PUBLISHABLE_KEY:-}
+      LENS_CLERK_AUTHORIZED_PARTY: ${LENS_CLERK_AUTHORIZED_PARTY:-http://localhost:8080}
+      LENS_CLERK_WEBHOOK_SECRET: ${LENS_CLERK_WEBHOOK_SECRET:-}
+      LENS_SELF_SERVE_ENABLED: "true"
+      LENS_AWS_CONNECTOR_ENABLED: ${LENS_AWS_CONNECTOR_ENABLED:-false}
+      LENS_AZURE_CONNECTOR_ENABLED: ${LENS_AZURE_CONNECTOR_ENABLED:-false}
+      LENS_GCP_CONNECTOR_ENABLED: ${LENS_GCP_CONNECTOR_ENABLED:-false}
+      LENS_AWS_BROKER_ROLE_ARN: ${LENS_AWS_BROKER_ROLE_ARN:-}
+      LENS_AWS_FEDERATION_AUDIENCE: ${LENS_AWS_FEDERATION_AUDIENCE:-}
+      LENS_AWS_REGIONS: ${LENS_AWS_REGIONS:-}
+      LENS_AZURE_APPLICATION_ID: ${LENS_AZURE_APPLICATION_ID:-}
+      LENS_AZURE_ASSERTION_AUDIENCE: ${LENS_AZURE_ASSERTION_AUDIENCE:-api://AzureADTokenExchange}
+      LENS_GCP_WORKLOAD_ISSUER: ${LENS_GCP_WORKLOAD_ISSUER:-}
+      LENS_GCP_WORKLOAD_AUDIENCE: ${LENS_GCP_WORKLOAD_AUDIENCE:-}
+      LENS_GCP_ASSERTION_AUDIENCE: ${LENS_GCP_ASSERTION_AUDIENCE:-}
+      LENS_AZURE_MANAGED_IDENTITY_CLIENT_ID: ${LENS_AZURE_MANAGED_IDENTITY_CLIENT_ID:-}
+      LENS_AZURE_MANAGED_IDENTITY_PRINCIPAL_ID: ${LENS_AZURE_MANAGED_IDENTITY_PRINCIPAL_ID:-}
+      LENS_GITHUB_APP_SLUG: ${LENS_GITHUB_APP_SLUG:-}
+      LENS_GITHUB_APP_ID: ${LENS_GITHUB_APP_ID:-}
+      LENS_GITHUB_PRIVATE_KEY_FILE: ${LENS_GITHUB_PRIVATE_KEY_FILE:-}
+      LENS_GITHUB_WEBHOOK_SECRET: ${LENS_GITHUB_WEBHOOK_SECRET:-}
+
 volumes:
-  lens-postgres: {}
+  lens-development-postgres: {}
+  lens-self-hosted-postgres: {}
+  lens-managed-postgres: {}
