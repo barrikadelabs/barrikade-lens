@@ -53,26 +53,7 @@ docker compose --profile development up --build
 
 Open `http://localhost:8080` and use the quickstart token `lens-local-admin`. The compose credentials are deliberately development-only; use [the self-hosting guide](docs/self-hosting.md) for a real deployment.
 
-The Compose profiles are intentionally separate and use independent PostgreSQL
-volumes:
-
-| Profile | Authentication | Purpose |
-|---|---|---|
-| `development` | Local bootstrap token | Contributor and collector testing |
-| `self-hosted` | Generic OIDC | Customer-operated Lens Hub |
-| `managed` | Clerk | Lens self-serve SaaS and real-user acceptance testing |
-
-To run the managed self-serve experience locally, copy
-`.env.managed.example` to the ignored `.env.managed.local`, add the Clerk
-development-instance values, and run:
-
-```sh
-docker compose --env-file .env.managed.local --profile managed up --build
-```
-
-`LENS_AUTH_MODE` is authoritative. Lens never selects Clerk merely because a
-Clerk variable happens to be present, and the managed profile never exposes the
-development bootstrap token.
+The Barrikade Azure pilot is deployed through the CI-gated [Azure deployment workflow](docs/azure-deployment.md).
 
 For the Barrikade pilot, the compose stack opens the `org_local` tenant used by the managed collector. The [live-device customer-story demo](docs/demo-live-device.md) shows how to present one real finding and its evidence without loading sample inventory or implying that Lens makes approval decisions.
 
