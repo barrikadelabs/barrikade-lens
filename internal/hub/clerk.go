@@ -41,8 +41,9 @@ func (s *Server) clerkWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var envelope struct {
-		Type string          `json:"type"`
-		Data json.RawMessage `json:"data"`
+		Type      string          `json:"type"`
+		Timestamp int64           `json:"timestamp"`
+		Data      json.RawMessage `json:"data"`
 	}
 	if json.Unmarshal(body, &envelope) != nil || envelope.Type == "" {
 		writeError(w, 400, "invalid_webhook", "Clerk webhook payload is malformed")
@@ -63,7 +64,15 @@ func (s *Server) clerkWebhook(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]string{"status": "duplicate"})
 		return
 	}
-	if err = applyClerkLifecycleEvent(r.Context(), tx, envelope.Type, envelope.Data); err != nil {
+	eventAt := time.Unix(unix, 0).UTC()
+	if envelope.Timestamp > 0 {
+		stamp := envelope.Timestamp
+		if stamp > 1_000_000_000_000 {
+			stamp /= 1000
+		}
+		eventAt = time.Unix(stamp, 0).UTC()
+	}
+	if err = applyClerkLifecycleEventAt(r.Context(), tx, envelope.Type, envelope.Data, eventAt); err != nil {
 		writeError(w, 422, "invalid_webhook", "Clerk lifecycle payload could not be applied")
 		return
 	}
@@ -100,21 +109,45 @@ func validSvixSignature(secret []byte, signed string, header string) bool {
 }
 
 func applyClerkLifecycleEvent(ctx context.Context, tx pgx.Tx, eventType string, data json.RawMessage) error {
+	return applyClerkLifecycleEventAt(ctx, tx, eventType, data, time.Now().UTC())
+}
+
+func applyClerkLifecycleEventAt(ctx context.Context, tx pgx.Tx, eventType string, data json.RawMessage, eventAt time.Time) error {
 	switch eventType {
-	case "organization.deleted":
+	case "organization.created", "organization.updated", "organization.deleted":
 		var value struct {
-			ID string `json:"id"`
+			ID   string `json:"id"`
+			Name string `json:"name"`
 		}
 		if json.Unmarshal(data, &value) != nil || value.ID == "" {
 			return errInvalidWebhook
 		}
-		_, err := tx.Exec(ctx, `DELETE FROM organizations WHERE id=$1`, value.ID)
+		status := "active"
+		if eventType == "organization.deleted" {
+			status = "deleted"
+		}
+		tag, err := tx.Exec(ctx, `INSERT INTO clerk_organization_state(organization_id,status,provider_updated_at) VALUES($1,$2,$3)
+			ON CONFLICT(organization_id) DO UPDATE SET status=EXCLUDED.status,provider_updated_at=EXCLUDED.provider_updated_at,updated_at=now()
+			WHERE clerk_organization_state.provider_updated_at<=EXCLUDED.provider_updated_at`, value.ID, status, eventAt)
+		if err != nil || tag.RowsAffected() == 0 {
+			return err
+		}
+		if status == "deleted" {
+			_, err = tx.Exec(ctx, `DELETE FROM organizations WHERE id=$1`, value.ID)
+			return err
+		}
+		name := strings.TrimSpace(value.Name)
+		if name == "" {
+			name = "Lens workspace"
+		}
+		_, err = tx.Exec(ctx, `INSERT INTO organizations(id,name) VALUES($1,$2) ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name`, value.ID, name)
 		return err
 	case "organizationMembership.created", "organizationMembership.updated", "organizationMembership.deleted":
 		var value struct {
 			Role         string `json:"role"`
 			Organization struct {
-				ID string `json:"id"`
+				ID   string `json:"id"`
+				Name string `json:"name"`
 			} `json:"organization"`
 			PublicUserData struct {
 				UserID string `json:"user_id"`
@@ -123,11 +156,36 @@ func applyClerkLifecycleEvent(ctx context.Context, tx pgx.Tx, eventType string, 
 		if json.Unmarshal(data, &value) != nil || value.Organization.ID == "" || value.PublicUserData.UserID == "" {
 			return errInvalidWebhook
 		}
+		var organizationStatus string
+		var organizationUpdated time.Time
+		stateErr := tx.QueryRow(ctx, `SELECT status,provider_updated_at FROM clerk_organization_state WHERE organization_id=$1`, value.Organization.ID).Scan(&organizationStatus, &organizationUpdated)
+		if stateErr == nil && organizationStatus == "deleted" && !eventAt.After(organizationUpdated) {
+			return nil
+		}
+		if stateErr != nil && stateErr != pgx.ErrNoRows {
+			return stateErr
+		}
+		name := strings.TrimSpace(value.Organization.Name)
+		if name == "" {
+			name = "Lens workspace"
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO organizations(id,name) VALUES($1,$2) ON CONFLICT(id) DO NOTHING`, value.Organization.ID, name); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, `INSERT INTO clerk_organization_state(organization_id,status,provider_updated_at) VALUES($1,'active',$2)
+			ON CONFLICT(organization_id) DO UPDATE SET status='active',provider_updated_at=EXCLUDED.provider_updated_at,updated_at=now()
+			WHERE clerk_organization_state.provider_updated_at<=EXCLUDED.provider_updated_at`, value.Organization.ID, eventAt); err != nil {
+			return err
+		}
 		status := "active"
 		if eventType == "organizationMembership.deleted" {
 			status = "revoked"
 		}
-		_, err := tx.Exec(ctx, `INSERT INTO workspace_memberships(organization_id,user_id,role,status) VALUES($1,$2,$3,$4) ON CONFLICT(organization_id,user_id) DO UPDATE SET role=EXCLUDED.role,status=EXCLUDED.status,updated_at=now()`, value.Organization.ID, "clerk:"+value.PublicUserData.UserID, normalizeWorkspaceRole(value.Role), status)
+		_, err := tx.Exec(ctx, `INSERT INTO workspace_memberships(organization_id,user_id,role,status,provider_updated_at) VALUES($1,$2,$3,$4,$5)
+			ON CONFLICT(organization_id,user_id) DO UPDATE SET
+				role=CASE WHEN workspace_memberships.role='owner' AND EXCLUDED.role<>'owner' THEN 'owner' ELSE EXCLUDED.role END,
+				status=EXCLUDED.status,provider_updated_at=EXCLUDED.provider_updated_at,updated_at=now()
+			WHERE workspace_memberships.provider_updated_at IS NULL OR workspace_memberships.provider_updated_at<=EXCLUDED.provider_updated_at`, value.Organization.ID, "clerk:"+value.PublicUserData.UserID, normalizeWorkspaceRole(value.Role), status, eventAt)
 		return err
 	case "user.deleted":
 		var value struct {
@@ -137,7 +195,7 @@ func applyClerkLifecycleEvent(ctx context.Context, tx pgx.Tx, eventType string, 
 			return errInvalidWebhook
 		}
 		userID := "clerk:" + value.ID
-		_, err := tx.Exec(ctx, `INSERT INTO managed_users(user_id,status) VALUES($1,'deleted') ON CONFLICT(user_id) DO UPDATE SET status='deleted',updated_at=now()`, userID)
+		_, err := tx.Exec(ctx, `INSERT INTO managed_users(user_id,status,provider_updated_at) VALUES($1,'deleted',$2) ON CONFLICT(user_id) DO UPDATE SET status='deleted',provider_updated_at=EXCLUDED.provider_updated_at,updated_at=now() WHERE managed_users.provider_updated_at IS NULL OR managed_users.provider_updated_at<=EXCLUDED.provider_updated_at`, userID, eventAt)
 		if err == nil {
 			_, err = tx.Exec(ctx, `UPDATE workspace_memberships SET status='deleted',updated_at=now() WHERE user_id=$1`, userID)
 		}
@@ -155,7 +213,7 @@ func applyClerkLifecycleEvent(ctx context.Context, tx pgx.Tx, eventType string, 
 		if value.Banned || value.Locked {
 			status = "revoked"
 		}
-		_, err := tx.Exec(ctx, `INSERT INTO managed_users(user_id,status) VALUES($1,$2) ON CONFLICT(user_id) DO UPDATE SET status=EXCLUDED.status,updated_at=now()`, "clerk:"+value.ID, status)
+		_, err := tx.Exec(ctx, `INSERT INTO managed_users(user_id,status,provider_updated_at) VALUES($1,$2,$3) ON CONFLICT(user_id) DO UPDATE SET status=EXCLUDED.status,provider_updated_at=EXCLUDED.provider_updated_at,updated_at=now() WHERE managed_users.provider_updated_at IS NULL OR managed_users.provider_updated_at<=EXCLUDED.provider_updated_at`, "clerk:"+value.ID, status, eventAt)
 		return err
 	}
 	return nil

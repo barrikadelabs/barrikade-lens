@@ -19,6 +19,16 @@ jobs:
         with: {go-version: '1.26.x', cache: true}
       - run: go vet ./...
       - run: go test -race ./...
+      - name: Build and scan every shipped Go binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          go build -o /tmp/barrikade-lens ./cmd/barrikade-lens
+          go build -o /tmp/lens-hub ./cmd/lens-hub
+          go build -o /tmp/lens-k8s ./cmd/lens-k8s
+          go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 -mode=binary /tmp/barrikade-lens
+          go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 -mode=binary /tmp/lens-hub
+          go run golang.org/x/vuln/cmd/govulncheck@v1.7.0 -mode=binary /tmp/lens-k8s
       - name: Endpoint scan performance gate
         run: go build -o /tmp/barrikade-lens ./cmd/barrikade-lens && timeout 30s /tmp/barrikade-lens scan --scope endpoint --format json --output /tmp/snapshot.json
       - run: GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build ./cmd/barrikade-lens
@@ -30,8 +40,15 @@ jobs:
       - uses: actions/setup-node@v6
         with: {node-version: 24, cache: npm}
       - run: npm ci --ignore-scripts
+      - run: npm run typecheck -w @barrikade/lens-hub-ui
       - run: npm test
       - run: npm run build
+      - name: Validate OpenAPI contract
+        run: npx --yes @redocly/cli@2.51.2 lint api/openapi.yaml
+      - name: Run browser smoke tests
+        run: |
+          npx playwright install --with-deps chromium
+          npm run test:e2e -w @barrikade/lens-hub-ui
   privacy-platform:
     strategy: {fail-fast: false, matrix: {os: [macos-latest, windows-latest, ubuntu-latest]}}
     runs-on: ${{ matrix.os }}

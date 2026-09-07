@@ -8,6 +8,10 @@ security: [{bearerAuth: []}]
 paths:
   /healthz:
     get: {security: [], operationId: health, responses: {'200': {description: Healthy}}}
+  /livez:
+    get: {security: [], operationId: liveness, responses: {'200': {description: Process is live}}}
+  /readyz:
+    get: {security: [], operationId: readiness, responses: {'200': {description: Process and database are ready}, '503': {description: Database is unavailable}}}
   /v1/auth/config:
     get: {security: [], operationId: authConfig, responses: {'200': {description: OIDC and quickstart access configuration}}}
   /v1/auth/exchange:
@@ -15,7 +19,9 @@ paths:
   /v1/auth/clerk/webhook:
     post: {security: [], operationId: receiveClerkWebhook, description: Signed and idempotent asynchronous membership and account cleanup., responses: {'202': {description: Clerk lifecycle event accepted}, '401': {description: Invalid Svix signature}}}
   /v1/session:
-    get: {operationId: getSession, responses: {'200': {description: Active user, workspace, role, and permissions}, '401': {description: Session expired, revoked, banned, or has no active organization}}}
+    get: {operationId: getSession, responses: {'200': {description: 'Active user, workspace, role, and permissions'}, '401': {description: 'Session expired, revoked, banned, or has no active organization'}}}
+  /v1/account:
+    delete: {operationId: deleteAccount, description: Deletes the current Clerk identity through the Lens backend after enforcing sole-owner rules., responses: {'204': {description: Identity deleted}, '409': {description: Sole owner must transfer ownership or delete the workspace first}, '503': {description: Clerk identity deletion is temporarily unavailable}}}
   /v1/workspaces/bootstrap:
     post: {operationId: bootstrapWorkspace, description: Idempotently provisions the active Clerk organization without depending on webhook delivery., responses: {'200': {description: Existing workspace activated}, '201': {description: First workspace provisioned}}}
   /v1/workspaces/current:
@@ -41,7 +47,7 @@ paths:
     post:
       operationId: submitDiscoverySnapshot
       requestBody: {required: true, content: {application/json: {schema: {$ref: './schema/discovery-snapshot-v1.json'}}}}
-      responses: {'202': {description: Snapshot accepted into the PostgreSQL ingestion queue}, '422': {description: Snapshot failed schema or privacy validation}, '426': {description: Collector must use supported Discovery Snapshot version 1.1 or 1.2}}
+      responses: {'202': {description: Snapshot accepted into the PostgreSQL ingestion queue}, '429': {description: Source queue or request rate limit is active}, '422': {description: Snapshot failed schema or privacy validation}, '426': {description: Collector must use supported Discovery Snapshot version 1.1 or 1.2}}
   /v1/discovery/jobs/{id}:
     get:
       operationId: getDiscoveryJob
@@ -53,24 +59,39 @@ paths:
     post:
       operationId: createEnvironmentSetupSession
       requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/EnvironmentSetupRequest'}}}}
-      responses: {'201': {description: Short-lived single-use setup with least-privilege instructions}, '403': {description: Environment management permission required}}
+      responses: {'201': {description: Short-lived single-use setup with least-privilege instructions}, '403': {description: Environment management permission required}, '429': {description: Workspace setup rate limit is active}}
   /v1/environments/{id}:
     get: {operationId: getEnvironment, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Environment connection state and safe setup metadata}, '404': {description: Environment not found}}}
     patch:
       operationId: updateEnvironment
       parameters: [{$ref: '#/components/parameters/ID'}]
-      requestBody: {required: true, content: {application/json: {schema: {type: object, additionalProperties: false, properties: {display_name: {type: string, maxLength: 160}, daily_schedule_enabled: {type: boolean}}}}}}
+      requestBody: {required: true, content: {application/json: {schema: {type: object, additionalProperties: false, properties: {display_name: {type: string, maxLength: 128}, daily_schedule_enabled: {type: boolean}}}}}}
       responses: {'200': {description: Display name or daily schedule updated}}
     delete: {operationId: disconnectEnvironment, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Access revoked immediately and historical findings scheduled for purge after 90 days}}}
   /v1/environments/{id}/verify:
-    post: {operationId: verifyEnvironment, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'202': {description: Access verified and first scan queued, or collector enrollment awaited}, '401': {description: Provider rejected the temporary Lens identity}}}
+    post: {operationId: verifyEnvironment, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Access verified and first scan queued}, '202': {description: Collector enrollment awaited}, '401': {description: Provider rejected the temporary Lens identity}, '410': {description: Setup session expired or was cancelled}}}
+  /v1/environments/{id}/activation:
+    get: {operationId: getEnvironmentActivation, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Durable endpoint activation state and safe first-result status}, '404': {description: Environment not found}}}
+  /v1/environments/{id}/enrollment-credentials:
+    post: {operationId: rotateEndpointEnrollmentCredential, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'201': {description: New 15-minute single-use endpoint credential; earlier credentials are revoked}, '409': {description: Endpoint setup is no longer pending}}}
+  /v1/environments/{id}/handoffs:
+    post: {operationId: createEndpointHandoff, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'201': {description: One-time-displayed 24-hour delegated setup URL}, '409': {description: Endpoint setup is no longer pending}}}
+  /v1/environments/{id}/handoffs/{handoffId}:
+    delete: {operationId: revokeEndpointHandoff, parameters: [{$ref: '#/components/parameters/ID'}, {name: handoffId, in: path, required: true, schema: {type: string, format: uuid}}], responses: {'204': {description: Handoff revoked}, '404': {description: Active handoff not found}}}
+  /v1/public/endpoint-handoffs/resolve:
+    post:
+      security: []
+      operationId: resolveEndpointHandoff
+      description: Resolves a fragment-delivered handoff token after explicit platform choice and issues a 15-minute single-use enrollment command. Responses prohibit caching and referrers.
+      requestBody: {required: true, content: {application/json: {schema: {type: object, additionalProperties: false, required: [token, platform], properties: {token: {type: string}, platform: {enum: [macos, windows, linux]}}}}}}
+      responses: {'200': {description: Platform-specific enrollment command}, '410': {description: 'Handoff expired, revoked, or completed'}, '429': {description: Handoff resolution rate limit is active}}
   /v1/environments/{id}/scans:
     post: {operationId: createEnvironmentScan, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'202': {description: Manual scan queued or coalesced with the active scan}, '409': {description: Environment is not connected}}}
   /v1/environments/{id}/scans/{scanId}:
     get:
       operationId: getEnvironmentScan
       parameters: [{$ref: '#/components/parameters/ID'}, {name: scanId, in: path, required: true, schema: {type: string, format: uuid}}]
-      responses: {'200': {description: Live phase, progress, coverage, and safe error}, '404': {description: Scan not found in the active workspace and environment}}
+      responses: {'200': {description: 'Live phase, progress, coverage, and safe error'}, '404': {description: Scan not found in the active workspace and environment}}
   /v1/entities:
     get:
       operationId: listEntities
@@ -79,7 +100,7 @@ paths:
   /v1/entities/{id}:
     get: {operationId: getEntity, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Entity and retained evidence}, '404': {description: Entity not found}}}
   /v1/entities/{id}/context:
-    get: {operationId: getEntityContext, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Operator-supplied context, separate from collector evidence}}}
+    get: {operationId: getEntityContext, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: 'Operator-supplied context, separate from collector evidence'}}}
     put: {operationId: putEntityContext, description: 'Requires human administrator context:write. Collector and Registry service credentials are never granted this scope.', parameters: [{$ref: '#/components/parameters/ID'}], requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/EntityContext'}}}}, responses: {'200': {description: Audited context assertion saved}, '403': {description: Human administrator access required}}}
   /v1/entities/{id}/catalog-link:
     put: {operationId: putCatalogLink, description: Selects a reviewed catalogue API/version for an ambiguous or stdio connector., parameters: [{$ref: '#/components/parameters/ID'}], responses: {'202': {description: Reviewed link accepted for enrichment}}}
@@ -89,15 +110,15 @@ paths:
   /v1/changes:
     get: {operationId: listChanges, parameters: [{name: category, in: query, schema: {enum: [state, network_scope, attribution, capability, confidence, identity, freshness, metadata]}}, {name: target_id, in: query, schema: {type: string}}, {name: system_type, in: query, schema: {type: string}}, {name: system_role, in: query, schema: {enum: [system, supporting, component, artifact, target]}}, {name: surface, in: query, schema: {type: string}}, {name: window, in: query, schema: {enum: [24h, 7d, 30d, 90d]}}, {$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}], responses: {'200': {description: Material discovery changes with safe field-level differences}}}
   /v1/overview:
-    get: {operationId: getDiscoveryOverview, parameters: [{name: window, in: query, schema: {enum: [24h, 7d, 30d, 90d], default: 7d}}], responses: {'200': {description: Server-computed discovery posture, coverage, factual attention, data quality, and changes}}}
+    get: {operationId: getDiscoveryOverview, parameters: [{name: window, in: query, schema: {enum: [24h, 7d, 30d, 90d], default: 7d}}], responses: {'200': {description: 'Server-computed discovery posture, coverage, factual attention, data quality, and changes'}}}
   /v1/systems:
-    get: {operationId: listSystems, parameters: [{name: system_type, in: query, schema: {enum: [autonomous_agent, agent_tool, model_runtime]}}, {name: state, in: query, schema: {type: string}}, {name: surface, in: query, schema: {type: string}}, {name: target_id, in: query, schema: {type: string}}, {name: freshness, in: query, description: Defaults executive inventory to systems observed on currently reporting targets., schema: {enum: [fresh, stale, all], default: fresh}}, {name: confidence, in: query, schema: {enum: [confirmed, likely, possible]}}, {name: attribution, in: query, schema: {enum: [attributed, unattributed]}}, {name: network_scope, in: query, schema: {type: string}}, {name: search, in: query, schema: {type: string}}, {name: sort, in: query, schema: {enum: [last_seen, name]}}, {$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}], responses: {'200': {description: Root autonomous agents, agent tools, and model runtimes}}}
+    get: {operationId: listSystems, parameters: [{name: system_type, in: query, schema: {enum: [autonomous_agent, agent_tool, model_runtime]}}, {name: state, in: query, schema: {type: string}}, {name: surface, in: query, schema: {type: string}}, {name: target_id, in: query, schema: {type: string}}, {name: freshness, in: query, description: Defaults executive inventory to systems observed on currently reporting targets., schema: {enum: [fresh, stale, all], default: fresh}}, {name: confidence, in: query, schema: {enum: [confirmed, likely, possible]}}, {name: attribution, in: query, schema: {enum: [attributed, unattributed]}}, {name: owner_status, in: query, schema: {enum: [owned, unowned]}}, {name: network_scope, in: query, schema: {type: string}}, {name: search, in: query, schema: {type: string}}, {name: sort, in: query, schema: {enum: [last_seen, name]}}, {$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}], responses: {'200': {description: 'Root autonomous agents, agent tools, and model runtimes'}}}
   /v1/systems/{id}:
-    get: {operationId: getSystem, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Root system posture, connected inventory, and evidence}, '404': {description: System not found}}}
+    get: {operationId: getSystem, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: 'Root system posture, connected inventory, and evidence'}, '404': {description: System not found}}}
   /v1/systems/{id}/exposure-map:
-    get: {operationId: getSystemExposureMap, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Bounded observed paths, operator context, catalogue potential, and explainable findings}}}
+    get: {operationId: getSystemExposureMap, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: 'Bounded observed paths, operator context, catalogue potential, and explainable findings'}}}
   /v1/exposures:
-    get: {operationId: listExposures, parameters: [{$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}], responses: {'200': {description: Current materialized exposure findings ordered by categorical severity}}}
+    get: {operationId: listExposures, parameters: [{name: severity, in: query, schema: {enum: [critical, high, medium, low]}}, {name: freshness, in: query, schema: {enum: [fresh, stale, all]}}, {name: owner_status, in: query, schema: {enum: [owned, unowned]}}, {name: system_type, in: query, schema: {enum: [autonomous_agent, agent_tool, model_runtime]}}, {name: surface, in: query, schema: {type: string}}, {$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}], responses: {'200': {description: 'Workspace-wide findings ranked by severity, evidence freshness, ownership, latest observation, and stable ID'}}}
   /v1/exposures/{id}:
     get: {operationId: getExposure, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Versioned finding with evidence bases and path}, '404': {description: Finding not found}}}
   /v1/catalog/search:
@@ -105,11 +126,15 @@ paths:
   /v1/targets:
     get: {operationId: listTargets, parameters: [{name: target_type, in: query, schema: {enum: [endpoint, repository, kubernetes, cloud]}}, {name: search, in: query, schema: {type: string}}, {$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}], responses: {'200': {description: Unique discovery targets with nested active collectors}}}
   /v1/targets/{id}:
-    get: {operationId: getTarget, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Discovery target, freshness, scan coverage, and collectors}, '404': {description: Target not found}}}
+    get: {operationId: getTarget, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: 'Discovery target, freshness, scan coverage, and collectors'}, '404': {description: Target not found}}}
   /v1/coverage:
     get: {operationId: getCoverage, responses: {'200': {description: Source coverage and freshness}}}
+  /v1/notifications:
+    get: {operationId: listNotifications, responses: {'200': {description: Durable in-app lifecycle notifications}}}
+  /v1/notifications/{id}:
+    patch: {operationId: readNotification, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'204': {description: Notification marked read}, '404': {description: Notification not found}}}
   /v1/exports:
-    get: {operationId: exportInventory, parameters: [{name: format, in: query, schema: {enum: [lens, ndjson, cyclonedx]}}], responses: {'200': {description: Lens JSON, JSONL, or CycloneDX 1.7 export}}}
+    get: {operationId: exportInventory, parameters: [{name: format, in: query, schema: {enum: [lens, ndjson, cyclonedx]}}], responses: {'200': {description: 'Lens JSON, JSONL, or CycloneDX 1.7 export'}}}
   /v1/admin/service-accounts:
     post: {operationId: createServiceAccount, description: 'Creates a one-time-displayed, hash-at-rest integration credential. Registry integrations are restricted to inventory:read.', responses: {'201': {description: Service account and one-time token}, '403': {description: Administrator access required}}}
   /v1/admin/service-accounts/{id}:
@@ -137,7 +162,7 @@ components:
       required: [kind]
       properties:
         kind: {enum: [aws_account, azure_subscription, gcp_project, endpoint, github_repository, kubernetes_cluster]}
-        display_name: {type: string, minLength: 1, maxLength: 160}
+        display_name: {type: string, minLength: 1, maxLength: 128}
         configuration: {type: object, description: Provider identifiers only; secret-like fields are rejected., additionalProperties: true}
     CoverageBaselineRequest:
       type: object

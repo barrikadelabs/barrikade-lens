@@ -462,8 +462,49 @@ func (s *Server) listExposures(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "invalid_cursor", err.Error())
 		return
 	}
-	query := `SELECT f.id,f.root_entity_id,root.name,f.destination_entity_id,destination.name,f.rule_id,f.rule_version,f.severity,f.title,f.explanation,f.recommended_next_step,f.path,f.evidence_bases,f.first_seen_at,f.last_seen_at FROM exposure_findings f JOIN entities root ON root.organization_id=f.organization_id AND root.id=f.root_entity_id LEFT JOIN entities destination ON destination.organization_id=f.organization_id AND destination.id=f.destination_entity_id WHERE f.organization_id=$1 AND f.current=true`
+	query := `SELECT f.id,f.root_entity_id,root.name,f.destination_entity_id,destination.name,f.rule_id,f.rule_version,f.severity,f.title,f.explanation,f.recommended_next_step,f.path,f.evidence_bases,f.first_seen_at,f.last_seen_at,
+		p.last_seen_at,(` + freshPostureTargetSQL("p") + `),c.owner_name,c.owner_type,(p.attributed OR NULLIF(btrim(COALESCE(c.owner_name,'')),'') IS NOT NULL)
+		FROM exposure_findings f JOIN entities root ON root.organization_id=f.organization_id AND root.id=f.root_entity_id
+		JOIN entity_posture p ON p.organization_id=f.organization_id AND p.entity_id=f.root_entity_id
+		LEFT JOIN entity_context c ON c.organization_id=f.organization_id AND c.entity_id=f.root_entity_id
+		LEFT JOIN entities destination ON destination.organization_id=f.organization_id AND destination.id=f.destination_entity_id
+		WHERE f.organization_id=$1 AND f.current=true`
 	args := []any{principal.OrganizationID}
+	add := func(condition string, value any) {
+		args = append(args, value)
+		query += fmt.Sprintf(condition, len(args))
+	}
+	if severity := r.URL.Query().Get("severity"); severity != "" {
+		if severity != "critical" && severity != "high" && severity != "medium" && severity != "low" {
+			writeError(w, 400, "invalid_filter", "Severity must be critical, high, medium, or low")
+			return
+		}
+		add(` AND f.severity=$%d`, severity)
+	}
+	if freshness := r.URL.Query().Get("freshness"); freshness != "" && freshness != "all" {
+		if freshness != "fresh" && freshness != "stale" {
+			writeError(w, 400, "invalid_filter", "Freshness must be fresh, stale, or all")
+			return
+		}
+		query += ` AND (` + freshPostureTargetSQL("p") + `)=` + map[bool]string{true: "true", false: "false"}[freshness == "fresh"]
+	}
+	if ownerStatus := r.URL.Query().Get("owner_status"); ownerStatus != "" {
+		if ownerStatus != "owned" && ownerStatus != "unowned" {
+			writeError(w, 400, "invalid_filter", "Owner status must be owned or unowned")
+			return
+		}
+		ownedSQL := `(p.attributed OR NULLIF(btrim(COALESCE(c.owner_name,'')),'') IS NOT NULL)`
+		if ownerStatus == "unowned" {
+			ownedSQL = `NOT ` + ownedSQL
+		}
+		query += ` AND ` + ownedSQL
+	}
+	if systemType := r.URL.Query().Get("system_type"); systemType != "" {
+		add(` AND p.system_type=$%d`, systemType)
+	}
+	if surface := r.URL.Query().Get("surface"); surface != "" {
+		add(` AND p.surface=$%d`, surface)
+	}
 	if cursor.ID != "" {
 		parts := strings.SplitN(cursor.Value, "|", 2)
 		rank, rankErr := strconv.Atoi(parts[0])
@@ -478,7 +519,10 @@ func (s *Server) listExposures(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		args = append(args, rank, last, cursor.ID)
-		query += ` AND (CASE f.severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END>$2 OR (CASE f.severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END=$2 AND (f.last_seen_at<$3 OR (f.last_seen_at=$3 AND f.id<$4))))`
+		rankPosition := len(args) - 2
+		lastPosition := len(args) - 1
+		idPosition := len(args)
+		query += fmt.Sprintf(` AND (CASE f.severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END>$%d OR (CASE f.severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END=$%d AND (f.last_seen_at<$%d OR (f.last_seen_at=$%d AND f.id<$%d))))`, rankPosition, rankPosition, lastPosition, lastPosition, idPosition)
 	}
 	args = append(args, limit)
 	query += fmt.Sprintf(` ORDER BY CASE f.severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,f.last_seen_at DESC,f.id DESC LIMIT $%d`, len(args))
@@ -525,7 +569,13 @@ func (s *Server) getExposure(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 403, "forbidden", err.Error())
 		return
 	}
-	row := s.db(r.Context()).QueryRow(r.Context(), `SELECT f.id,f.root_entity_id,root.name,f.destination_entity_id,destination.name,f.rule_id,f.rule_version,f.severity,f.title,f.explanation,f.recommended_next_step,f.path,f.evidence_bases,f.first_seen_at,f.last_seen_at FROM exposure_findings f JOIN entities root ON root.organization_id=f.organization_id AND root.id=f.root_entity_id LEFT JOIN entities destination ON destination.organization_id=f.organization_id AND destination.id=f.destination_entity_id WHERE f.organization_id=$1 AND f.id=$2`, principal.OrganizationID, r.PathValue("id"))
+	row := s.db(r.Context()).QueryRow(r.Context(), `SELECT f.id,f.root_entity_id,root.name,f.destination_entity_id,destination.name,f.rule_id,f.rule_version,f.severity,f.title,f.explanation,f.recommended_next_step,f.path,f.evidence_bases,f.first_seen_at,f.last_seen_at,
+		p.last_seen_at,(`+freshPostureTargetSQL("p")+`),c.owner_name,c.owner_type,(p.attributed OR NULLIF(btrim(COALESCE(c.owner_name,'')),'') IS NOT NULL)
+		FROM exposure_findings f JOIN entities root ON root.organization_id=f.organization_id AND root.id=f.root_entity_id
+		JOIN entity_posture p ON p.organization_id=f.organization_id AND p.entity_id=f.root_entity_id
+		LEFT JOIN entity_context c ON c.organization_id=f.organization_id AND c.entity_id=f.root_entity_id
+		LEFT JOIN entities destination ON destination.organization_id=f.organization_id AND destination.id=f.destination_entity_id
+		WHERE f.organization_id=$1 AND f.id=$2`, principal.OrganizationID, r.PathValue("id"))
 	item, err := scanExposure(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, 404, "not_found", "Exposure not found")
@@ -545,14 +595,16 @@ func scanExposure(row exposureRowScanner) (map[string]any, error) {
 	var destinationID, destinationName *string
 	var path []byte
 	var bases []string
-	var first, last time.Time
-	err := row.Scan(&id, &rootID, &rootName, &destinationID, &destinationName, &rule, &version, &severity, &title, &explanation, &recommendation, &path, &bases, &first, &last)
+	var first, last, evidenceLastSeen time.Time
+	var evidenceFresh, effectivelyOwned bool
+	var ownerName, ownerType *string
+	err := row.Scan(&id, &rootID, &rootName, &destinationID, &destinationName, &rule, &version, &severity, &title, &explanation, &recommendation, &path, &bases, &first, &last, &evidenceLastSeen, &evidenceFresh, &ownerName, &ownerType, &effectivelyOwned)
 	if err != nil {
 		return nil, err
 	}
 	var decodedPath []map[string]any
 	_ = json.Unmarshal(path, &decodedPath)
-	return map[string]any{"id": id, "root_entity_id": rootID, "root_name": rootName, "destination_entity_id": destinationID, "destination_name": destinationName, "rule_id": rule, "rule_version": version, "severity": severity, "title": title, "explanation": explanation, "recommended_next_step": recommendation, "path": decodedPath, "evidence_bases": bases, "first_seen_at": first, "last_seen_at": last}, nil
+	return map[string]any{"id": id, "root_entity_id": rootID, "root_name": rootName, "destination_entity_id": destinationID, "destination_name": destinationName, "rule_id": rule, "rule_version": version, "severity": severity, "title": title, "explanation": explanation, "recommended_next_step": recommendation, "path": decodedPath, "evidence_bases": bases, "first_seen_at": first, "last_seen_at": last, "evidence_last_seen_at": evidenceLastSeen, "evidence_freshness": map[bool]string{true: "fresh", false: "stale"}[evidenceFresh], "effective_ownership": map[string]any{"owned": effectivelyOwned, "owner_name": ownerName, "owner_type": ownerType}}, nil
 }
 
 func (s *Server) getExposureMap(w http.ResponseWriter, r *http.Request) {
@@ -599,15 +651,31 @@ func (s *Server) getExposureMap(w http.ResponseWriter, r *http.Request) {
 		}
 		destinationItems = append(destinationItems, item)
 	}
-	rows, err := s.db(r.Context()).Query(r.Context(), `SELECT f.id,f.root_entity_id,root.name,f.destination_entity_id,destination.name,f.rule_id,f.rule_version,f.severity,f.title,f.explanation,f.recommended_next_step,f.path,f.evidence_bases,f.first_seen_at,f.last_seen_at FROM exposure_findings f JOIN entities root ON root.organization_id=f.organization_id AND root.id=f.root_entity_id LEFT JOIN entities destination ON destination.organization_id=f.organization_id AND destination.id=f.destination_entity_id WHERE f.organization_id=$1 AND f.root_entity_id=$2 AND f.current=true ORDER BY CASE f.severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END`, orgID, id)
+	rows, err := s.db(r.Context()).Query(r.Context(), `SELECT f.id,f.root_entity_id,root.name,f.destination_entity_id,destination.name,f.rule_id,f.rule_version,f.severity,f.title,f.explanation,f.recommended_next_step,f.path,f.evidence_bases,f.first_seen_at,f.last_seen_at,
+		p.last_seen_at,(`+freshPostureTargetSQL("p")+`),c.owner_name,c.owner_type,(p.attributed OR NULLIF(btrim(COALESCE(c.owner_name,'')),'') IS NOT NULL)
+		FROM exposure_findings f JOIN entities root ON root.organization_id=f.organization_id AND root.id=f.root_entity_id
+		JOIN entity_posture p ON p.organization_id=f.organization_id AND p.entity_id=f.root_entity_id
+		LEFT JOIN entity_context c ON c.organization_id=f.organization_id AND c.entity_id=f.root_entity_id
+		LEFT JOIN entities destination ON destination.organization_id=f.organization_id AND destination.id=f.destination_entity_id
+		WHERE f.organization_id=$1 AND f.root_entity_id=$2 AND f.current=true
+		ORDER BY CASE f.severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,f.last_seen_at DESC,f.id DESC`, orgID, id)
 	findings := []map[string]any{}
-	if err == nil {
-		defer rows.Close()
-		for rows.Next() {
-			if item, scanErr := scanExposure(rows); scanErr == nil {
-				findings = append(findings, item)
-			}
+	if err != nil {
+		writeError(w, 500, "database_error", "Could not read exposure findings")
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		item, scanErr := scanExposure(rows)
+		if scanErr != nil {
+			writeError(w, 500, "database_error", "Could not read exposure findings")
+			return
 		}
+		findings = append(findings, item)
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "database_error", "Could not read exposure findings")
+		return
 	}
 	writeJSON(w, 200, map[string]any{"system": map[string]any{"id": id, "name": rootName, "state": state, "attributes": jsonObject(attrsRaw)}, "context": contextValue, "destinations": destinationItems, "findings": findings, "product_boundary": "Lens discovers and assesses exposure. It does not verify effective authorization, invoke tools, change credentials, remediate, or enforce policy."})
 }

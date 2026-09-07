@@ -5,3 +5,7 @@ npm/*/dist
 build
 dist
 *.log
+.env
+.env.*
+!.env.example
+!.env.managed.example

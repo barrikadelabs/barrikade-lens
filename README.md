@@ -76,13 +76,15 @@ development bootstrap token.
 
 For the Barrikade pilot, the compose stack opens the `org_local` tenant used by the managed collector. The [live-device customer-story demo](docs/demo-live-device.md) shows how to present one real finding and its evidence without loading sample inventory or implying that Lens makes approval decisions.
 
-From the Hub’s Coverage page, generate the one-device install command and run it on the endpoint:
+From **Connections**, choose **Connect endpoint**, select macOS, Windows, or Linux, and run the generated command. The Hub pins the collector release and expires each command after 15 minutes:
 
 ```sh
-npx --yes barrikade-lens@latest enroll ABCDE-FGHIJ --hub https://lens.example.com --install
+npx --yes barrikade-lens@2.0.6 enroll ABCDE-FGHIJ --hub https://lens.example.com --install
 ```
 
-The command exchanges the single-use ten-minute code, stores rotating collector credentials privately, installs a stable background collector, and starts reporting. Run it with administrator privileges for system-wide macOS or Windows coverage. Node.js 18 or newer is required for the npm launcher; managed fleets can continue to pre-position the native binary.
+The command exchanges the single-use code, stores rotating collector credentials privately, installs a stable background collector, and starts reporting. Run it with administrator privileges for system-wide macOS or Windows coverage. Node.js 18 or newer is required for the npm launcher; managed fleets can continue to pre-position the native binary. A CISO can instead create a revocable 24-hour IT handoff. The recipient selects a platform before Lens generates a 15-minute command, and enrollment permanently closes the handoff.
+
+The endpoint beta keeps **Overview**, **Findings**, **Inventory**, and **Connections** in primary navigation. Overview separates known systems from currently reporting systems, retains stale findings with their age, and links every executive metric to its exact filtered destination. AWS, Azure, GCP, GitHub, and Kubernetes connectors remain disabled until their deployment gates pass. See the [endpoint beta operations guide](docs/endpoint-beta-operations.md) for Clerk settings, flags, edge controls, acceptance tests, and rollout order.
 
 Managed endpoint discovery performs an initial full scan, watches only known agent/configuration/skill roots, debounces relevant filesystem changes, reconciles processes and listeners every 15 minutes, and runs a jittered daily full scan. It does not install runtime hooks or capture prompts, tool calls, or commands.
 
@@ -144,6 +146,9 @@ Requirements are Go 1.26, Node.js 24+, npm 11+, and PostgreSQL 16+ for Hub integ
 go test ./...
 npm ci --ignore-scripts
 npm test
+npm run typecheck -w @barrikade/lens-hub-ui
+npm run test:e2e -w @barrikade/lens-hub-ui
+npx --yes @redocly/cli@2.51.2 lint api/openapi.yaml
 go build ./cmd/barrikade-lens ./cmd/lens-hub ./cmd/lens-k8s
 ```
 

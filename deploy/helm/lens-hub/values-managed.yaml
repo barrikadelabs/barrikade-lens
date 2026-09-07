@@ -11,10 +11,15 @@ auth:
 
 selfServe:
   enabled: true
+  cisoOverviewV2: true
+  endpointHandoff: true
   connectors:
     aws: false
     azure: false
     gcp: false
+    endpoint: true
+    kubernetes: false
+    github: false
 
 exposure:
   enabled: true

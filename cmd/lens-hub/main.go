@@ -53,10 +53,16 @@ func run() error {
 	clerkPublishableKey := flag.String("clerk-publishable-key", os.Getenv("LENS_CLERK_PUBLISHABLE_KEY"), "Clerk publishable key exposed to the browser")
 	clerkAuthorizedParty := flag.String("clerk-authorized-party", os.Getenv("LENS_CLERK_AUTHORIZED_PARTY"), "allowed Clerk session token azp origin")
 	clerkWebhookSecret := flag.String("clerk-webhook-secret", os.Getenv("LENS_CLERK_WEBHOOK_SECRET"), "Clerk webhook signing secret")
+	clerkSecretKey := flag.String("clerk-secret-key", os.Getenv("LENS_CLERK_SECRET_KEY"), "Clerk backend secret for Lens-governed identity deletion")
 	selfServeEnabled := flag.Bool("self-serve-enabled", env("LENS_SELF_SERVE_ENABLED", "false") == "true", "enable self-serve environment onboarding")
 	awsConnectorEnabled := flag.Bool("aws-connector-enabled", env("LENS_AWS_CONNECTOR_ENABLED", "false") == "true", "enable the AWS cloud connector")
 	azureConnectorEnabled := flag.Bool("azure-connector-enabled", env("LENS_AZURE_CONNECTOR_ENABLED", "false") == "true", "enable the Azure cloud connector")
 	gcpConnectorEnabled := flag.Bool("gcp-connector-enabled", env("LENS_GCP_CONNECTOR_ENABLED", "false") == "true", "enable the GCP cloud connector")
+	endpointConnectorEnabled := flag.Bool("endpoint-connector-enabled", env("LENS_ENDPOINT_CONNECTOR_ENABLED", "false") == "true", "enable endpoint self-service onboarding")
+	kubernetesConnectorEnabled := flag.Bool("kubernetes-connector-enabled", env("LENS_KUBERNETES_CONNECTOR_ENABLED", "false") == "true", "enable Kubernetes self-service onboarding")
+	githubConnectorEnabled := flag.Bool("github-connector-enabled", env("LENS_GITHUB_CONNECTOR_ENABLED", "false") == "true", "enable GitHub repository onboarding")
+	cisoOverviewV2Enabled := flag.Bool("ciso-overview-v2-enabled", env("LENS_CISO_OVERVIEW_V2_ENABLED", "false") == "true", "enable the CISO-first routed dashboard")
+	endpointHandoffEnabled := flag.Bool("endpoint-handoff-enabled", env("LENS_ENDPOINT_HANDOFF_ENABLED", "false") == "true", "enable delegated endpoint setup")
 	githubAppID := flag.String("github-app-id", os.Getenv("LENS_GITHUB_APP_ID"), "GitHub App ID for repository discovery")
 	githubPrivateKeyFile := flag.String("github-private-key-file", os.Getenv("LENS_GITHUB_PRIVATE_KEY_FILE"), "GitHub App private key PEM file")
 	githubWebhookSecret := flag.String("github-webhook-secret", os.Getenv("LENS_GITHUB_WEBHOOK_SECRET"), "GitHub App webhook signing secret")
@@ -155,12 +161,14 @@ func run() error {
 		OIDCIssuer: *oidcIssuer, OIDCClientID: *oidcClientID, OIDCClientSecret: *oidcClientSecret,
 		OIDCRedirectURI: *oidcRedirectURI, OIDCAdminGroup: *oidcAdminGroup,
 		ClerkIssuer: *clerkIssuer, ClerkPublishableKey: *clerkPublishableKey,
-		ClerkAuthorizedParty: *clerkAuthorizedParty, ClerkWebhookSecret: *clerkWebhookSecret,
+		ClerkAuthorizedParty: *clerkAuthorizedParty, ClerkWebhookSecret: *clerkWebhookSecret, ClerkSecretKey: *clerkSecretKey,
 		GitHubWebhookSecret: []byte(*githubWebhookSecret), GitHubClient: githubClient, GitHubAppSlug: *githubAppSlug,
 		ExposureEnabled: *exposureEnabled, SelfServeEnabled: *selfServeEnabled,
 		AWSConnectorEnabled: *awsConnectorEnabled, AzureConnectorEnabled: *azureConnectorEnabled,
-		GCPConnectorEnabled: *gcpConnectorEnabled,
-		AWSBrokerRoleARN:    *awsBrokerRoleARN, AzureApplicationID: *azureApplicationID,
+		GCPConnectorEnabled: *gcpConnectorEnabled, EndpointConnectorEnabled: *endpointConnectorEnabled,
+		KubernetesConnectorEnabled: *kubernetesConnectorEnabled, GitHubConnectorEnabled: *githubConnectorEnabled,
+		CISOOverviewV2Enabled: *cisoOverviewV2Enabled, EndpointHandoffEnabled: *endpointHandoffEnabled,
+		AWSBrokerRoleARN: *awsBrokerRoleARN, AzureApplicationID: *azureApplicationID,
 		GCPWorkloadIssuer: *gcpWorkloadIssuer, GCPWorkloadAudience: *gcpWorkloadAudience,
 		GCPAssertionAudience:       *gcpAssertionAudience,
 		ManagedIdentityPrincipalID: *managedIdentityPrincipalID,

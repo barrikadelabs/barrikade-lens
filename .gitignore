@@ -17,6 +17,8 @@ node_modules/
 npm/launcher/lib/
 npm/*/bin/
 hub-ui/dist/
+hub-ui/test-results/
+hub-ui/playwright-report/
 
 # Local runtime state
 .lens/

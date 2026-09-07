@@ -45,6 +45,14 @@ export type Overview = {
     coverage_note: string;
   };
   exposure_summary?: ExposureSummary & { top_findings: Array<Pick<ExposureFinding, "id" | "root_entity_id" | "rule_id" | "severity" | "title">> };
+  executive_summary?: {
+    coverage_state: "unassessed" | "awaiting_install" | "processing" | "ready" | "partial" | "stale" | "failed";
+    systems: { known: number; fresh: number; stale: number; fresh_by_type: Record<string, number>; stale_by_type: Record<string, number> };
+    findings: { fresh: number; stale: number; fresh_by_severity: Record<string, number>; stale_by_severity: Record<string, number> };
+    effective_ownership: { owned: number; unowned: number; unassigned_high_priority_findings: number };
+    top_findings: Array<Pick<ExposureFinding, "id" | "root_entity_id" | "root_name" | "severity" | "title" | "recommended_next_step" | "last_seen_at">>;
+    last_successful_evidence_at?: string;
+  };
 };
 
 export type ExposureSummary = { total: number; counts: Record<"critical" | "high" | "medium" | "low", number> };
@@ -68,6 +76,7 @@ export type SystemItem = {
   first_seen_at: string;
   last_seen_at: string;
   exposure_summary?: ExposureSummary;
+  effective_ownership?: { owned: boolean; basis: "evidence" | "operator" | "none"; owner_name?: string; owner_type?: string };
 };
 
 export type Evidence = {
@@ -146,6 +155,9 @@ export type ExposureFinding = {
   evidence_bases: Array<"observed" | "operator_context" | "catalog_potential">;
   first_seen_at: string;
   last_seen_at: string;
+  evidence_last_seen_at?: string;
+  evidence_freshness?: "fresh" | "stale";
+  effective_ownership?: { owned: boolean; owner_name?: string; owner_type?: string };
 };
 
 export type CatalogOperation = {
@@ -291,9 +303,25 @@ export type Environment = {
   purge_after?: string;
   last_error_code?: string;
   last_error_message?: string;
+  first_result_at?: string;
+  last_result_at?: string;
+  last_result_status?: "complete" | "partial" | "failed";
   created_at: string;
   updated_at: string;
 };
+
+export type Activation = {
+  environment_id: string;
+  phase: "awaiting_install" | "connected" | "processing" | "ready" | "partial" | "failed" | "stale" | "disconnected";
+  connection_status: ConnectionStatus;
+  first_result_at?: string;
+  last_result_at?: string;
+  last_result_status?: "complete" | "partial" | "failed";
+  last_seen_at?: string;
+  safe_error?: { code?: string; message?: string };
+};
+
+export type Notification = { id: string; event_type: string; payload: Record<string, unknown>; read_at?: string; created_at: string };
 
 export type SetupSession = {
   id: string;
@@ -383,6 +411,8 @@ export class API {
 
   environment(id: string) { return this.request<Environment>(`/v1/environments/${encodeURIComponent(id)}`); }
 
+  activation(id: string) { return this.request<Activation>(`/v1/environments/${encodeURIComponent(id)}/activation`); }
+
   createEnvironmentSetup(input: { kind: EnvironmentKind; display_name: string; external_id?: string; configuration?: Record<string, unknown> }) {
     return this.request<SetupSession>("/v1/environments/setup-sessions", { method: "POST", body: JSON.stringify(input) });
   }
@@ -406,6 +436,32 @@ export class API {
   disconnectEnvironment(id: string) {
     return this.request<{ id: string; connection_status: "disconnected"; purge_after_days: number; teardown: string[] }>(`/v1/environments/${encodeURIComponent(id)}`, { method: "DELETE" });
   }
+
+  rotateEndpointCredential(id: string) {
+    return this.request<SetupSession>(`/v1/environments/${encodeURIComponent(id)}/enrollment-credentials`, { method: "POST" });
+  }
+
+  createEndpointHandoff(id: string) {
+    return this.request<{ id: string; environment_id: string; url: string; expires_at: string; token_displayed_once: true }>(`/v1/environments/${encodeURIComponent(id)}/handoffs`, { method: "POST" });
+  }
+
+  revokeEndpointHandoff(environmentID: string, handoffID: string) {
+    return this.request<void>(`/v1/environments/${encodeURIComponent(environmentID)}/handoffs/${encodeURIComponent(handoffID)}`, { method: "DELETE" });
+  }
+
+  exposures(filters: Record<string, string | number | undefined> = {}) {
+    return this.request<PageResult<ExposureFinding>>(queryPath("/v1/exposures", { limit: 50, ...filters }));
+  }
+
+  exposure(id: string) { return this.request<ExposureFinding>(`/v1/exposures/${encodeURIComponent(id)}`); }
+
+  notifications() { return this.request<{ items: Notification[] }>("/v1/notifications"); }
+
+  readNotification(id: string) { return this.request<void>(`/v1/notifications/${encodeURIComponent(id)}`, { method: "PATCH" }); }
+
+  deleteAccount() { return this.request<void>("/v1/account", { method: "DELETE" }); }
+
+  deleteWorkspace(organizationID: string) { return this.request<void>("/v1/workspaces/current", { method: "DELETE", body: JSON.stringify({ confirmation: organizationID }) }); }
 
   overview(window = "7d") {
     return this.request<Overview>(queryPath("/v1/overview", { window }));

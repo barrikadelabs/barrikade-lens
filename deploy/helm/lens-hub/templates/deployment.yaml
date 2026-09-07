@@ -24,10 +24,16 @@ spec:
             - {name: LENS_CLERK_PUBLISHABLE_KEY, value: {{ .Values.auth.clerk.publishableKey | quote }} }
             - {name: LENS_CLERK_AUTHORIZED_PARTY, value: {{ .Values.auth.clerk.authorizedParty | quote }} }
             - {name: LENS_CLERK_WEBHOOK_SECRET, valueFrom: {secretKeyRef: {name: {{ .Values.existingSecret }}, key: clerk-webhook-secret, optional: true}}}
+            - {name: LENS_CLERK_SECRET_KEY, valueFrom: {secretKeyRef: {name: {{ .Values.existingSecret }}, key: clerk-secret-key, optional: true}}}
             - {name: LENS_SELF_SERVE_ENABLED, value: {{ .Values.selfServe.enabled | quote }} }
             - {name: LENS_AWS_CONNECTOR_ENABLED, value: {{ .Values.selfServe.connectors.aws | quote }} }
             - {name: LENS_AZURE_CONNECTOR_ENABLED, value: {{ .Values.selfServe.connectors.azure | quote }} }
             - {name: LENS_GCP_CONNECTOR_ENABLED, value: {{ .Values.selfServe.connectors.gcp | quote }} }
+            - {name: LENS_ENDPOINT_CONNECTOR_ENABLED, value: {{ .Values.selfServe.connectors.endpoint | quote }} }
+            - {name: LENS_KUBERNETES_CONNECTOR_ENABLED, value: {{ .Values.selfServe.connectors.kubernetes | quote }} }
+            - {name: LENS_GITHUB_CONNECTOR_ENABLED, value: {{ .Values.selfServe.connectors.github | quote }} }
+            - {name: LENS_CISO_OVERVIEW_V2_ENABLED, value: {{ .Values.selfServe.cisoOverviewV2 | quote }} }
+            - {name: LENS_ENDPOINT_HANDOFF_ENABLED, value: {{ .Values.selfServe.endpointHandoff | quote }} }
             - {name: LENS_AWS_BROKER_ROLE_ARN, value: {{ .Values.selfServe.aws.brokerRoleARN | quote }} }
             - {name: LENS_AWS_FEDERATION_AUDIENCE, value: {{ .Values.selfServe.aws.federationAudience | quote }} }
             - {name: LENS_AWS_REGIONS, value: {{ .Values.selfServe.aws.regions | quote }} }
@@ -52,8 +58,8 @@ spec:
             - {name: LENS_OIDC_REDIRECT_URI, value: {{ .Values.oidc.redirectURI | quote }}}
             - {name: LENS_OIDC_ADMIN_GROUP, value: {{ .Values.oidc.adminGroup | quote }}}
             - {name: LENS_OIDC_CLIENT_SECRET, valueFrom: {secretKeyRef: {name: {{ .Values.existingSecret }}, key: oidc-client-secret, optional: true}}}
-          readinessProbe: {httpGet: {path: /healthz, port: http}, initialDelaySeconds: 3}
-          livenessProbe: {httpGet: {path: /healthz, port: http}, initialDelaySeconds: 10}
+          readinessProbe: {httpGet: {path: /readyz, port: http}, initialDelaySeconds: 3}
+          livenessProbe: {httpGet: {path: /livez, port: http}, initialDelaySeconds: 10}
           {{ if .Values.github.privateKeySecret }}
           volumeMounts:
             - {name: github-private-key, mountPath: /var/run/secrets/lens-github, readOnly: true}

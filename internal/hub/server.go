@@ -10,6 +10,8 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -46,6 +48,8 @@ type Config struct {
 	ClerkPublishableKey        string
 	ClerkAuthorizedParty       string
 	ClerkWebhookSecret         string
+	ClerkSecretKey             string
+	ClerkAPIBaseURL            string
 	GitHubWebhookSecret        []byte
 	GitHubClient               *githubapp.Client
 	GitHubAppSlug              string
@@ -54,6 +58,11 @@ type Config struct {
 	AWSConnectorEnabled        bool
 	AzureConnectorEnabled      bool
 	GCPConnectorEnabled        bool
+	EndpointConnectorEnabled   bool
+	KubernetesConnectorEnabled bool
+	GitHubConnectorEnabled     bool
+	CISOOverviewV2Enabled      bool
+	EndpointHandoffEnabled     bool
 	CloudAdapters              cloud.Registry
 	AWSBrokerRoleARN           string
 	AzureApplicationID         string
@@ -101,14 +110,17 @@ func NewServer(ctx context.Context, config Config) (*Server, error) {
 		return nil, fmt.Errorf("auth mode must be clerk, oidc, or development")
 	}
 	if config.AuthMode == "clerk" {
-		if config.ClerkIssuer == "" || config.ClerkPublishableKey == "" || config.ClerkAuthorizedParty == "" {
-			return nil, fmt.Errorf("Clerk issuer, publishable key, and authorized party are required in Clerk auth mode")
+		if config.ClerkIssuer == "" || config.ClerkPublishableKey == "" || config.ClerkAuthorizedParty == "" || config.ClerkSecretKey == "" || config.ClerkWebhookSecret == "" {
+			return nil, fmt.Errorf("Clerk issuer, publishable key, authorized party, secret key, and webhook secret are required in Clerk auth mode")
 		}
 		if config.DevAdminToken != "" {
 			return nil, fmt.Errorf("development bootstrap token must be unset in Clerk auth mode")
 		}
 	} else if _, err := config.WorkerPool.Exec(ctx, `INSERT INTO organizations(id,name) VALUES($1,$2) ON CONFLICT(id) DO NOTHING`, config.DefaultOrganizationID, config.DefaultOrganizationName); err != nil {
 		return nil, err
+	}
+	if config.ClerkAPIBaseURL == "" {
+		config.ClerkAPIBaseURL = "https://api.clerk.com"
 	}
 	server := &Server{config: config, mux: http.NewServeMux()}
 	server.auth = &Authenticator{Pool: config.WorkerPool, JWTSecret: config.JWTSecret, DevAdminToken: config.DevAdminToken, DefaultOrganizationID: config.DefaultOrganizationID, Issuer: config.Issuer}
@@ -139,10 +151,23 @@ func NewServer(ctx context.Context, config Config) (*Server, error) {
 func (s *Server) Handler() http.Handler { return requestLog(s.config.Logger, securityHeaders(s.mux)) }
 
 func (s *Server) routes() {
+	s.mux.HandleFunc("GET /livez", func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	})
 	s.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
-	s.mux.HandleFunc("POST /v1/enrollment/exchange", s.exchangeEnrollment)
+	s.mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+		if err := s.config.Pool.Ping(ctx); err != nil {
+			writeError(w, http.StatusServiceUnavailable, "database_unavailable", "The database is unavailable")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ready"})
+	})
+	s.mux.HandleFunc("POST /v1/enrollment/exchange", s.rateLimit("enrollment_exchange", 60, 5*time.Minute, remoteRequestKey, s.exchangeEnrollment))
+	s.mux.HandleFunc("POST /v1/public/endpoint-handoffs/resolve", s.rateLimit("handoff_resolve", 60, 5*time.Minute, remoteRequestKey, s.resolveEndpointHandoff))
 	s.mux.HandleFunc("POST /v1/collector/token", s.rotateCollectorToken)
 	s.mux.HandleFunc("GET /v1/auth/config", s.oidcConfig)
 	s.mux.HandleFunc("POST /v1/auth/exchange", s.oidcExchange)
@@ -152,16 +177,21 @@ func (s *Server) routes() {
 	if len(s.config.GitHubWebhookSecret) > 0 {
 		s.mux.HandleFunc("POST /v1/connectors/github/webhook", s.githubWebhook)
 	}
-	if s.config.GitHubClient != nil {
+	if s.config.GitHubClient != nil && s.config.GitHubConnectorEnabled {
 		s.mux.HandleFunc("GET /v1/connectors/github/setup", s.githubSetupCallback)
 	}
 	authenticated := http.NewServeMux()
 	authenticated.HandleFunc("GET /v1/session", s.getSession)
-	authenticated.HandleFunc("POST /v1/workspaces/bootstrap", s.bootstrapWorkspace)
+	authenticated.HandleFunc("DELETE /v1/account", s.deleteAccount)
+	authenticated.HandleFunc("POST /v1/workspaces/bootstrap", s.rateLimit("workspace_bootstrap", 10, 5*time.Minute, principalRequestKey, s.bootstrapWorkspace))
 	authenticated.HandleFunc("DELETE /v1/workspaces/current", s.deleteWorkspace)
 	authenticated.HandleFunc("GET /v1/environments", s.listEnvironments)
 	authenticated.HandleFunc("GET /v1/environments/{id}", s.getEnvironment)
-	authenticated.HandleFunc("POST /v1/environments/setup-sessions", s.createEnvironmentSetupSession)
+	authenticated.HandleFunc("GET /v1/environments/{id}/activation", s.getEnvironmentActivation)
+	authenticated.HandleFunc("POST /v1/environments/setup-sessions", s.rateLimit("setup_creation", 30, 5*time.Minute, principalRequestKey, s.createEnvironmentSetupSession))
+	authenticated.HandleFunc("POST /v1/environments/{id}/enrollment-credentials", s.rotateEndpointEnrollmentCredential)
+	authenticated.HandleFunc("POST /v1/environments/{id}/handoffs", s.rateLimit("handoff_creation", 30, 5*time.Minute, principalRequestKey, s.createEndpointHandoff))
+	authenticated.HandleFunc("DELETE /v1/environments/{id}/handoffs/{handoffId}", s.revokeEndpointHandoff)
 	authenticated.HandleFunc("POST /v1/environments/{id}/verify", s.verifyEnvironment)
 	authenticated.HandleFunc("PATCH /v1/environments/{id}", s.updateEnvironment)
 	authenticated.HandleFunc("POST /v1/environments/{id}/scans", s.createEnvironmentScan)
@@ -171,7 +201,7 @@ func (s *Server) routes() {
 	authenticated.HandleFunc("POST /v1/admin/service-accounts", s.createServiceAccount)
 	authenticated.HandleFunc("DELETE /v1/admin/service-accounts/{id}", s.revokeServiceAccount)
 	authenticated.HandleFunc("DELETE /v1/admin/sources/{id}", s.revokeSource)
-	authenticated.HandleFunc("POST /v1/discovery/snapshots", s.submitSnapshot)
+	authenticated.HandleFunc("POST /v1/discovery/snapshots", s.rateLimit("snapshot_submission", 120, time.Minute, principalRequestKey, s.submitSnapshot))
 	authenticated.HandleFunc("GET /v1/discovery/jobs/{id}", s.getJob)
 	authenticated.HandleFunc("GET /v1/entities", s.listEntities)
 	authenticated.HandleFunc("GET /v1/entities/{id}", s.getEntity)
@@ -185,6 +215,8 @@ func (s *Server) routes() {
 	authenticated.HandleFunc("GET /v1/changes", s.listChanges)
 	authenticated.HandleFunc("GET /v1/coverage", s.coverage)
 	authenticated.HandleFunc("GET /v1/exports", s.exports)
+	authenticated.HandleFunc("GET /v1/notifications", s.listNotifications)
+	authenticated.HandleFunc("PATCH /v1/notifications/{id}", s.readNotification)
 	authenticated.HandleFunc("POST /v1/webhooks", s.createWebhook)
 	if s.config.ExposureEnabled {
 		authenticated.HandleFunc("GET /v1/exposures", s.listExposures)
@@ -198,8 +230,21 @@ func (s *Server) routes() {
 	}
 	s.mux.Handle("/v1/", s.auth.Middleware(s.tenantTransaction(authenticated)))
 	if s.config.UIDir != "" {
-		s.mux.Handle("/", http.FileServer(http.Dir(s.config.UIDir)))
+		s.mux.Handle("/", spaFileHandler(s.config.UIDir))
 	}
+}
+
+func spaFileHandler(directory string) http.Handler {
+	files := http.FileServer(http.Dir(directory))
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		relative := strings.TrimPrefix(filepath.Clean("/"+r.URL.Path), string(filepath.Separator))
+		candidate := filepath.Join(directory, relative)
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			files.ServeHTTP(w, r)
+			return
+		}
+		http.ServeFile(w, r, filepath.Join(directory, "index.html"))
+	})
 }
 
 func (s *Server) createServiceAccount(w http.ResponseWriter, r *http.Request) {
@@ -339,9 +384,10 @@ func (s *Server) exchangeEnrollment(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 	var orgID, sourceType string
+	var enrollmentEnvironmentID *uuid.UUID
 	var expires time.Time
 	var uses int
-	err = tx.QueryRow(r.Context(), `SELECT organization_id,expires_at,uses_remaining,source_type FROM enrollment_codes WHERE code_hash=$1 FOR UPDATE`, tokenHash(normalizeCode(request.Code))).Scan(&orgID, &expires, &uses, &sourceType)
+	err = tx.QueryRow(r.Context(), `SELECT organization_id,expires_at,uses_remaining,source_type,environment_id FROM enrollment_codes WHERE code_hash=$1 AND revoked_at IS NULL FOR UPDATE`, tokenHash(normalizeCode(request.Code))).Scan(&orgID, &expires, &uses, &sourceType, &enrollmentEnvironmentID)
 	if errors.Is(err, pgx.ErrNoRows) || err == nil && time.Now().After(expires) {
 		writeError(w, 401, "invalid_enrollment_code", "The enrollment code is invalid or expired")
 		return
@@ -349,6 +395,13 @@ func (s *Server) exchangeEnrollment(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, 500, "database_error", "Could not validate enrollment code")
 		return
+	}
+	if enrollmentEnvironmentID != nil {
+		var active bool
+		if err = tx.QueryRow(r.Context(), `SELECT connection_status='setup_pending' FROM environment_connections WHERE organization_id=$1 AND id=$2`, orgID, *enrollmentEnvironmentID).Scan(&active); err != nil || !active {
+			writeError(w, 401, "invalid_enrollment_code", "The enrollment setup is no longer active")
+			return
+		}
 	}
 	if request.SourceType != "" && request.SourceType != sourceType {
 		writeError(w, 401, "source_type_mismatch", "The enrollment code was issued for a different collector type")
@@ -440,6 +493,9 @@ func (s *Server) exchangeEnrollment(w http.ResponseWriter, r *http.Request) {
 		_, err = tx.Exec(r.Context(), `UPDATE environment_connections SET external_id=COALESCE(NULLIF(external_id,''),$3),display_name=COALESCE(NULLIF(display_name,''),$4),connection_status='connected',target_id=$5,source_id=$6,verified_at=now(),last_error_code=NULL,last_error_message=NULL,updated_at=now() WHERE organization_id=$1 AND id=$2`, orgID, setupEnvironmentID, targetIdentity, displayName, targetID, sourceID)
 		if err == nil {
 			_, err = tx.Exec(r.Context(), `UPDATE connector_setup_sessions SET state='consumed',consumed_at=now() WHERE organization_id=$1 AND environment_id=$2 AND state='pending'`, orgID, setupEnvironmentID)
+		}
+		if err == nil {
+			_, err = tx.Exec(r.Context(), `UPDATE endpoint_setup_handoffs SET revoked_at=now() WHERE organization_id=$1 AND environment_id=$2 AND revoked_at IS NULL`, orgID, setupEnvironmentID)
 		}
 		if err == nil {
 			_, err = tx.Exec(r.Context(), `INSERT INTO workspace_audit_events(id,organization_id,actor_id,event_type,target_type,target_id,metadata) VALUES($1,$2,'collector:enrollment','environment.verified','environment',$3,$4)`, uuid.New(), orgID, setupEnvironmentID.String(), jsonBytes(map[string]any{"provider": sourceType}))
@@ -573,6 +629,33 @@ func (s *Server) submitSnapshot(w http.ResponseWriter, r *http.Request) {
 	payload, err := json.Marshal(snapshot)
 	if err != nil {
 		writeError(w, 500, "internal_error", "Could not encode snapshot")
+		return
+	}
+	// Serialize submissions per source across Hub replicas. This keeps only one
+	// normalization job active while preserving idempotent snapshot retries.
+	if _, err = s.db(r.Context()).Exec(r.Context(), `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, snapshot.OrganizationID+":"+snapshot.SourceID); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "database_unavailable", "Could not reserve the discovery source")
+		return
+	}
+	var existingID uuid.UUID
+	var existingStatus string
+	err = s.db(r.Context()).QueryRow(r.Context(), `SELECT id,status FROM ingestion_jobs WHERE organization_id=$1 AND snapshot_id=$2`, snapshot.OrganizationID, snapshot.SnapshotID).Scan(&existingID, &existingStatus)
+	if err == nil {
+		writeJSON(w, http.StatusAccepted, map[string]any{"id": existingID, "status": existingStatus})
+		return
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusServiceUnavailable, "database_unavailable", "Could not inspect the discovery queue")
+		return
+	}
+	var active bool
+	if err = s.db(r.Context()).QueryRow(r.Context(), `SELECT EXISTS(SELECT 1 FROM ingestion_jobs WHERE organization_id=$1 AND source_id=$2 AND status IN ('pending','processing'))`, snapshot.OrganizationID, snapshot.SourceID).Scan(&active); err != nil {
+		writeError(w, http.StatusServiceUnavailable, "database_unavailable", "Could not inspect the discovery queue")
+		return
+	}
+	if active {
+		w.Header().Set("Retry-After", "15")
+		writeError(w, http.StatusTooManyRequests, "source_busy", "This source already has a snapshot being processed")
 		return
 	}
 	jobID := uuid.New()
@@ -747,6 +830,9 @@ func securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "no-referrer")
+		if r.URL.Path == "/install" || r.URL.Path == "/v1/public/endpoint-handoffs/resolve" {
+			w.Header().Set("Cache-Control", "no-store")
+		}
 		next.ServeHTTP(w, r)
 	})
 }

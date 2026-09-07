@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 
@@ -18,6 +19,20 @@ type database interface {
 }
 
 type tenantTransactionKey struct{}
+type transactionOutcomeKey struct{}
+
+type transactionOutcome struct {
+	commitErrorResponse bool
+}
+
+// commitOnError records that the handler intentionally persisted a safe state
+// transition while returning an error response (for example auth_error after a
+// provider rejected setup). All other 4xx/5xx responses roll the request back.
+func commitOnError(ctx context.Context) {
+	if outcome, ok := ctx.Value(transactionOutcomeKey{}).(*transactionOutcome); ok {
+		outcome.commitErrorResponse = true
+	}
+}
 
 func (s *Server) db(ctx context.Context) database {
 	if tx, ok := ctx.Value(tenantTransactionKey{}).(pgx.Tx); ok {
@@ -39,6 +54,47 @@ func (s *Server) begin(ctx context.Context) (pgx.Tx, error) {
 type statusResponseWriter struct {
 	http.ResponseWriter
 	status int
+}
+
+type bufferedResponseWriter struct {
+	header http.Header
+	body   bytes.Buffer
+	status int
+}
+
+func newBufferedResponseWriter() *bufferedResponseWriter {
+	return &bufferedResponseWriter{header: make(http.Header)}
+}
+
+func (w *bufferedResponseWriter) Header() http.Header { return w.header }
+
+func (w *bufferedResponseWriter) WriteHeader(status int) {
+	if w.status == 0 {
+		w.status = status
+	}
+}
+
+func (w *bufferedResponseWriter) Write(value []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	return w.body.Write(value)
+}
+
+func (w *bufferedResponseWriter) flush(destination http.ResponseWriter) {
+	for key, values := range w.header {
+		destination.Header()[key] = append([]string(nil), values...)
+	}
+	status := w.status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	destination.WriteHeader(status)
+	_, _ = destination.Write(w.body.Bytes())
+}
+
+func isMutation(method string) bool {
+	return method == http.MethodPost || method == http.MethodPut || method == http.MethodPatch || method == http.MethodDelete
 }
 
 func (w *statusResponseWriter) WriteHeader(status int) {
@@ -72,14 +128,27 @@ func (s *Server) tenantTransaction(next http.Handler) http.Handler {
 			writeError(writer, http.StatusServiceUnavailable, "database_unavailable", "The workspace could not be opened")
 			return
 		}
-		response := &statusResponseWriter{ResponseWriter: writer}
 		ctx := context.WithValue(request.Context(), tenantTransactionKey{}, tx)
-		next.ServeHTTP(response, request.WithContext(ctx))
-		if response.status >= http.StatusBadRequest {
+		if !isMutation(request.Method) {
+			response := &statusResponseWriter{ResponseWriter: writer}
+			next.ServeHTTP(response, request.WithContext(ctx))
+			if response.status < http.StatusBadRequest {
+				_ = tx.Commit(request.Context())
+			}
 			return
 		}
-		if err := tx.Commit(request.Context()); err != nil && response.status == 0 {
-			writeError(writer, http.StatusServiceUnavailable, "database_unavailable", "The request could not be committed")
+		outcome := &transactionOutcome{}
+		ctx = context.WithValue(ctx, transactionOutcomeKey{}, outcome)
+		response := newBufferedResponseWriter()
+		next.ServeHTTP(response, request.WithContext(ctx))
+		if response.status >= http.StatusBadRequest && !outcome.commitErrorResponse {
+			response.flush(writer)
+			return
 		}
+		if err := tx.Commit(request.Context()); err != nil {
+			writeError(writer, http.StatusServiceUnavailable, "database_unavailable", "The request could not be committed")
+			return
+		}
+		response.flush(writer)
 	})
 }

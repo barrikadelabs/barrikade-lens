@@ -21,6 +21,8 @@ type Worker struct {
 	PollInterval time.Duration
 }
 
+var errSnapshotAlreadyApplied = errors.New("snapshot sequence already applied")
+
 func (w Worker) Run(ctx context.Context) error {
 	if w.Logger == nil {
 		w.Logger = slog.Default()
@@ -78,6 +80,14 @@ func (w Worker) processOne(ctx context.Context) (bool, error) {
 		err = normalizeSnapshot(ctx, tx, snapshot)
 		permanent = permanentNormalizationError(err)
 	}
+	if errors.Is(err, errSnapshotAlreadyApplied) {
+		_ = tx.Rollback(ctx)
+		_, markErr := w.Pool.Exec(ctx, `UPDATE ingestion_jobs SET status='complete',payload=NULL,error_code=NULL,error_message=NULL,completed_at=now(),expires_at=NULL WHERE id=$1`, jobID)
+		if markErr != nil {
+			return true, fmt.Errorf("complete duplicate snapshot: %w", markErr)
+		}
+		return true, nil
+	}
 	if err != nil {
 		_ = tx.Rollback(ctx)
 		status := "pending"
@@ -89,6 +99,24 @@ func (w Worker) processOne(ctx context.Context) (bool, error) {
 		if markErr != nil {
 			return true, fmt.Errorf("normalize: %v; mark failed: %w", err, markErr)
 		}
+		if status == "failed" && snapshot.OrganizationID != "" && snapshot.SourceID != "" {
+			_, _ = w.Pool.Exec(ctx, `WITH updated AS (
+				UPDATE environment_connections SET last_result_at=now(),last_result_status='failed',last_error_code='normalization_failed',last_error_message=$3,updated_at=now()
+				WHERE organization_id=$1 AND source_id=$2 AND connection_status='connected' RETURNING id,organization_id
+			) INSERT INTO notification_outbox(id,organization_id,event_type,payload)
+			SELECT gen_random_uuid(),organization_id,'first_scan_completed',jsonb_build_object('environment_id',id,'status','failed') FROM updated ON CONFLICT DO NOTHING`, snapshot.OrganizationID, snapshot.SourceID, safeError(err))
+		}
+		return true, err
+	}
+	resultStatus := "complete"
+	if snapshot.Coverage.Partial || len(snapshot.Errors) > 0 {
+		resultStatus = "partial"
+	}
+	if _, err = tx.Exec(ctx, `WITH updated AS (
+		UPDATE environment_connections SET first_result_at=COALESCE(first_result_at,now()),last_result_at=now(),last_result_status=$3,last_error_code=NULL,last_error_message=NULL,updated_at=now()
+		WHERE organization_id=$1 AND source_id=$2 AND connection_status='connected' RETURNING id,organization_id
+	) INSERT INTO notification_outbox(id,organization_id,event_type,payload)
+	SELECT gen_random_uuid(),organization_id,'first_scan_completed',jsonb_build_object('environment_id',id,'status',$3) FROM updated ON CONFLICT DO NOTHING`, snapshot.OrganizationID, snapshot.SourceID, resultStatus); err != nil {
 		return true, err
 	}
 	if _, err = tx.Exec(ctx, `UPDATE ingestion_jobs SET status='complete',payload=NULL,error_code=NULL,error_message=NULL,completed_at=now(),expires_at=NULL WHERE id=$1`, jobID); err != nil {
@@ -105,8 +133,7 @@ func permanentNormalizationError(err error) bool {
 		return false
 	}
 	message := strings.ToLower(err.Error())
-	return strings.Contains(message, "out-of-order sequence") ||
-		strings.Contains(message, "load source: no rows") ||
+	return strings.Contains(message, "load source: no rows") ||
 		strings.Contains(message, "violates foreign key constraint") ||
 		strings.Contains(message, "invalid input syntax")
 }
@@ -126,7 +153,7 @@ func normalizeSnapshot(ctx context.Context, tx pgx.Tx, snapshot discovery.Snapsh
 		return fmt.Errorf("snapshot target_id does not match enrolled source target")
 	}
 	if snapshot.Sequence > 0 && snapshot.Sequence <= lastSequence {
-		return fmt.Errorf("out-of-order sequence %d; source is at %d", snapshot.Sequence, lastSequence)
+		return fmt.Errorf("%w: sequence %d; source is at %d", errSnapshotAlreadyApplied, snapshot.Sequence, lastSequence)
 	}
 	sequence := snapshot.Sequence
 	if sequence == 0 {
@@ -227,6 +254,7 @@ func normalizeSnapshot(ctx context.Context, tx pgx.Tx, snapshot discovery.Snapsh
 	_, _ = tx.Exec(ctx, `DELETE FROM evidence_observations WHERE expires_at < now()`)
 	_, _ = tx.Exec(ctx, `DELETE FROM ingestion_jobs WHERE status='failed' AND expires_at < now()`)
 	_, _ = tx.Exec(ctx, `DELETE FROM ingestion_jobs WHERE status='complete' AND completed_at < now()-interval '90 days'`)
+	_, _ = tx.Exec(ctx, `DELETE FROM request_rate_limits WHERE expires_at < now()`)
 	_, _ = tx.Exec(ctx, `DELETE FROM changes WHERE changed_at < now()-interval '90 days'`)
 	_, _ = tx.Exec(ctx, `DELETE FROM webhook_outbox WHERE delivered_at < now()-interval '90 days'`)
 	return enqueueExposureEvaluation(ctx, tx, snapshot.OrganizationID)

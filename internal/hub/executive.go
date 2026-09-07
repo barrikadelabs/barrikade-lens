@@ -126,7 +126,7 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 	attention["newly_discovered_systems"] = newSystems
 	for key, query := range map[string]string{
 		"non_loopback_services": `SELECT count(*) FROM entity_posture p JOIN entities e ON e.organization_id=p.organization_id AND e.id=p.entity_id WHERE p.organization_id=$1 AND p.current=true AND p.network_scope IN ('network','external') AND e.kind IN ('model_server','mcp_server','api_service') AND (` + freshPostureTargetSQL("p") + `)`,
-		"unattributed_systems":  `SELECT count(*) FROM entity_posture WHERE organization_id=$1 AND current=true AND system_role='system' AND attributed=false AND (` + freshPostureTargetSQL("entity_posture") + `)`,
+		"unattributed_systems":  `SELECT count(*) FROM entity_posture p LEFT JOIN entity_context c ON c.organization_id=p.organization_id AND c.entity_id=p.entity_id WHERE p.organization_id=$1 AND p.current=true AND p.system_role='system' AND p.attributed=false AND NULLIF(btrim(COALESCE(c.owner_name,'')),'') IS NULL AND (` + freshPostureTargetSQL("p") + `)`,
 		"possible_only_systems": `SELECT count(*) FROM entity_posture WHERE organization_id=$1 AND current=true AND system_role='system' AND confidence='possible' AND (` + freshPostureTargetSQL("entity_posture") + `)`,
 	} {
 		var count int
@@ -172,7 +172,150 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 	if s.config.ExposureEnabled {
 		response["exposure_summary"] = exposureOverviewSummary(r.Context(), s.db(r.Context()), orgID)
 	}
+	if s.config.CISOOverviewV2Enabled {
+		summary, summaryErr := s.executiveSummary(r, orgID)
+		if summaryErr != nil {
+			writeError(w, 500, "database_error", "Could not compute executive summary")
+			return
+		}
+		response["executive_summary"] = summary
+	}
 	writeJSON(w, 200, response)
+}
+
+func (s *Server) executiveSummary(r *http.Request, orgID string) (map[string]any, error) {
+	knownWhere := `system_role='system' AND current=true`
+	knownTypes, err := s.countProjection(r, orgID, "system_type", knownWhere)
+	if err != nil {
+		return nil, err
+	}
+	freshTypes, err := s.countProjection(r, orgID, "system_type", knownWhere+` AND (`+freshPostureTargetSQL("entity_posture")+`)`)
+	if err != nil {
+		return nil, err
+	}
+	known, fresh := 0, 0
+	for _, count := range knownTypes {
+		known += count
+	}
+	for _, count := range freshTypes {
+		fresh += count
+	}
+
+	var owned int
+	if err := s.db(r.Context()).QueryRow(r.Context(), `SELECT count(*) FROM entity_posture p LEFT JOIN entity_context c ON c.organization_id=p.organization_id AND c.entity_id=p.entity_id
+		WHERE p.organization_id=$1 AND p.current=true AND p.system_role='system' AND (p.attributed OR NULLIF(btrim(COALESCE(c.owner_name,'')),'') IS NOT NULL)`, orgID).Scan(&owned); err != nil {
+		return nil, err
+	}
+
+	freshSeverity := map[string]int{"critical": 0, "high": 0, "medium": 0, "low": 0}
+	staleSeverity := map[string]int{"critical": 0, "high": 0, "medium": 0, "low": 0}
+	freshFindings, staleFindings := 0, 0
+	rows, err := s.db(r.Context()).Query(r.Context(), `SELECT f.severity,(`+freshPostureTargetSQL("p")+`) AS fresh,count(*)
+		FROM exposure_findings f JOIN entity_posture p ON p.organization_id=f.organization_id AND p.entity_id=f.root_entity_id
+		WHERE f.organization_id=$1 AND f.current=true GROUP BY f.severity,fresh`, orgID)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var severity string
+		var isFresh bool
+		var count int
+		if err := rows.Scan(&severity, &isFresh, &count); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		if isFresh {
+			freshFindings += count
+			freshSeverity[severity] += count
+		} else {
+			staleFindings += count
+			staleSeverity[severity] += count
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+
+	var activeEnvironments, awaitingInstall, processing, partial, failed, staleTargets int
+	var lastResult *time.Time
+	err = s.db(r.Context()).QueryRow(r.Context(), `SELECT
+		count(*) FILTER(WHERE connection_status<>'disconnected'),
+		count(*) FILTER(WHERE connection_status='setup_pending'),
+		count(*) FILTER(WHERE connection_status='connected' AND first_result_at IS NULL),
+		count(*) FILTER(WHERE last_result_status='partial'),
+		count(*) FILTER(WHERE connection_status='auth_error' OR last_result_status='failed'),
+		count(*) FILTER(WHERE connection_status='connected' AND last_result_at IS NOT NULL AND last_result_at<now()-interval '60 minutes'),
+		max(last_result_at) FILTER(WHERE last_result_status IN ('complete','partial'))
+		FROM environment_connections WHERE organization_id=$1`, orgID).Scan(&activeEnvironments, &awaitingInstall, &processing, &partial, &failed, &staleTargets, &lastResult)
+	if err != nil {
+		return nil, err
+	}
+	coverageState := "ready"
+	switch {
+	case activeEnvironments == 0:
+		coverageState = "unassessed"
+	case failed > 0:
+		coverageState = "failed"
+	case awaitingInstall > 0:
+		coverageState = "awaiting_install"
+	case processing > 0:
+		coverageState = "processing"
+	case partial > 0:
+		coverageState = "partial"
+	case staleTargets > 0:
+		coverageState = "stale"
+	}
+
+	top := []map[string]any{}
+	rows, err = s.db(r.Context()).Query(r.Context(), `SELECT f.id,f.root_entity_id,root.name,f.severity,f.title,f.recommended_next_step,f.last_seen_at,
+		(`+freshPostureTargetSQL("p")+`) AS fresh,c.owner_name,c.owner_type
+		FROM exposure_findings f JOIN entities root ON root.organization_id=f.organization_id AND root.id=f.root_entity_id
+		JOIN entity_posture p ON p.organization_id=f.organization_id AND p.entity_id=f.root_entity_id
+		LEFT JOIN entity_context c ON c.organization_id=f.organization_id AND c.entity_id=f.root_entity_id
+		WHERE f.organization_id=$1 AND f.current=true
+		ORDER BY CASE f.severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 ELSE 4 END,
+		(`+freshPostureTargetSQL("p")+`) DESC,(p.attributed OR NULLIF(btrim(COALESCE(c.owner_name,'')),'') IS NOT NULL),f.last_seen_at DESC,f.id DESC LIMIT 5`, orgID)
+	if err != nil {
+		return nil, err
+	}
+	for rows.Next() {
+		var id, rootID, rootName, severity, title, next string
+		var lastSeen time.Time
+		var isFresh bool
+		var ownerName, ownerType *string
+		if err := rows.Scan(&id, &rootID, &rootName, &severity, &title, &next, &lastSeen, &isFresh, &ownerName, &ownerType); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		top = append(top, map[string]any{"id": id, "root_entity_id": rootID, "root_name": rootName, "severity": severity, "title": title, "recommended_next_step": next, "last_seen_at": lastSeen, "evidence_freshness": map[bool]string{true: "fresh", false: "stale"}[isFresh], "owner_name": ownerName, "owner_type": ownerType})
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+	var unassignedHighPriority int
+	if err := s.db(r.Context()).QueryRow(r.Context(), `SELECT count(*) FROM exposure_findings f
+		JOIN entity_posture p ON p.organization_id=f.organization_id AND p.entity_id=f.root_entity_id
+		LEFT JOIN entity_context c ON c.organization_id=f.organization_id AND c.entity_id=f.root_entity_id
+		WHERE f.organization_id=$1 AND f.current=true AND f.severity IN ('critical','high')
+		AND NOT (p.attributed OR NULLIF(btrim(COALESCE(c.owner_name,'')),'') IS NOT NULL)`, orgID).Scan(&unassignedHighPriority); err != nil {
+		return nil, err
+	}
+	staleTypes := map[string]int{}
+	for name, count := range knownTypes {
+		staleTypes[name] = count - freshTypes[name]
+	}
+
+	return map[string]any{
+		"coverage_state":      coverageState,
+		"systems":             map[string]any{"known": known, "fresh": fresh, "stale": known - fresh, "known_by_type": knownTypes, "fresh_by_type": freshTypes, "stale_by_type": staleTypes},
+		"findings":            map[string]any{"total": freshFindings + staleFindings, "fresh": freshFindings, "stale": staleFindings, "fresh_by_severity": freshSeverity, "stale_by_severity": staleSeverity},
+		"effective_ownership": map[string]any{"owned": owned, "unowned": known - owned, "total": known, "unassigned_high_priority_findings": unassignedHighPriority},
+		"top_findings":        top, "last_successful_evidence_at": lastResult,
+	}, nil
 }
 
 func (s *Server) countProjection(r *http.Request, organizationID, column, predicate string) (map[string]int, error) {
@@ -225,8 +368,20 @@ func (s *Server) listSystems(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "invalid_cursor", err.Error())
 		return
 	}
-	query := `SELECT e.id,e.kind,e.name,e.attributes,p.target_id,p.surface,p.system_type,p.product_id,p.product_category,p.discovery_state,p.network_scope,p.attributed,p.confidence,p.first_seen_at,p.last_seen_at,t.name,t.target_type,t.last_seen_at
-		FROM entity_posture p JOIN entities e ON e.organization_id=p.organization_id AND e.id=p.entity_id LEFT JOIN discovery_targets t ON t.organization_id=p.organization_id AND t.id=p.target_id
+	query := `WITH exposure_counts AS (
+		SELECT root_entity_id,
+			count(*) FILTER(WHERE severity='critical') AS critical,
+			count(*) FILTER(WHERE severity='high') AS high,
+			count(*) FILTER(WHERE severity='medium') AS medium,
+			count(*) FILTER(WHERE severity='low') AS low
+		FROM exposure_findings WHERE organization_id=$1 AND current=true GROUP BY root_entity_id
+	) SELECT e.id,e.kind,e.name,e.attributes,p.target_id,p.surface,p.system_type,p.product_id,p.product_category,p.discovery_state,p.network_scope,p.attributed,p.confidence,p.first_seen_at,p.last_seen_at,t.name,t.target_type,t.last_seen_at,
+		COALESCE(x.critical,0),COALESCE(x.high,0),COALESCE(x.medium,0),COALESCE(x.low,0),c.owner_name,c.owner_type,
+		(p.attributed OR NULLIF(btrim(COALESCE(c.owner_name,'')),'') IS NOT NULL)
+		FROM entity_posture p JOIN entities e ON e.organization_id=p.organization_id AND e.id=p.entity_id
+		LEFT JOIN discovery_targets t ON t.organization_id=p.organization_id AND t.id=p.target_id
+		LEFT JOIN exposure_counts x ON x.root_entity_id=p.entity_id
+		LEFT JOIN entity_context c ON c.organization_id=p.organization_id AND c.entity_id=p.entity_id
 		WHERE p.organization_id=$1 AND p.current=true AND p.system_role='system'`
 	args := []any{principal.OrganizationID}
 	freshness := r.URL.Query().Get("freshness")
@@ -259,6 +414,17 @@ func (s *Server) listSystems(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		add(` AND p.attributed=$%d`, value == "attributed")
+	}
+	if value := r.URL.Query().Get("owner_status"); value != "" {
+		if value != "owned" && value != "unowned" {
+			writeError(w, 400, "invalid_filter", "Owner status must be owned or unowned")
+			return
+		}
+		condition := `(p.attributed OR NULLIF(btrim(COALESCE(c.owner_name,'')),'') IS NOT NULL)`
+		if value == "unowned" {
+			condition = `NOT ` + condition
+		}
+		query += ` AND ` + condition
 	}
 	if search := strings.TrimSpace(r.URL.Query().Get("search")); search != "" {
 		args = append(args, search)
@@ -296,11 +462,12 @@ func (s *Server) listSystems(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var id, kind, name, surface, discoveryState, networkScope, confidence string
 		var attributes []byte
-		var targetID, systemType, productID, productCategory, targetName, targetType *string
+		var targetID, systemType, productID, productCategory, targetName, targetType, ownerName, ownerType *string
 		var targetLastSeen *time.Time
-		var attributed bool
+		var attributed, effectivelyOwned bool
+		var critical, high, medium, low int
 		var firstSeen, lastSeen time.Time
-		if err := rows.Scan(&id, &kind, &name, &attributes, &targetID, &surface, &systemType, &productID, &productCategory, &discoveryState, &networkScope, &attributed, &confidence, &firstSeen, &lastSeen, &targetName, &targetType, &targetLastSeen); err != nil {
+		if err := rows.Scan(&id, &kind, &name, &attributes, &targetID, &surface, &systemType, &productID, &productCategory, &discoveryState, &networkScope, &attributed, &confidence, &firstSeen, &lastSeen, &targetName, &targetType, &targetLastSeen, &critical, &high, &medium, &low, &ownerName, &ownerType, &effectivelyOwned); err != nil {
 			writeError(w, 500, "database_error", "Could not read systems")
 			return
 		}
@@ -308,9 +475,16 @@ func (s *Server) listSystems(w http.ResponseWriter, r *http.Request) {
 		if targetType != nil {
 			targetFreshness = freshnessState(*targetType, targetLastSeen, time.Now().UTC())
 		}
-		item := map[string]any{"id": id, "kind": kind, "name": name, "attributes": jsonObject(attributes), "target_id": targetID, "target_name": targetName, "target_freshness": targetFreshness, "surface": surface, "system_type": systemType, "product_id": productID, "product_category": productCategory, "state": discoveryState, "network_scope": networkScope, "attributed": attributed, "confidence": confidence, "first_seen_at": firstSeen, "last_seen_at": lastSeen}
+		ownershipSource := "none"
+		if attributed {
+			ownershipSource = "evidence"
+		} else if ownerName != nil && strings.TrimSpace(*ownerName) != "" {
+			ownershipSource = "operator"
+		}
+		item := map[string]any{"id": id, "kind": kind, "name": name, "attributes": jsonObject(attributes), "target_id": targetID, "target_name": targetName, "target_freshness": targetFreshness, "surface": surface, "system_type": systemType, "product_id": productID, "product_category": productCategory, "state": discoveryState, "network_scope": networkScope, "attributed": attributed, "effective_ownership": map[string]any{"owned": effectivelyOwned, "basis": ownershipSource, "owner_name": ownerName, "owner_type": ownerType}, "confidence": confidence, "first_seen_at": firstSeen, "last_seen_at": lastSeen}
 		if s.config.ExposureEnabled {
-			item["exposure_summary"] = exposureSummary(r.Context(), s.db(r.Context()), principal.OrganizationID, id)
+			counts := map[string]int{"critical": critical, "high": high, "medium": medium, "low": low}
+			item["exposure_summary"] = map[string]any{"counts": counts, "total": critical + high + medium + low}
 		}
 		items = append(items, item)
 		next = pageCursor{Sort: sortBy, ID: id, Value: lastSeen.Format(time.RFC3339Nano)}
@@ -355,6 +529,14 @@ func (s *Server) getSystem(w http.ResponseWriter, r *http.Request) {
 		targetFreshness = freshnessState(*targetType, targetLastSeen, time.Now().UTC())
 	}
 	result := map[string]any{"id": entityID, "kind": kind, "name": name, "attributes": jsonObject(attributes), "target_id": targetID, "target_name": targetName, "target_freshness": targetFreshness, "surface": surface, "system_type": systemType, "product_id": productID, "product_category": productCategory, "state": state, "network_scope": network, "attributed": attributed, "confidence": confidence, "first_seen_at": firstSeen, "last_seen_at": lastSeen}
+	contextValue, _ := loadEntityContext(r.Context(), s.db(r.Context()), principal.OrganizationID, id)
+	ownershipSource := "none"
+	if attributed {
+		ownershipSource = "evidence"
+	} else if strings.TrimSpace(contextValue.OwnerName) != "" {
+		ownershipSource = "operator"
+	}
+	result["effective_ownership"] = map[string]any{"owned": attributed || strings.TrimSpace(contextValue.OwnerName) != "", "basis": ownershipSource, "owner_name": contextValue.OwnerName, "owner_type": contextValue.OwnerType}
 
 	rows, err := s.db(r.Context()).Query(r.Context(), `SELECT r.id,r.kind,r.from_entity,r.to_entity,r.attributes,r.confidence,e.id,e.kind,e.name,e.attributes
 		FROM relationships r JOIN entities e ON e.organization_id=r.organization_id AND e.id=CASE WHEN r.from_entity=$2 THEN r.to_entity ELSE r.from_entity END

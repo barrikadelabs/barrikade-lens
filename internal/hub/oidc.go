@@ -10,18 +10,20 @@ import (
 
 func (s *Server) oidcConfig(w http.ResponseWriter, r *http.Request) {
 	response := map[string]any{
-		"mode":                  s.config.AuthMode,
-		"enabled":               s.oidcProvider != nil,
-		"development_bootstrap": s.config.DevAdminToken != "",
-		"exposure_enabled":      s.config.ExposureEnabled,
-		"self_serve_enabled":    s.config.SelfServeEnabled,
+		"mode":                     s.config.AuthMode,
+		"enabled":                  s.oidcProvider != nil,
+		"development_bootstrap":    s.config.DevAdminToken != "",
+		"exposure_enabled":         s.config.ExposureEnabled,
+		"self_serve_enabled":       s.config.SelfServeEnabled,
+		"ciso_overview_v2_enabled": s.config.CISOOverviewV2Enabled,
+		"endpoint_handoff_enabled": s.config.EndpointHandoffEnabled,
 		"connectors": map[string]bool{
 			"aws":        s.config.AWSConnectorEnabled,
 			"azure":      s.config.AzureConnectorEnabled,
 			"gcp":        s.config.GCPConnectorEnabled,
-			"endpoint":   true,
-			"github":     s.config.GitHubClient != nil,
-			"kubernetes": true,
+			"endpoint":   s.config.EndpointConnectorEnabled,
+			"github":     s.config.GitHubConnectorEnabled && s.config.GitHubClient != nil,
+			"kubernetes": s.config.KubernetesConnectorEnabled,
 		},
 	}
 	if s.config.AuthMode == "clerk" {
