@@ -12,8 +12,8 @@ import {
   TerminalSquare, UserRound, Workflow, X, type LucideIcon,
 } from "lucide-react";
 import {
-  API, authConfig, exchangeOIDC, type AuthConfig, type Change, type Connection, type Entity, type Evidence,
-  type EntityDetail, type Environment, type EnvironmentKind, type EnvironmentScan, type ExposureFinding, type Overview, type SetupSession, type SystemDetail, type SystemItem, type Target,
+  API, authConfig, exchangeOIDC, type AuthConfig, type Change, type Connection, type Evidence,
+  type Environment, type EnvironmentKind, type EnvironmentScan, type ExposureFinding, type Overview, type SetupSession, type SystemDetail, type SystemItem,
 } from "./api";
 const EvidenceGraphPage = lazy(() => import("./EvidenceGraph").then((module) => ({ default: module.EvidenceGraphPage })));
 
@@ -176,7 +176,7 @@ function PublicEndpointInstall() {
 
 function LegacySignIn({ config, onToken, authError }: { config: AuthConfig; onToken: (token: string) => void; authError: string }) {
   const [value, setValue] = useState("");
-  const [error, setError] = useState(authError);
+  const error = authError;
 
   const beginOIDC = async () => {
     if (!config?.authorization_endpoint || !config.client_id || !config.redirect_uri) return;
@@ -594,31 +594,6 @@ function ChangesPage({ api, revision }: { api: API; revision: number }) {
   </div>;
 }
 
-function InventoryPage({ api, revision }: { api: API; revision: number }) {
-  const [filters, setFilters] = useState<Record<string, string>>({ sort: "last_seen", freshness: "fresh" });
-  const [cursor, setCursor] = useState("");
-  const remote = useRemote(() => api.entities({ ...filters, cursor }), [api, revision, filters, cursor]);
-  const [items, setItems] = useState<Entity[]>([]);
-  const [selected, setSelected] = useState<string>();
-  useEffect(() => { if (remote.data) setItems((current) => cursor ? [...current, ...remote.data!.items] : remote.data!.items); }, [remote.data, cursor]);
-  const update = (key: string, value: string) => { setCursor(""); setItems([]); setFilters((current) => ({ ...current, [key]: value })); };
-  return <div className="page-stack"><FilterBar search={filters.search ?? ""} setSearch={(value) => update("search", value)}>
-    <Select label="Entity type" value={filters.kind} onChange={(value) => update("kind", value)} options={{ "": "All entity types", agent: "Agent", runtime: "Runtime", mcp_server: "MCP server", skill: "Skill", model: "Model", model_server: "Model server", framework: "Framework", repository: "Repository", workload: "Workload", api_service: "API service", workflow: "Workflow", user: "User" }} />
-    <Select label="Role" value={filters.system_role} onChange={(value) => update("system_role", value)} options={{ "": "Any graph role", system: "Root system", component: "Component", supporting: "Supporting runtime", artifact: "Artifact", target: "Discovery target" }} />
-    <Select label="State" value={filters.state} onChange={(value) => update("state", value)} options={{ "": "Any state", running: "Running", deployed: "Deployed", defined: "Defined", configured: "Configured", installed: "Installed", residual: "Residual", cached: "Cached", observed: "Observed" }} />
-    <Select label="Confidence" value={filters.confidence} onChange={(value) => update("confidence", value)} options={{ "": "Any confidence", confirmed: "Confirmed", likely: "Likely", possible: "Possible" }} />
-    <Select label="Reporting" value={filters.freshness} onChange={(value) => update("freshness", value)} options={{ fresh: "Fresh targets", stale: "Stale targets", all: "Fresh and stale" }} />
-  </FilterBar>
-    <section className="panel data-panel"><div className="table-summary"><span><b>{items.length}</b> {filters.freshness === "stale" ? "stale" : filters.freshness === "all" ? "fresh and stale" : "fresh"} entities loaded</span><span>Supporting and cached inventory is included; older identities are available with the Reporting filter</span></div>
-      <div className="inventory-table table-scroll"><div className="inventory-row table-head"><span>Entity</span><span>Graph role</span><span>State</span><span>Target / surface</span><span>Confidence</span><span>Last observed</span><span /></div>
-        {items.map((item) => <button className="inventory-row" key={item.id} onClick={() => setSelected(item.id)}><Identity kind={item.kind} name={item.name} detail={item.canonical_key ?? item.id} /><span className="kind-label">{pretty(item.posture?.system_role ?? item.kind)}</span><StatePill state={item.posture?.state ?? "observed"} /><span className="stacked"><b>{item.posture?.target_name ?? "Shared inventory"}</b><small>{pretty(item.posture?.surface ?? "unknown")} · {pretty(item.posture?.target_freshness ?? "unknown")}</small></span><ConfidencePill value={item.confidence} /><span className="observed">{relative(item.last_seen_at)}</span><ChevronRight size={15} /></button>)}
-      </div>
-      {remote.loading && <InlineLoading />}{remote.error && <InlineError text={remote.error} />}{remote.data?.next_cursor && !remote.loading && <button className="load-more" onClick={() => setCursor(remote.data!.next_cursor!)}>Load more entities <ChevronDown size={15} /></button>}
-    </section>
-    {selected && <EntityDrawer api={api} id={selected} onClose={() => setSelected(undefined)} />}
-  </div>;
-}
-
 function SystemDrawer({ api, id, onClose }: { api: API; id: string; onClose: () => void }) {
   const remote = useRemote(() => api.system(id), [api, id]);
   return <Drawer onClose={onClose}>{remote.loading ? <Loading /> : remote.error || !remote.data ? <Failure error={remote.error} retry={remote.reload} /> : <SystemDetailView item={remote.data} />}</Drawer>;
@@ -632,19 +607,6 @@ function SystemDetailView({ item }: { item: SystemDetail }) {
     <button className="button subtle" onClick={() => navigate(`/systems/${encodeURIComponent(item.id)}/evidence`)}><Network size={14} /> Open evidence graph</button>
     <section className="drawer-section"><h3>Connected inventory <span>{item.connections.length}</span></h3>{Object.entries(groups).map(([group, values]) => <div className="connection-group" key={group}><p>{pretty(group)}</p>{values.map((connection) => <ConnectionRow item={connection} key={connection.relationship_id} />)}</div>)}</section>
     <EvidenceSection items={item.evidence} />
-  </>;
-}
-
-function EntityDrawer({ api, id, onClose }: { api: API; id: string; onClose: () => void }) {
-  const remote = useRemote(() => api.entity(id), [api, id]);
-  return <Drawer onClose={onClose}>{remote.loading ? <Loading /> : remote.error || !remote.data ? <Failure error={remote.error} retry={remote.reload} /> : <EntityDetailView item={remote.data} />}</Drawer>;
-}
-
-function EntityDetailView({ item }: { item: EntityDetail }) {
-  return <><div className="drawer-title"><Identity kind={item.kind} name={item.name} detail={item.canonical_key ?? item.id} /><div><StatePill state={item.posture?.state ?? "observed"} /><ConfidencePill value={item.confidence} /></div></div>
-    <div className="fact-grid"><Fact label="Kind" value={pretty(item.kind)} /><Fact label="Graph role" value={pretty(item.posture?.system_role ?? "unknown")} /><Fact label="Target" value={item.posture?.target_name ?? "Shared inventory"} /><Fact label="Reporting" value={pretty(item.posture?.target_freshness ?? "unknown")} /><Fact label="Surface" value={pretty(item.posture?.surface ?? "unknown")} /><Fact label="Network scope" value={pretty(item.posture?.network_scope ?? "unknown")} /><Fact label="First discovered" value={relative(item.first_seen_at)} /><Fact label="Last observed" value={relative(item.last_seen_at)} /></div>
-    <EvidenceSection items={item.evidence ?? []} />
-    <details className="technical-attributes"><summary>Technical attributes <ChevronDown size={13} /></summary><pre>{JSON.stringify(item.attributes, null, 2)}</pre></details>
   </>;
 }
 
@@ -693,14 +655,6 @@ function CoverageCard({ item, onClick, active }: { item: Overview["coverage"][nu
   const status = item.reporting === 0 ? "Not reporting" : [item.fresh ? `${item.fresh} fresh` : "", item.stale ? `${item.stale} stale` : "", item.partial ? `${item.partial} partial` : ""].filter(Boolean).join(" · ");
   const body = <><span className="coverage-icon"><Icon size={19} /></span><div><p>{label}</p><strong>{item.reporting}</strong><span>{item.population_configured ? `of ${item.expected_count} expected` : "reporting targets"}</span></div><div className={item.stale || item.partial ? "coverage-card-status needs-review" : item.reporting ? "coverage-card-status reporting" : "coverage-card-status quiet"}><b>{status}</b><small>{item.population_configured ? "Manual baseline" : "Expected population unknown"}</small></div></>;
   return onClick ? <button className={active ? "coverage-card active" : "coverage-card"} onClick={onClick}>{body}</button> : <div className="coverage-card">{body}</div>;
-}
-
-function CoverageSummaryRow({ item, onClick }: { item: Overview["coverage"][number]; onClick: () => void }) {
-  const Icon = item.target_type === "endpoint" ? Monitor : item.target_type === "repository" ? GitBranch : item.target_type === "cloud" ? Cloud : Container;
-  const label = ({ endpoint: "Endpoints", repository: "Repositories", kubernetes: "Kubernetes", cloud: "Cloud environments" } as Record<string, string>)[item.target_type] ?? pretty(item.target_type);
-  const statusText = item.reporting === 0 ? "Not reporting" : `${item.reporting} reporting${item.stale ? ` · ${item.stale} stale` : ""}${item.partial ? ` · ${item.partial} partial` : ""}`;
-  const baseline = item.population_configured ? `${item.expected_count} expected` : "Expected population unknown";
-  return <button className="coverage-summary-row" onClick={onClick}><span className="coverage-summary-icon"><Icon size={16} /></span><span><b>{label}</b><small>{baseline}</small></span><span className={item.stale || item.partial ? "coverage-status needs-review" : item.reporting ? "coverage-status reporting" : "coverage-status quiet"}>{statusText}</span><ChevronRight size={14} /></button>;
 }
 
 type GroupedChange = Change & { occurrences?: number };

@@ -14,11 +14,12 @@ coverage.out
 
 # Node
 node_modules/
-npm/launcher/lib/
+npm/launcher/dist/
 npm/*/bin/
 hub-ui/dist/
 hub-ui/test-results/
 hub-ui/playwright-report/
+*.tsbuildinfo
 
 # Local runtime state
 .lens/
