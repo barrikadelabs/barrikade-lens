@@ -77,6 +77,45 @@ func TestRemediationDisconnectRevokesPendingEnrollment(t *testing.T) {
 	}
 }
 
+func TestRemediationReenrollmentTransfersExistingEndpointConnection(t *testing.T) {
+	server, org := remediationServer(t)
+	state, err := identity.LoadOrCreate(filepath.Join(t.TempDir(), "identity.json"), "https://lens.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstEnvironment, firstCode := remediationSetup(t, server, "endpoint")
+	firstResponse, first := exchangeTestIdentity(t, server, state, firstCode, "reinstalled-device")
+	if firstResponse.Code != http.StatusOK {
+		t.Fatalf("first enrollment returned %d: %s", firstResponse.Code, firstResponse.Body.String())
+	}
+
+	secondEnvironment, secondCode := remediationSetup(t, server, "endpoint")
+	secondResponse, second := exchangeTestIdentity(t, server, state, secondCode, "reinstalled-device")
+	if secondResponse.Code != http.StatusOK {
+		t.Fatalf("re-enrollment returned %d: %s", secondResponse.Code, secondResponse.Body.String())
+	}
+	if first.SourceID != second.SourceID || first.TargetID != second.TargetID {
+		t.Fatalf("persistent identity changed during transfer: first=%+v second=%+v", first, second)
+	}
+
+	var firstStatus string
+	var firstSource *string
+	if err := server.config.Pool.QueryRow(t.Context(), `SELECT connection_status,source_id FROM environment_connections WHERE organization_id=$1 AND id=$2`, org, firstEnvironment).Scan(&firstStatus, &firstSource); err != nil {
+		t.Fatal(err)
+	}
+	if firstStatus != "disconnected" || firstSource != nil {
+		t.Fatalf("old environment retained endpoint binding: status=%s source=%v", firstStatus, firstSource)
+	}
+
+	var secondStatus, secondSource string
+	if err := server.config.Pool.QueryRow(t.Context(), `SELECT connection_status,source_id FROM environment_connections WHERE organization_id=$1 AND id=$2`, org, secondEnvironment).Scan(&secondStatus, &secondSource); err != nil {
+		t.Fatal(err)
+	}
+	if secondStatus != "connected" || secondSource != second.SourceID {
+		t.Fatalf("new environment was not activated: status=%s source=%s", secondStatus, secondSource)
+	}
+}
+
 func TestRemediationSafeProviderFailureCommitsAuthError(t *testing.T) {
 	server, org := remediationServer(t)
 	id, _ := remediationSetup(t, server, "aws_account")

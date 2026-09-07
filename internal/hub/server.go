@@ -489,7 +489,18 @@ func (s *Server) exchangeEnrollment(w http.ResponseWriter, r *http.Request) {
 	var setupEnvironmentID uuid.UUID
 	setupErr := tx.QueryRow(r.Context(), `SELECT environment_id FROM connector_setup_sessions WHERE organization_id=$1 AND token_hash=$2 AND kind=$3 AND state='pending' AND expires_at>now() FOR UPDATE`, orgID, tokenHash(normalizeCode(request.Code)), setupKind).Scan(&setupEnvironmentID)
 	if setupErr == nil {
-		_, err = tx.Exec(r.Context(), `UPDATE environment_connections SET external_id=COALESCE(NULLIF(external_id,''),$3),display_name=COALESCE(NULLIF(display_name,''),$4),connection_status='connected',target_id=$5,source_id=$6,verified_at=now(),last_error_code=NULL,last_error_message=NULL,updated_at=now() WHERE organization_id=$1 AND id=$2`, orgID, setupEnvironmentID, targetIdentity, displayName, targetID, sourceID)
+		// A persistent endpoint identity can be enrolled again after its local
+		// credentials are lost or its Hub configuration is replaced. Move the
+		// source binding to the setup being completed before attaching it. This
+		// preserves the source and its sequence while satisfying the one-source,
+		// one-environment invariant.
+		_, err = tx.Exec(r.Context(), `UPDATE environment_connections
+			SET connection_status='disconnected',source_id=NULL,schedule_enabled=false,next_scan_at=NULL,
+				disconnected_at=now(),purge_after=now()+interval '90 days',updated_at=now()
+			WHERE organization_id=$1 AND source_id=$2 AND id<>$3`, orgID, sourceID, setupEnvironmentID)
+		if err == nil {
+			_, err = tx.Exec(r.Context(), `UPDATE environment_connections SET external_id=COALESCE(NULLIF(external_id,''),$3),display_name=COALESCE(NULLIF(display_name,''),$4),connection_status='connected',target_id=$5,source_id=$6,verified_at=now(),last_error_code=NULL,last_error_message=NULL,updated_at=now() WHERE organization_id=$1 AND id=$2`, orgID, setupEnvironmentID, targetIdentity, displayName, targetID, sourceID)
+		}
 		if err == nil {
 			_, err = tx.Exec(r.Context(), `UPDATE connector_setup_sessions SET state='consumed',consumed_at=now() WHERE organization_id=$1 AND environment_id=$2 AND state='pending'`, orgID, setupEnvironmentID)
 		}
