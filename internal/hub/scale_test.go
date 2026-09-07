@@ -46,7 +46,7 @@ func TestMillionEntityInventoryQueryUnderTwoSeconds(t *testing.T) {
 		SELECT $1,'scale-edge-'||value,'connected_to','scale-'||value,'scale-'||(value+1),'{}','likely',true,false,now(),now() FROM generate_series(1,10000) value`, org); err != nil {
 		t.Fatal(err)
 	}
-	server, err := NewServer(ctx, Config{Pool: pool, JWTSecret: []byte("0123456789012345678901234567890123456789"), DevAdminToken: "scale-admin", DefaultOrganizationID: org, ExposureEnabled: true, CISOOverviewV2Enabled: true})
+	server, err := NewServer(ctx, Config{Pool: pool, JWTSecret: []byte("0123456789012345678901234567890123456789"), DevAdminToken: "scale-admin", DefaultOrganizationID: org, ExposureEnabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}

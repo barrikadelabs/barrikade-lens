@@ -23,7 +23,6 @@ Apply migrations before deploying compatible Hub replicas. Keep all flags off du
 
 ```text
 LENS_ENDPOINT_CONNECTOR_ENABLED=true
-LENS_CISO_OVERVIEW_V2_ENABLED=true
 LENS_ENDPOINT_HANDOFF_ENABLED=true
 LENS_KUBERNETES_CONNECTOR_ENABLED=false
 LENS_GITHUB_CONNECTOR_ENABLED=false

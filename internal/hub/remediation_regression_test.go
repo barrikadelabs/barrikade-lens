@@ -328,7 +328,6 @@ func TestRemediationHandoffRotationAndDisconnectAreTerminal(t *testing.T) {
 
 func TestRemediationExecutiveOwnershipAndInventoryAgree(t *testing.T) {
 	server, org := remediationServer(t)
-	server.config.CISOOverviewV2Enabled = true
 	source := "owner-source-" + uuid.NewString()
 	if err := insertTestSource(t.Context(), server.config.Pool, org, source, "endpoint", "Ownership endpoint"); err != nil {
 		t.Fatal(err)

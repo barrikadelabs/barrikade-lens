@@ -32,7 +32,6 @@ spec:
             - {name: LENS_ENDPOINT_CONNECTOR_ENABLED, value: {{ .Values.selfServe.connectors.endpoint | quote }} }
             - {name: LENS_KUBERNETES_CONNECTOR_ENABLED, value: {{ .Values.selfServe.connectors.kubernetes | quote }} }
             - {name: LENS_GITHUB_CONNECTOR_ENABLED, value: {{ .Values.selfServe.connectors.github | quote }} }
-            - {name: LENS_CISO_OVERVIEW_V2_ENABLED, value: {{ .Values.selfServe.cisoOverviewV2 | quote }} }
             - {name: LENS_ENDPOINT_HANDOFF_ENABLED, value: {{ .Values.selfServe.endpointHandoff | quote }} }
             - {name: LENS_AWS_BROKER_ROLE_ARN, value: {{ .Values.selfServe.aws.brokerRoleARN | quote }} }
             - {name: LENS_AWS_FEDERATION_AUDIENCE, value: {{ .Values.selfServe.aws.federationAudience | quote }} }

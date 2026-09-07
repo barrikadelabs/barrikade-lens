@@ -25,7 +25,6 @@ selfServe:
     endpoint: false
     kubernetes: false
     github: false
-  cisoOverviewV2: false
   endpointHandoff: false
   aws:
     brokerRoleARN: ""

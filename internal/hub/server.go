@@ -61,7 +61,6 @@ type Config struct {
 	EndpointConnectorEnabled   bool
 	KubernetesConnectorEnabled bool
 	GitHubConnectorEnabled     bool
-	CISOOverviewV2Enabled      bool
 	EndpointHandoffEnabled     bool
 	CloudAdapters              cloud.Registry
 	AWSBrokerRoleARN           string

@@ -172,14 +172,12 @@ func (s *Server) overview(w http.ResponseWriter, r *http.Request) {
 	if s.config.ExposureEnabled {
 		response["exposure_summary"] = exposureOverviewSummary(r.Context(), s.db(r.Context()), orgID)
 	}
-	if s.config.CISOOverviewV2Enabled {
-		summary, summaryErr := s.executiveSummary(r, orgID)
-		if summaryErr != nil {
-			writeError(w, 500, "database_error", "Could not compute executive summary")
-			return
-		}
-		response["executive_summary"] = summary
+	summary, summaryErr := s.executiveSummary(r, orgID)
+	if summaryErr != nil {
+		writeError(w, 500, "database_error", "Could not compute executive summary")
+		return
 	}
+	response["executive_summary"] = summary
 	writeJSON(w, 200, response)
 }
 

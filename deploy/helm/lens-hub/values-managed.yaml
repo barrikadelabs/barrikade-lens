@@ -11,7 +11,6 @@ auth:
 
 selfServe:
   enabled: true
-  cisoOverviewV2: true
   endpointHandoff: true
   connectors:
     aws: false

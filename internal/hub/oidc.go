@@ -11,11 +11,11 @@ import (
 func (s *Server) oidcConfig(w http.ResponseWriter, r *http.Request) {
 	response := map[string]any{
 		"mode":                     s.config.AuthMode,
+		"public_url":               s.config.PublicURL,
 		"enabled":                  s.oidcProvider != nil,
 		"development_bootstrap":    s.config.DevAdminToken != "",
 		"exposure_enabled":         s.config.ExposureEnabled,
 		"self_serve_enabled":       s.config.SelfServeEnabled,
-		"ciso_overview_v2_enabled": s.config.CISOOverviewV2Enabled,
 		"endpoint_handoff_enabled": s.config.EndpointHandoffEnabled,
 		"connectors": map[string]bool{
 			"aws":        s.config.AWSConnectorEnabled,

@@ -261,6 +261,7 @@ export type PageResult<T> = { items: T[]; limit: number; next_cursor?: string };
 
 export type AuthConfig = {
   mode: "clerk" | "oidc" | "development";
+  public_url?: string;
   enabled: boolean;
   development_bootstrap: boolean;
   exposure_enabled: boolean;

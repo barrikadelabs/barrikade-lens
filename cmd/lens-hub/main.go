@@ -61,7 +61,6 @@ func run() error {
 	endpointConnectorEnabled := flag.Bool("endpoint-connector-enabled", env("LENS_ENDPOINT_CONNECTOR_ENABLED", "false") == "true", "enable endpoint self-service onboarding")
 	kubernetesConnectorEnabled := flag.Bool("kubernetes-connector-enabled", env("LENS_KUBERNETES_CONNECTOR_ENABLED", "false") == "true", "enable Kubernetes self-service onboarding")
 	githubConnectorEnabled := flag.Bool("github-connector-enabled", env("LENS_GITHUB_CONNECTOR_ENABLED", "false") == "true", "enable GitHub repository onboarding")
-	cisoOverviewV2Enabled := flag.Bool("ciso-overview-v2-enabled", env("LENS_CISO_OVERVIEW_V2_ENABLED", "false") == "true", "enable the CISO-first routed dashboard")
 	endpointHandoffEnabled := flag.Bool("endpoint-handoff-enabled", env("LENS_ENDPOINT_HANDOFF_ENABLED", "false") == "true", "enable delegated endpoint setup")
 	githubAppID := flag.String("github-app-id", os.Getenv("LENS_GITHUB_APP_ID"), "GitHub App ID for repository discovery")
 	githubPrivateKeyFile := flag.String("github-private-key-file", os.Getenv("LENS_GITHUB_PRIVATE_KEY_FILE"), "GitHub App private key PEM file")
@@ -167,8 +166,8 @@ func run() error {
 		AWSConnectorEnabled: *awsConnectorEnabled, AzureConnectorEnabled: *azureConnectorEnabled,
 		GCPConnectorEnabled: *gcpConnectorEnabled, EndpointConnectorEnabled: *endpointConnectorEnabled,
 		KubernetesConnectorEnabled: *kubernetesConnectorEnabled, GitHubConnectorEnabled: *githubConnectorEnabled,
-		CISOOverviewV2Enabled: *cisoOverviewV2Enabled, EndpointHandoffEnabled: *endpointHandoffEnabled,
-		AWSBrokerRoleARN: *awsBrokerRoleARN, AzureApplicationID: *azureApplicationID,
+		EndpointHandoffEnabled: *endpointHandoffEnabled,
+		AWSBrokerRoleARN:       *awsBrokerRoleARN, AzureApplicationID: *azureApplicationID,
 		GCPWorkloadIssuer: *gcpWorkloadIssuer, GCPWorkloadAudience: *gcpWorkloadAudience,
 		GCPAssertionAudience:       *gcpAssertionAudience,
 		ManagedIdentityPrincipalID: *managedIdentityPrincipalID,

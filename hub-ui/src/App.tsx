@@ -66,6 +66,13 @@ function Application() {
   useEffect(() => { authConfig().then(setConfig).catch((reason) => setConfigurationError(String(reason))); }, []);
   if (configurationError) return <Failure error={configurationError} retry={() => location.reload()} />;
   if (!config) return <Loading />;
+  if (location.protocol === "https:" && config.public_url) {
+    const canonical = new URL(`${location.pathname}${location.search}${location.hash}`, config.public_url);
+    if (canonical.origin !== location.origin) {
+      location.replace(canonical.toString());
+      return <Loading />;
+    }
+  }
   if (config.mode === "clerk" && config.clerk_publishable_key) {
     return <ClerkProvider publishableKey={config.clerk_publishable_key}><ClerkApplication config={config} /></ClerkProvider>;
   }
@@ -211,7 +218,6 @@ function Shell({ api, signOut, accountControls, selfServe = true }: { api: API; 
   const navigate = useNavigate();
   const page = pageForPath(location.pathname);
   const [menuOpen, setMenuOpen] = useState(false);
-  const [about, setAbout] = useState(false);
   const [revision, setRevision] = useState(0);
   const [exposureEnabled, setExposureEnabled] = useState(false);
   useEffect(() => { authConfig().then((config) => setExposureEnabled(config.exposure_enabled)).catch(() => setExposureEnabled(false)); }, []);
@@ -226,9 +232,10 @@ function Shell({ api, signOut, accountControls, selfServe = true }: { api: API; 
       </nav>
       <div className="sidebar-footer">
         {accountControls}
-        <button onClick={() => navigate("/settings")}><UserRound size={14} /> Account settings</button>
-        <button onClick={() => setAbout(true)}><CircleDot size={14} /> {exposureEnabled ? "Discover + assess" : "Discover only"}</button>
-        <button className="logout" onClick={signOut} aria-label="Sign out"><LogOut size={16} /></button>
+        <div className="sidebar-footer-actions">
+          <button onClick={() => navigate("/settings")}><UserRound size={15} /> Account settings</button>
+          <button className="logout" onClick={signOut} aria-label="Sign out" title="Sign out"><LogOut size={16} /></button>
+        </div>
       </div>
     </aside>
     <main className="main-area">
@@ -256,7 +263,6 @@ function Shell({ api, signOut, accountControls, selfServe = true }: { api: API; 
       </div>
     </main>
     {menuOpen && <button className="sidebar-scrim" onClick={() => setMenuOpen(false)} />}
-    {about && <About onClose={() => setAbout(false)} />}
   </div>;
 }
 
@@ -771,10 +777,6 @@ function Drawer({ children, onClose }: { children: ReactNode; onClose: () => voi
 function ExportMenu({ api }: { api: API }) {
   const [open, setOpen] = useState(false);
   return <div className="export"><button className="button subtle" onClick={() => setOpen((value) => !value)}><Download size={15} /> Export <ChevronDown size={13} /></button>{open && <div>{(["lens", "ndjson", "cyclonedx"] as const).map((format) => <button key={format} onClick={() => { setOpen(false); api.downloadExport(format); }}>{format === "lens" ? "Lens JSON" : format === "ndjson" ? "NDJSON" : "CycloneDX 1.7"}</button>)}</div>}</div>;
-}
-
-function About({ onClose }: { onClose: () => void }) {
-  return <div className="modal-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="about-modal"><button onClick={onClose}><X size={18} /></button><Brand /><p className="eyebrow">PRODUCT BOUNDARY</p><h2>Lens discovers and assesses exposure.</h2><p>It observes, normalizes, correlates, and reports factual inventory, operator context, and clearly labelled catalogue potential.</p><div className="boundary-grid"><span><CheckCircle2 size={15} /> Discovers systems and connections</span><span><CheckCircle2 size={15} /> Preserves sanitized evidence</span><span><CheckCircle2 size={15} /> Explains categorical findings</span><span><X size={15} /> No composite risk score</span><span><X size={15} /> No authorization verification or invocation</span><span><X size={15} /> No remediation or enforcement</span></div><small>Discovery Snapshot 1.2 adds cloud inventory while Hub continues accepting 1.1 collectors.</small></section></div>;
 }
 
 function AccountSettings({ api, onDeleted }: { api: API; onDeleted: () => Promise<void> }) {
