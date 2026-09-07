@@ -140,10 +140,11 @@ output "lens_workload_identity_audience" {
 		return map[string]any{
 			"method": "managed_collector", "enrollment_code": token,
 			"commands": map[string]string{
-				"macos":   fmt.Sprintf("barrikade-lens enroll %s --hub %s --install", shellQuote(token), shellQuote(hub)),
-				"linux":   fmt.Sprintf("sudo barrikade-lens enroll %s --hub %s --install", shellQuote(token), shellQuote(hub)),
-				"windows": fmt.Sprintf("barrikade-lens.exe enroll %s --hub %s --install", powershellQuote(token), powershellQuote(hub)),
+				"macos":   endpointInstallCommand("macos", token, hub),
+				"linux":   endpointInstallCommand("linux", token, hub),
+				"windows": endpointInstallCommand("windows", token, hub),
 			},
+			"prerequisites":   []string{"Node.js 18 or newer", "Administrator access to install the background collector"},
 			"what_lens_reads": []string{"Installed and running AI tools and runtimes", "Local configuration metadata and network listeners"},
 			"excluded":        []string{"Prompt and conversation contents", "Secret values", "Source file bodies", "Write access"},
 		}

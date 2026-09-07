@@ -2,6 +2,23 @@
 
 Lens self-serve runs on the same Hub binary and PostgreSQL normalization path as a self-hosted deployment. It is enabled with feature flags so an Azure deployment can progress from internal testing to public signup without introducing billing or entitlement checks.
 
+Authentication modes are explicit. `LENS_AUTH_MODE=clerk` is the only managed
+SaaS mode; generic OIDC is reserved for self-hosting, and the bootstrap token is
+reserved for the development profile. Provider connector flags control rollout
+within the managed mode and do not select an authentication system.
+
+For real-user local acceptance testing:
+
+```sh
+cp .env.managed.example .env.managed.local
+# Add the Clerk development issuer and publishable key.
+docker compose --env-file .env.managed.local --profile managed up --build
+```
+
+The local file is ignored by Git, and the managed profile uses a PostgreSQL
+volume separate from development and self-hosted testing. Open
+`http://localhost:8080` to use Clerk's real signup flow.
+
 ## Identity and Clerk
 
 Set `LENS_AUTH_MODE=clerk`, `LENS_SELF_SERVE_ENABLED=true`, and configure:
@@ -10,6 +27,18 @@ Set `LENS_AUTH_MODE=clerk`, `LENS_SELF_SERVE_ENABLED=true`, and configure:
 - `LENS_CLERK_PUBLISHABLE_KEY`: the browser-safe Clerk key.
 - `LENS_CLERK_AUTHORIZED_PARTY`: the exact public Lens origin accepted in the JWT `azp` claim.
 - `LENS_CLERK_WEBHOOK_SECRET`: the `whsec_...` secret for the Hub webhook at `/v1/auth/clerk/webhook`.
+
+For Azure/Helm, apply the checked-in managed overlay after the chart defaults:
+
+```sh
+helm upgrade --install lens-hub deploy/helm/lens-hub \
+  -f deploy/helm/lens-hub/values.yaml \
+  -f deploy/helm/lens-hub/values-managed.yaml
+```
+
+Replace the overlay's public URL and Clerk placeholders for the deployment;
+keep database, JWT, webhook, and OIDC client secrets in the Kubernetes Secret
+named by `existingSecret`.
 
 Enable Google, GitHub, and verified email/password in Clerk. Configure automatic account linking only for verified addresses, configure the Lens callback URLs, and leave MFA disabled for this MVP. Create the Clerk organization roles `org:owner`, `org:admin`, and `org:viewer`; Lens maps those roles to its owner, admin, and viewer permission sets. Enable organization creation and invitations. Disable Clerk's direct account-deletion control: Lens exposes `can_delete_account` from `/v1/session`, and a sole owner must transfer ownership or delete the Lens workspace before their identity is removed.
 

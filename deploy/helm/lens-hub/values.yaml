@@ -22,6 +22,11 @@ selfServe:
     aws: false
     azure: false
     gcp: false
+    endpoint: false
+    kubernetes: false
+    github: false
+  cisoOverviewV2: false
+  endpointHandoff: false
   aws:
     brokerRoleARN: ""
     federationAudience: ""

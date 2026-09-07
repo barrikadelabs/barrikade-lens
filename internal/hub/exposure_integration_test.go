@@ -95,7 +95,11 @@ func TestExposureVerticalSliceAndContextRBAC(t *testing.T) {
 	if disabledResponse.Code != http.StatusNotFound {
 		t.Fatalf("disabled exposure route returned %d", disabledResponse.Code)
 	}
-	collector, _, err := server.auth.issueAccessToken(org, "collector", []string{"discovery:write"})
+	collectorSource := "collector-" + uuid.NewString()
+	if err := insertTestSource(ctx, pool, org, collectorSource, "endpoint", "Context RBAC collector"); err != nil {
+		t.Fatal(err)
+	}
+	collector, _, err := server.auth.issueAccessToken(org, collectorSource, []string{"discovery:write"})
 	if err != nil {
 		t.Fatal(err)
 	}

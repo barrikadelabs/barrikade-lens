@@ -46,7 +46,26 @@ func (s *Server) githubSetupCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err == nil {
-		_, err = tx.Exec(r.Context(), `INSERT INTO github_installations(installation_id,organization_id,account_login) VALUES($1,$2,$3) ON CONFLICT(installation_id) DO UPDATE SET organization_id=EXCLUDED.organization_id`, installationID, organizationID, "installation:"+strconv.FormatInt(installationID, 10))
+		var existingOrganization string
+		lookupErr := tx.QueryRow(r.Context(), `SELECT organization_id FROM github_installations WHERE installation_id=$1`, installationID).Scan(&existingOrganization)
+		if lookupErr == nil && existingOrganization != organizationID {
+			writeError(w, 409, "installation_already_bound", "This GitHub installation is already connected to another workspace")
+			return
+		}
+		if lookupErr != nil && !errors.Is(lookupErr, pgx.ErrNoRows) {
+			err = lookupErr
+		}
+	}
+	var installationToken string
+	if err == nil {
+		installationToken, _, err = s.config.GitHubClient.InstallationToken(r.Context(), installationID)
+		if err != nil {
+			writeError(w, 502, "github_verification_failed", "GitHub did not verify this installation")
+			return
+		}
+	}
+	if err == nil {
+		_, err = tx.Exec(r.Context(), `INSERT INTO github_installations(installation_id,organization_id,account_login) VALUES($1,$2,$3) ON CONFLICT(installation_id) DO UPDATE SET account_login=EXCLUDED.account_login WHERE github_installations.organization_id=EXCLUDED.organization_id`, installationID, organizationID, "installation:"+strconv.FormatInt(installationID, 10))
 	}
 	if err == nil {
 		_, err = tx.Exec(r.Context(), `UPDATE environment_connections SET configuration=jsonb_set(configuration,'{installation_id}',to_jsonb($3::bigint),true),updated_at=now() WHERE organization_id=$1 AND id=$2`, organizationID, environmentID, installationID)
@@ -60,9 +79,8 @@ func (s *Server) githubSetupCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	// Reconcile immediately so a webhook delivered before the setup callback is
 	// not required for first results.
-	token, _, tokenErr := s.config.GitHubClient.InstallationToken(r.Context(), installationID)
-	if tokenErr == nil {
-		repositories, listErr := s.config.GitHubClient.Repositories(r.Context(), token)
+	if installationToken != "" {
+		repositories, listErr := s.config.GitHubClient.Repositories(r.Context(), installationToken)
 		if listErr == nil {
 			reconcileTx, beginErr := s.begin(r.Context())
 			if beginErr == nil {

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -43,17 +44,20 @@ type environmentConnection struct {
 	PurgeAfter       *time.Time      `json:"purge_after,omitempty"`
 	LastErrorCode    *string         `json:"last_error_code,omitempty"`
 	LastErrorMessage *string         `json:"last_error_message,omitempty"`
+	FirstResultAt    *time.Time      `json:"first_result_at,omitempty"`
+	LastResultAt     *time.Time      `json:"last_result_at,omitempty"`
+	LastResultStatus *string         `json:"last_result_status,omitempty"`
 	CreatedAt        time.Time       `json:"created_at"`
 	UpdatedAt        time.Time       `json:"updated_at"`
 }
 
-const environmentColumns = `id,kind,provider,external_id,display_name,connection_status,configuration,target_id,source_id,schedule_enabled,next_scan_at,verified_at,disconnected_at,purge_after,last_error_code,last_error_message,created_at,updated_at`
+const environmentColumns = `id,kind,provider,external_id,display_name,connection_status,configuration,target_id,source_id,schedule_enabled,next_scan_at,verified_at,disconnected_at,purge_after,last_error_code,last_error_message,first_result_at,last_result_at,last_result_status,created_at,updated_at`
 
 type environmentRowScanner interface{ Scan(...any) error }
 
 func scanEnvironment(row environmentRowScanner) (environmentConnection, error) {
 	var value environmentConnection
-	err := row.Scan(&value.ID, &value.Kind, &value.Provider, &value.ExternalID, &value.DisplayName, &value.ConnectionStatus, &value.Configuration, &value.TargetID, &value.SourceID, &value.ScheduleEnabled, &value.NextScanAt, &value.VerifiedAt, &value.DisconnectedAt, &value.PurgeAfter, &value.LastErrorCode, &value.LastErrorMessage, &value.CreatedAt, &value.UpdatedAt)
+	err := row.Scan(&value.ID, &value.Kind, &value.Provider, &value.ExternalID, &value.DisplayName, &value.ConnectionStatus, &value.Configuration, &value.TargetID, &value.SourceID, &value.ScheduleEnabled, &value.NextScanAt, &value.VerifiedAt, &value.DisconnectedAt, &value.PurgeAfter, &value.LastErrorCode, &value.LastErrorMessage, &value.FirstResultAt, &value.LastResultAt, &value.LastResultStatus, &value.CreatedAt, &value.UpdatedAt)
 	return value, err
 }
 
@@ -102,17 +106,13 @@ func (s *Server) bootstrapWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 	request.Name = strings.TrimSpace(request.Name)
 	if request.Name == "" {
-		request.Name = "My Lens workspace"
+		writeError(w, 400, "invalid_name", "Workspace name is required")
+		return
 	}
 	if len(request.Name) > 128 {
 		writeError(w, 400, "invalid_name", "Workspace name must be at most 128 characters")
 		return
 	}
-	role := principal.Role
-	if role == "" && principal.Admin {
-		role = "owner"
-	}
-	role = normalizeWorkspaceRole(role)
 	tx, err := s.begin(r.Context())
 	if err != nil {
 		writeError(w, 500, "database_error", "Could not provision the workspace")
@@ -120,10 +120,18 @@ func (s *Server) bootstrapWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 	tag, err := tx.Exec(r.Context(), `INSERT INTO organizations(id,name) VALUES($1,$2) ON CONFLICT(id) DO NOTHING`, principal.OrganizationID, request.Name)
-	if err == nil {
-		_, err = tx.Exec(r.Context(), `INSERT INTO workspace_memberships(organization_id,user_id,role,status) VALUES($1,$2,$3,'active') ON CONFLICT(organization_id,user_id) DO UPDATE SET role=EXCLUDED.role,status='active',updated_at=now()`, principal.OrganizationID, principal.Subject, role)
-	}
 	created := tag.RowsAffected() == 1
+	role := normalizeWorkspaceRole(principal.Role)
+	var ownerCount int
+	if err == nil {
+		err = tx.QueryRow(r.Context(), `SELECT count(*) FROM workspace_memberships WHERE organization_id=$1 AND role='owner' AND status='active'`, principal.OrganizationID).Scan(&ownerCount)
+	}
+	if ownerCount == 0 {
+		role = "owner"
+	}
+	if err == nil {
+		_, err = tx.Exec(r.Context(), `INSERT INTO workspace_memberships(organization_id,user_id,role,status) VALUES($1,$2,$3,'active') ON CONFLICT(organization_id,user_id) DO UPDATE SET role=CASE WHEN workspace_memberships.role='owner' THEN 'owner' ELSE EXCLUDED.role END,status='active',updated_at=now()`, principal.OrganizationID, principal.Subject, role)
+	}
 	if err == nil && created {
 		_, err = tx.Exec(r.Context(), `INSERT INTO workspace_audit_events(id,organization_id,actor_id,event_type,target_type,target_id) VALUES($1,$2,$3,'workspace.created','workspace',$2)`, uuid.New(), principal.OrganizationID, principal.Subject)
 	}
@@ -167,6 +175,52 @@ func (s *Server) deleteWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 	if tag.RowsAffected() == 0 {
 		writeError(w, 404, "not_found", "Workspace not found")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) deleteAccount(w http.ResponseWriter, r *http.Request) {
+	principal, ok := principalFrom(r.Context())
+	if !ok || !strings.HasPrefix(principal.Subject, "clerk:") {
+		writeError(w, http.StatusBadRequest, "managed_account_required", "Account deletion is available for Clerk-managed identities")
+		return
+	}
+	if principal.Role == "owner" {
+		var owners int
+		if err := s.db(r.Context()).QueryRow(r.Context(), `SELECT count(*) FROM workspace_memberships WHERE organization_id=$1 AND role='owner' AND status='active'`, principal.OrganizationID).Scan(&owners); err != nil {
+			writeError(w, 500, "database_error", "Could not validate workspace ownership")
+			return
+		}
+		if owners <= 1 {
+			writeError(w, http.StatusConflict, "sole_owner", "Transfer ownership or delete the workspace before deleting this account")
+			return
+		}
+	}
+	clerkUserID := strings.TrimPrefix(principal.Subject, "clerk:")
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodDelete, strings.TrimRight(s.config.ClerkAPIBaseURL, "/")+"/v1/users/"+url.PathEscape(clerkUserID), nil)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "identity_delete_failed", "Could not prepare identity deletion")
+		return
+	}
+	request.Header.Set("Authorization", "Bearer "+s.config.ClerkSecretKey)
+	response, err := (&http.Client{Timeout: 10 * time.Second}).Do(request)
+	if err != nil || response.StatusCode != http.StatusOK && response.StatusCode != http.StatusNoContent && response.StatusCode != http.StatusNotFound {
+		if response != nil {
+			response.Body.Close()
+		}
+		writeError(w, http.StatusServiceUnavailable, "identity_provider_unavailable", "The identity provider could not delete this account")
+		return
+	}
+	response.Body.Close()
+	if _, err := s.db(r.Context()).Exec(r.Context(), `UPDATE workspace_memberships SET status='deleted',updated_at=now() WHERE organization_id=$1 AND user_id=$2`, principal.OrganizationID, principal.Subject); err != nil {
+		writeError(w, 500, "database_error", "Could not delete the account")
+		return
+	}
+	if _, err := s.db(r.Context()).Exec(r.Context(), `INSERT INTO managed_users(user_id,status,updated_at) VALUES($1,'deleted',now()) ON CONFLICT(user_id) DO UPDATE SET status='deleted',updated_at=now()`, principal.Subject); err != nil {
+		writeError(w, 500, "database_error", "Could not delete the account")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -291,7 +345,7 @@ func (s *Server) createEnvironmentSetupSession(w http.ResponseWriter, r *http.Re
 		if request.Kind == "kubernetes_cluster" {
 			sourceType = "kubernetes"
 		}
-		_, err = tx.Exec(r.Context(), `INSERT INTO enrollment_codes(code_hash,organization_id,expires_at,uses_remaining,source_type) VALUES($1,$2,$3,1,$4)`, tokenHash(normalizeCode(token)), principal.OrganizationID, expiresAt, sourceType)
+		_, err = tx.Exec(r.Context(), `INSERT INTO enrollment_codes(code_hash,organization_id,environment_id,expires_at,uses_remaining,source_type) VALUES($1,$2,$3,$4,1,$5)`, tokenHash(normalizeCode(token)), principal.OrganizationID, environmentID, expiresAt, sourceType)
 	}
 	if err == nil {
 		_, err = tx.Exec(r.Context(), `INSERT INTO workspace_audit_events(id,organization_id,actor_id,event_type,target_type,target_id,metadata) VALUES($1,$2,$3,'environment.setup_started','environment',$4,$5)`, uuid.New(), principal.OrganizationID, principal.Subject, environmentID.String(), jsonBytes(map[string]any{"kind": request.Kind, "provider": provider}))
@@ -350,13 +404,22 @@ func (s *Server) validateEnvironmentSetup(kind, displayName, externalID string, 
 		}
 		return "gcp", externalID, nil
 	case "endpoint":
+		if !s.config.EndpointConnectorEnabled {
+			return "", "", fmt.Errorf("the endpoint connector is not enabled")
+		}
 		return "endpoint", externalID, nil
 	case "github_repository":
+		if !s.config.GitHubConnectorEnabled || s.config.GitHubClient == nil {
+			return "", "", fmt.Errorf("the GitHub connector is not enabled")
+		}
 		if externalID != "" && !repositoryPattern.MatchString(externalID) {
 			return "", "", fmt.Errorf("repository must be owner/name")
 		}
 		return "github", strings.ToLower(externalID), nil
 	case "kubernetes_cluster":
+		if !s.config.KubernetesConnectorEnabled {
+			return "", "", fmt.Errorf("the Kubernetes connector is not enabled")
+		}
 		return "kubernetes", externalID, nil
 	default:
 		return "", "", fmt.Errorf("unsupported environment kind")
@@ -372,6 +435,18 @@ func (s *Server) verifyEnvironment(w http.ResponseWriter, r *http.Request) {
 	id, err := uuid.Parse(r.PathValue("id"))
 	if err != nil {
 		writeError(w, 400, "invalid_id", "Environment ID is invalid")
+		return
+	}
+	var setupValid bool
+	if err := s.db(r.Context()).QueryRow(r.Context(), `SELECT EXISTS(
+		SELECT 1 FROM connector_setup_sessions
+		WHERE organization_id=$1 AND environment_id=$2 AND state='pending' AND expires_at>now()
+	)`, principal.OrganizationID, id).Scan(&setupValid); err != nil {
+		writeError(w, 500, "database_error", "Could not validate setup")
+		return
+	}
+	if !setupValid {
+		writeError(w, 410, "setup_expired", "Setup has expired or was cancelled; rotate the setup credential to continue")
 		return
 	}
 	value, err := scanEnvironment(s.db(r.Context()).QueryRow(r.Context(), `UPDATE environment_connections SET connection_status='verifying',updated_at=now() WHERE organization_id=$1 AND id=$2 AND connection_status IN ('setup_pending','auth_error') RETURNING `+environmentColumns, principal.OrganizationID, id))
@@ -390,14 +465,18 @@ func (s *Server) verifyEnvironment(w http.ResponseWriter, r *http.Request) {
 	}
 	adapter, err := s.config.CloudAdapters.Adapter(*value.Provider)
 	if err != nil {
-		s.failEnvironmentVerification(r.Context(), principal.OrganizationID, id, err)
+		if persistErr := s.failEnvironmentVerification(r.Context(), principal.OrganizationID, id, err); persistErr == nil {
+			commitOnError(r.Context())
+		}
 		writeCloudError(w, err)
 		return
 	}
 	cloudEnvironment := environmentForAdapter(principal.OrganizationID, value)
 	verification, err := adapter.Verify(r.Context(), cloudEnvironment)
 	if err != nil {
-		s.failEnvironmentVerification(r.Context(), principal.OrganizationID, id, err)
+		if persistErr := s.failEnvironmentVerification(r.Context(), principal.OrganizationID, id, err); persistErr == nil {
+			commitOnError(r.Context())
+		}
 		writeCloudError(w, err)
 		return
 	}
@@ -435,9 +514,10 @@ func (s *Server) verifyEnvironment(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, map[string]any{"environment_id": id, "connection_status": "connected", "verification": verification, "scan": map[string]any{"id": scanID, "status": "queued"}})
 }
 
-func (s *Server) failEnvironmentVerification(ctx context.Context, organizationID string, environmentID uuid.UUID, err error) {
+func (s *Server) failEnvironmentVerification(ctx context.Context, organizationID string, environmentID uuid.UUID, err error) error {
 	code, message, _, _ := cloud.SafeError(err)
-	_, _ = s.db(ctx).Exec(ctx, `UPDATE environment_connections SET connection_status='auth_error',last_error_code=$3,last_error_message=$4,updated_at=now() WHERE organization_id=$1 AND id=$2`, organizationID, environmentID, code, message)
+	_, persistErr := s.db(ctx).Exec(ctx, `UPDATE environment_connections SET connection_status='auth_error',last_error_code=$3,last_error_message=$4,updated_at=now() WHERE organization_id=$1 AND id=$2`, organizationID, environmentID, code, message)
+	return persistErr
 }
 
 func (s *Server) updateEnvironment(w http.ResponseWriter, r *http.Request) {
@@ -595,6 +675,12 @@ func (s *Server) disconnectEnvironment(w http.ResponseWriter, r *http.Request) {
 	}
 	if err == nil {
 		_, err = tx.Exec(r.Context(), `UPDATE connector_setup_sessions SET state='cancelled' WHERE organization_id=$1 AND environment_id=$2 AND state='pending'`, principal.OrganizationID, environmentID)
+	}
+	if err == nil {
+		_, err = tx.Exec(r.Context(), `UPDATE enrollment_codes SET revoked_at=now() WHERE organization_id=$1 AND environment_id=$2 AND revoked_at IS NULL`, principal.OrganizationID, environmentID)
+	}
+	if err == nil {
+		_, err = tx.Exec(r.Context(), `UPDATE endpoint_setup_handoffs SET revoked_at=now() WHERE organization_id=$1 AND environment_id=$2 AND revoked_at IS NULL`, principal.OrganizationID, environmentID)
 	}
 	if err == nil {
 		_, err = tx.Exec(r.Context(), `UPDATE cloud_scan_jobs SET status='cancelled',phase='cancelled',completed_at=now() WHERE organization_id=$1 AND environment_id=$2 AND status IN ('queued','running','ingesting')`, principal.OrganizationID, environmentID)

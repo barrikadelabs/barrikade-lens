@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { BrowserRouter, Navigate, Route, Routes, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import {
   ClerkProvider, OrganizationSwitcher, SignIn as ClerkSignIn, SignUp as ClerkSignUp, UserButton,
-  useAuth, useClerk, useOrganization, useOrganizationList, useUser,
+  useAuth, useClerk, useOrganization, useOrganizationList,
 } from "@clerk/react";
 import {
   Activity, AlertCircle, ArrowRight, Bot, Boxes, BrainCircuit, CheckCircle2, ChevronDown,
@@ -12,34 +13,40 @@ import {
 } from "lucide-react";
 import {
   API, authConfig, exchangeOIDC, type AuthConfig, type Change, type Connection, type Entity, type Evidence,
-  type EntityDetail, type Environment, type EnvironmentKind, type EnvironmentScan, type Overview, type SetupSession, type SystemDetail, type SystemItem, type Target,
+  type EntityDetail, type Environment, type EnvironmentKind, type EnvironmentScan, type ExposureFinding, type Overview, type SetupSession, type SystemDetail, type SystemItem, type Target,
 } from "./api";
-import { EvidenceGraphPage } from "./EvidenceGraph";
-import { InvestigationPage } from "./Investigation";
+const EvidenceGraphPage = lazy(() => import("./EvidenceGraph").then((module) => ({ default: module.EvidenceGraphPage })));
 
-type Page = "Overview" | "Environments" | "Exposure Map" | "Systems" | "Coverage" | "Changes" | "Technical inventory" | "Evidence graph";
+type Page = "Overview" | "Findings" | "Inventory" | "Connections" | "Changes" | "Evidence" | "Settings";
 
 const navigation: Array<{ page: Page; icon: LucideIcon; detail: string }> = [
   { page: "Overview", icon: LayoutDashboard, detail: "Organization posture" },
-  { page: "Environments", icon: Cloud, detail: "Connect and scan" },
-  { page: "Exposure Map", icon: FileSearch, detail: "Reachability and findings" },
-  { page: "Systems", icon: Bot, detail: "Organization systems" },
-  { page: "Coverage", icon: Radar, detail: "Enrollment coverage" },
-  { page: "Changes", icon: History, detail: "Material change" },
-  { page: "Technical inventory", icon: Boxes, detail: "Complete entity set" },
-  { page: "Evidence graph", icon: Network, detail: "Facts and connections" },
+  { page: "Findings", icon: FileSearch, detail: "Prioritized action" },
+  { page: "Inventory", icon: Bot, detail: "Known AI systems" },
+  { page: "Connections", icon: Cloud, detail: "Coverage and setup" },
 ];
 
 const pageCopy: Record<Page, { eyebrow: string; title: string; detail: string }> = {
   Overview: { eyebrow: "DISCOVERY", title: "Organization AI posture", detail: "Evidence-backed visibility across connected cloud accounts, endpoints, repositories, and clusters." },
-  Environments: { eyebrow: "SELF-SERVE", title: "Environments", detail: "Connect cloud accounts, endpoints, repositories, and clusters through one guided flow." },
-  "Exposure Map": { eyebrow: "EXPOSURE", title: "Evidence-backed exposure map", detail: "Trace one system through configured connections, credential presence, operator context, and catalogue-derived potential." },
-  Systems: { eyebrow: "INVENTORY", title: "Systems", detail: "Agents, agent-capable tools, and model runtimes—without supporting software or cached artifacts." },
-  Coverage: { eyebrow: "VISIBILITY", title: "Reporting coverage", detail: "What is enrolled across the organization, where data is stale, and where expected population is unknown." },
+  Findings: { eyebrow: "ATTENTION", title: "Findings", detail: "Workspace-wide priorities ranked by severity, freshness, ownership, and latest observation." },
+  Inventory: { eyebrow: "INVENTORY", title: "Systems", detail: "Agents, agent-capable tools, and model runtimes, with stale evidence retained and clearly aged." },
+  Connections: { eyebrow: "VISIBILITY", title: "Connections", detail: "Connect endpoints, resume setup, and understand reporting coverage." },
   Changes: { eyebrow: "HISTORY", title: "Changes", detail: "Material inventory changes. Routine scan refreshes are suppressed." },
-  "Technical inventory": { eyebrow: "TECHNICAL", title: "Technical inventory", detail: "Every discovered entity, including supporting runtimes, cached artifacts, users, APIs, and workloads." },
-  "Evidence graph": { eyebrow: "EVIDENCE", title: "Evidence graph", detail: "Trace a system to its capabilities, deployment surfaces, observed users, and sanitized evidence." },
+  Evidence: { eyebrow: "EVIDENCE", title: "Evidence graph", detail: "Trace a system to its capabilities, deployment surfaces, observed users, and sanitized evidence." },
+  Settings: { eyebrow: "ACCOUNT", title: "Account settings", detail: "Manage your Lens identity and workspace lifecycle." },
 };
+
+const pagePath: Record<Page, string> = { Overview: "/overview", Findings: "/findings", Inventory: "/inventory", Connections: "/connections", Changes: "/changes", Evidence: "/systems/evidence", Settings: "/settings" };
+
+function pageForPath(path: string): Page {
+  if (path.startsWith("/findings")) return "Findings";
+  if (path.startsWith("/inventory") || /^\/systems\/[^/]+$/.test(path)) return "Inventory";
+  if (path.startsWith("/connections")) return "Connections";
+  if (path.startsWith("/changes")) return "Changes";
+  if (path.endsWith("/evidence")) return "Evidence";
+  if (path.startsWith("/settings")) return "Settings";
+  return "Overview";
+}
 
 const kindIcons: Record<string, LucideIcon> = {
   endpoint: Monitor, repository: GitBranch, cluster: Container, workload: Container, agent: Bot,
@@ -49,6 +56,11 @@ const kindIcons: Record<string, LucideIcon> = {
 };
 
 export function App() {
+  return <BrowserRouter><Application /></BrowserRouter>;
+}
+
+function Application() {
+  if (location.pathname === "/install") return <PublicEndpointInstall />;
   const [config, setConfig] = useState<AuthConfig>();
   const [configurationError, setConfigurationError] = useState("");
   useEffect(() => { authConfig().then(setConfig).catch((reason) => setConfigurationError(String(reason))); }, []);
@@ -92,10 +104,10 @@ function LegacyApplication({ config }: { config: AuthConfig }) {
 function ClerkApplication({ config }: { config: AuthConfig }) {
   const { isLoaded, isSignedIn, getToken } = useAuth();
   const { signOut } = useClerk();
-  const { user } = useUser();
   const { organization } = useOrganization();
   const memberships = useOrganizationList({ userMemberships: { infinite: true } });
   const [bootstrapped, setBootstrapped] = useState("");
+  const [workspaceName, setWorkspaceName] = useState("");
   const [error, setError] = useState("");
   const api = useMemo(() => new API(() => getToken()), [getToken]);
 
@@ -103,11 +115,9 @@ function ClerkApplication({ config }: { config: AuthConfig }) {
     if (!isLoaded || !isSignedIn || organization || !memberships.isLoaded || bootstrapped === "creating") return;
     setBootstrapped("creating");
     const existing = memberships.userMemberships.data?.[0]?.organization;
-    const activate = existing
-      ? memberships.setActive?.({ organization: existing.id })
-      : memberships.createOrganization?.({ name: `${user?.firstName || user?.username || "My"}'s workspace` }).then((created) => memberships.setActive?.({ organization: created.id }));
-    Promise.resolve(activate).catch((reason) => { setError(String(reason)); setBootstrapped(""); });
-  }, [bootstrapped, isLoaded, isSignedIn, memberships, organization, user]);
+    if (!existing) { setBootstrapped("needs-workspace"); return; }
+    Promise.resolve(memberships.setActive?.({ organization: existing.id })).catch((reason) => { setError(String(reason)); setBootstrapped(""); });
+  }, [bootstrapped, isLoaded, isSignedIn, memberships, organization]);
 
   useEffect(() => {
     if (!organization || bootstrapped === organization.id) return;
@@ -117,6 +127,7 @@ function ClerkApplication({ config }: { config: AuthConfig }) {
   if (!isLoaded) return <Loading />;
   if (!isSignedIn) return <ManagedSignIn />;
   if (error) return <Failure error={error} retry={() => { setError(""); setBootstrapped(""); }} />;
+  if (!organization && bootstrapped === "needs-workspace") return <main className="signin"><section className="signin-story"><Brand /><div className="signin-copy"><span className="product-kicker"><Radar size={14} /> Set up Lens</span><h1>Name your security workspace.</h1><p>This name identifies the organization whose endpoint footprint Lens will assess.</p></div></section><section className="signin-access"><form className="access-card" onSubmit={(event) => { event.preventDefault(); const value = workspaceName.trim(); if (!value) return; setBootstrapped("creating"); Promise.resolve(memberships.createOrganization?.({ name: value })).then((created) => created && memberships.setActive?.({ organization: created.id })).catch((reason) => { setError(String(reason)); setBootstrapped("needs-workspace"); }); }}><p className="eyebrow">WORKSPACE</p><h2>Organization name</h2><label>Name<input value={workspaceName} maxLength={128} required autoFocus onChange={(event) => setWorkspaceName(event.target.value)} placeholder="Acme Security" /></label><button className="button primary full">Create workspace <ArrowRight size={16} /></button></form></section></main>;
   if (!organization || bootstrapped !== organization.id) return <Loading />;
   const controls = <div className="managed-account-controls"><OrganizationSwitcher hidePersonal organizationProfileMode="modal" afterCreateOrganizationUrl="/" afterSelectOrganizationUrl="/" /><UserButton userProfileMode="modal" /></div>;
   return <Shell api={api} signOut={() => signOut()} accountControls={controls} selfServe={config.self_serve_enabled} />;
@@ -134,6 +145,26 @@ function ManagedSignIn() {
     <section className="signin-story"><Brand /><div className="signin-copy"><span className="product-kicker"><Radar size={14} /> Autonomous agent discovery</span><h1>Bring the agent footprint into focus.</h1><p>Start free, connect the environments you choose, and see evidence-backed results without a score or write access.</p></div></section>
     <section className="signin-access"><div className="managed-auth"><div className="managed-auth-tabs"><button className={!signUp ? "active" : ""} onClick={() => { location.hash = "sign-in"; setSignUp(false); }}>Sign in</button><button className={signUp ? "active" : ""} onClick={() => { location.hash = "sign-up"; setSignUp(true); }}>Create account</button></div>{signUp ? <ClerkSignUp routing="hash" signInUrl="#sign-in" appearance={appearance} /> : <ClerkSignIn routing="hash" signUpUrl="#sign-up" appearance={appearance} />}</div></section>
   </main>;
+}
+
+function PublicEndpointInstall() {
+  const [token] = useState(() => decodeURIComponent(location.hash.replace(/^#token=/, "")));
+  const [platform, setPlatform] = useState<"macos" | "windows" | "linux" | "">("");
+  const [result, setResult] = useState<{ workspace_name: string; environment_name: string; command: string; expires_at: string; prerequisites: string[]; what_lens_reads: string[]; excluded: string[] }>();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  useEffect(() => { history.replaceState({}, "", "/install"); }, []);
+  const generate = async () => {
+    if (!token || !platform) return;
+    setBusy(true); setError("");
+    try {
+      const response = await fetch("/v1/public/endpoint-handoffs/resolve", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token, platform }) });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(body?.error?.message || "This setup link is unavailable");
+      setResult(body);
+    } catch (reason) { setError(String(reason)); } finally { setBusy(false); }
+  };
+  return <main className="public-install"><header><Brand /><span>Delegated endpoint setup</span></header><section className="public-install-card"><p className="eyebrow">BARRIKADE LENS</p><h1>{result ? `Install for ${result.environment_name}` : "Choose this endpoint's platform"}</h1><p>{result ? `${result.workspace_name} has authorized a read-only Lens installation.` : "The command is generated only after you select a platform. It expires in 15 minutes and can be used once."}</p>{!result && <><div className="platform-picker" aria-label="Endpoint platform">{(["macos", "windows", "linux"] as const).map((value) => <button key={value} aria-pressed={platform === value} className={platform === value ? "active" : ""} onClick={() => setPlatform(value)}>{value === "macos" ? "macOS" : pretty(value)}</button>)}</div><button className="button primary full" disabled={!platform || busy || !token} onClick={generate}>{busy ? "Generating…" : "Generate single-use command"}</button></>}{result && <><div className="wizard-boundary"><ShieldCheck size={18} /><p><b>Read-only discovery</b><span>Lens inventories software, runtime state, network listeners, and configuration references. It excludes prompts, outputs, secret values, and file contents.</span></p></div><CopyBlock value={result.command} /><div className="setup-read"><div><h3>Requirements</h3>{result.prerequisites.map((item) => <span key={item}><CheckCircle2 size={14} />{item}</span>)}</div><div><h3>Credential</h3><span><CheckCircle2 size={14} />Single use</span><span><CheckCircle2 size={14} />Expires {new Date(result.expires_at).toLocaleTimeString()}</span></div></div></>}{error && <InlineError text={error} />}</section></main>;
 }
 
 function LegacySignIn({ config, onToken, authError }: { config: AuthConfig; onToken: (token: string) => void; authError: string }) {
@@ -176,8 +207,9 @@ function LegacySignIn({ config, onToken, authError }: { config: AuthConfig; onTo
 }
 
 function Shell({ api, signOut, accountControls, selfServe = true }: { api: API; signOut: () => void; accountControls?: ReactNode; selfServe?: boolean }) {
-  const [page, setPage] = useState<Page>("Overview");
-  const [graphSystem, setGraphSystem] = useState("");
+  const location = useLocation();
+  const navigate = useNavigate();
+  const page = pageForPath(location.pathname);
   const [menuOpen, setMenuOpen] = useState(false);
   const [about, setAbout] = useState(false);
   const [revision, setRevision] = useState(0);
@@ -188,12 +220,13 @@ function Shell({ api, signOut, accountControls, selfServe = true }: { api: API; 
     <aside className={menuOpen ? "sidebar open" : "sidebar"}>
       <div className="sidebar-brand"><Brand /></div>
       <nav className="main-nav">
-        {navigation.filter((item) => (item.page !== "Exposure Map" || exposureEnabled) && (item.page !== "Environments" || selfServe)).map(({ page: item, icon: Icon, detail }) => <button key={item} className={page === item ? "active" : ""} onClick={() => { setPage(item); setMenuOpen(false); }}>
+        {navigation.filter((item) => (item.page !== "Findings" || exposureEnabled) && (item.page !== "Connections" || selfServe)).map(({ page: item, icon: Icon, detail }) => <button key={item} className={page === item ? "active" : ""} onClick={() => { navigate(pagePath[item]); setMenuOpen(false); }}>
           <Icon size={17} /><span><b>{item}</b><small>{detail}</small></span>{page === item && <ChevronRight size={14} />}
         </button>)}
       </nav>
       <div className="sidebar-footer">
         {accountControls}
+        <button onClick={() => navigate("/settings")}><UserRound size={14} /> Account settings</button>
         <button onClick={() => setAbout(true)}><CircleDot size={14} /> {exposureEnabled ? "Discover + assess" : "Discover only"}</button>
         <button className="logout" onClick={signOut} aria-label="Sign out"><LogOut size={16} /></button>
       </div>
@@ -203,16 +236,23 @@ function Shell({ api, signOut, accountControls, selfServe = true }: { api: API; 
         <header className="page-heading">
           <button className="mobile-menu" aria-label={menuOpen ? "Close navigation" : "Open navigation"} onClick={() => setMenuOpen((value) => !value)}>{menuOpen ? <X size={20} /> : <Menu size={20} />}</button>
           <div><p className="eyebrow">{copy.eyebrow}</p><h1>{copy.title}</h1><p>{copy.detail}</p></div>
-          <div className="page-actions"><button className="icon-button" onClick={() => setRevision((value) => value + 1)} title="Refresh"><RefreshCw size={16} /></button><ExportMenu api={api} /></div>
+          <div className="page-actions"><NotificationBell api={api} revision={revision} onOpen={() => navigate("/connections")} /><button className="icon-button" onClick={() => setRevision((value) => value + 1)} title="Refresh"><RefreshCw size={16} /></button><ExportMenu api={api} /></div>
         </header>
-        {page === "Overview" && <OverviewPage api={api} revision={revision} go={setPage} />}
-        {page === "Environments" && <EnvironmentsPage api={api} revision={revision} onResults={() => setPage("Overview")} />}
-        {page === "Exposure Map" && <InvestigationPage api={api} revision={revision} onOpenGraph={(systemID) => { setGraphSystem(systemID); setPage("Evidence graph"); }} />}
-        {page === "Systems" && <SystemsPage api={api} revision={revision} />}
-        {page === "Coverage" && <CoveragePage api={api} revision={revision} />}
-        {page === "Changes" && <ChangesPage api={api} revision={revision} />}
-        {page === "Technical inventory" && <InventoryPage api={api} revision={revision} />}
-        {page === "Evidence graph" && <EvidenceGraphPage api={api} revision={revision} initialSystemId={graphSystem} />}
+        <Routes>
+          <Route path="/" element={<Navigate to="/overview" replace />} />
+          <Route path="/overview" element={<OverviewPage api={api} revision={revision} go={(target) => navigate(pagePath[target])} />} />
+          <Route path="/findings" element={<FindingsPage api={api} revision={revision} />} />
+          <Route path="/findings/:findingId" element={<FindingsPage api={api} revision={revision} />} />
+          <Route path="/inventory" element={<SystemsPage api={api} revision={revision} />} />
+          <Route path="/systems/:systemId" element={<SystemRoute api={api} revision={revision} />} />
+          <Route path="/connections" element={<ConnectionsPage api={api} revision={revision} onResults={() => navigate("/overview")} />} />
+          <Route path="/connections/new" element={<ConnectionsPage api={api} revision={revision} onResults={() => navigate("/overview")} startWizard />} />
+          <Route path="/connections/:environmentId" element={<ConnectionsPage api={api} revision={revision} onResults={() => navigate("/overview")} />} />
+          <Route path="/systems/:systemId/evidence" element={<EvidenceRoute api={api} revision={revision} />} />
+          <Route path="/changes" element={<ChangesPage api={api} revision={revision} />} />
+          <Route path="/settings" element={<AccountSettings api={api} onDeleted={async () => signOut()} />} />
+          <Route path="*" element={<Navigate to="/overview" replace />} />
+        </Routes>
       </div>
     </main>
     {menuOpen && <button className="sidebar-scrim" onClick={() => setMenuOpen(false)} />}
@@ -221,7 +261,8 @@ function Shell({ api, signOut, accountControls, selfServe = true }: { api: API; 
 }
 
 function OverviewPage({ api, revision, go }: { api: API; revision: number; go: (page: Page) => void }) {
-  const [window, setWindow] = useState("7d");
+  const [search, setSearch] = useSearchParams();
+  const window = search.get("window") || "7d";
   const overview = useRemote(() => api.overview(window), [api, revision, window]);
   const running = useRemote(() => api.systems({ state: "running", confidence: "confirmed", freshness: "fresh", limit: 8 }), [api, revision]);
   if (overview.loading || running.loading) return <Loading />;
@@ -234,56 +275,97 @@ function OverviewPage({ api, revision, go }: { api: API; revision: number; go: (
   const reportingTargets = sum(data.coverage.map((item) => item.reporting));
   const reportingLabel = `${reportingTargets} reporting ${reportingTargets === 1 ? "target" : "targets"}`;
   const attention = [
-    ...(data.exposure_summary?.top_findings ?? []).map((finding) => [`${pretty(finding.severity)} · ${finding.title}`, 1, "Open the complete evidence path and safe next check", "Exposure Map"]),
-    ["Ownership is not established", data.attention.unattributed_systems, "These systems have no authoritative business or technical owner", "Systems"],
-    ["Evidence needs corroboration", data.attention.possible_only_systems, "A second authoritative signal is needed before governance", "Systems"],
-    ["Services are reachable beyond this device", data.attention.non_loopback_services, "Network-accessible AI services need exposure review", "Systems"],
-    ["Partial scans", data.attention.partial_scans, "Some locations or detectors were unavailable", "Coverage"],
-    ["Stale targets", data.attention.stale_targets, "Outside the freshness threshold", "Coverage"],
-    ["Conflicting facts", data.attention.fact_conflicts, "Sources disagree on a material fact", "Systems"],
-  ].filter((item) => Number(item[1]) > 0) as Array<[string, number, string, Page]>;
+    ...(data.executive_summary?.top_findings ?? data.exposure_summary?.top_findings ?? []).map((finding) => [`${pretty(finding.severity)} · ${finding.title}`, 1, "Open the complete evidence path and safe next check", "Findings", finding.id]),
+    ["Ownership is not established", data.executive_summary?.effective_ownership.unowned ?? data.attention.unattributed_systems, "These systems have no authoritative business or technical owner", "Inventory"],
+    ["Evidence needs corroboration", data.attention.possible_only_systems, "A second authoritative signal is needed before governance", "Inventory"],
+    ["Services are reachable beyond this device", data.attention.non_loopback_services, "Network-accessible AI services need exposure review", "Inventory"],
+    ["Partial scans", data.attention.partial_scans, "Some locations or detectors were unavailable", "Connections"],
+    ["Stale targets", data.attention.stale_targets, "Outside the freshness threshold", "Connections"],
+    ["Conflicting facts", data.attention.fact_conflicts, "Sources disagree on a material fact", "Inventory"],
+  ].filter((item) => Number(item[1]) > 0) as Array<[string, number, string, Page, string?]>;
   const changes = groupChanges(data.changes).slice(0, 4);
 
   return <div className="page-stack executive-overview">
-    <div className="overview-toolbar"><span>Updated {relative(data.generated_at)}</span><div className="window-switch">{["24h", "7d", "30d"].map((item) => <button className={window === item ? "active" : ""} onClick={() => setWindow(item)} key={item}>{item}</button>)}</div></div>
+    <div className="overview-toolbar"><span>Updated {relative(data.generated_at)}</span><div className="window-switch">{["24h", "7d", "30d"].map((item) => <button className={window === item ? "active" : ""} onClick={() => { const next = new URLSearchParams(search); item === "7d" ? next.delete("window") : next.set("window", item); setSearch(next, { replace: true }); }} key={item}>{item}</button>)}</div></div>
+    {data.executive_summary?.coverage_state === "unassessed" && <section className="panel unassessed-state"><div><p className="eyebrow">START HERE</p><h2>Your organization is unassessed</h2><p>Install the read-only endpoint collector here, or create a 24-hour handoff for IT. Results appear after normalization completes.</p></div><button className="button primary" onClick={() => go("Connections")}>Connect endpoint <ArrowRight size={15} /></button></section>}
+    {data.executive_summary?.coverage_state === "ready" && data.executive_summary.systems.known === 0 && <section className="panel successful-empty"><CheckCircle2 size={18} /><div><h2>No AI systems found in the checked scope</h2><p>Lens completed the latest endpoint scan {data.executive_summary.last_successful_evidence_at ? relative(data.executive_summary.last_successful_evidence_at) : "recently"}. Open Connections to review the reporting endpoint and coverage.</p></div></section>}
+    {data.executive_summary && data.executive_summary.coverage_state !== "ready" && <section className={`coverage-limitation ${data.executive_summary.coverage_state}`} role="status"><AlertCircle size={16} /><span><b>{pretty(data.executive_summary.coverage_state)} coverage.</b> Executive conclusions include retained evidence and show its age. Last successful evidence {data.executive_summary.last_successful_evidence_at ? relative(data.executive_summary.last_successful_evidence_at) : "has not arrived yet"}.</span></section>}
     <section className="exposure-hero">
-      <div className="exposure-copy"><span>Organization-wide AI exposure</span><h2><strong>{totalSystems.toLocaleString()}</strong> AI systems visible in your organization</h2><p>Current evidence comes from {reportingLabel}. {runningCount} systems are running now{data.exposure_summary ? ` and ${data.exposure_summary.total} explainable exposure findings are current` : ""}.</p><div className="enrollment-scope">{data.coverage.map((item) => <span key={item.target_type}><b>{pretty(item.target_type)}</b> {item.reporting ? `${item.reporting} reporting` : "Not enrolled"}</span>)}</div>{data.exposure_summary && <button className="overview-story-link" onClick={() => go("Exposure Map")}>Open the Exposure Map <ArrowRight size={14} /></button>}</div>
+      <div className="exposure-copy"><span>What can Lens see?</span><h2><strong>{(data.executive_summary?.systems.known ?? totalSystems).toLocaleString()}</strong> known AI systems</h2><p>{data.executive_summary ? `${data.executive_summary.systems.fresh} currently reporting · ${data.executive_summary.systems.stale} retained from stale evidence.` : `Current evidence comes from ${reportingLabel}. ${runningCount} systems are running now.`}</p><div className="enrollment-scope">{data.coverage.map((item) => <span key={item.target_type}><b>{pretty(item.target_type)}</b> {item.reporting ? `${item.reporting} reporting${item.stale ? ` · ${item.stale} stale` : ""}` : "Not enrolled"}</span>)}</div>{data.exposure_summary && <button className="overview-story-link" onClick={() => go("Findings")}>Open findings <ArrowRight size={14} /></button>}</div>
       <div className="exposure-facts">
-        <ExecutiveFact value={runningCount} label="Running now" tone="active" />
-        <ExecutiveFact value={data.attention.unattributed_systems ?? 0} label="Ownership gaps" tone="attention" />
-        <ExecutiveFact value={(data.exposure_summary?.counts.critical ?? 0) + (data.exposure_summary?.counts.high ?? 0)} label="High-priority exposures" tone="attention" />
-        <ExecutiveFact value={reportingTargets} label="Reporting targets" tone="good" />
+        <ExecutiveFact value={runningCount} label="Running now" tone="active" onClick={() => location.assign("/inventory?state=running&confidence=confirmed&freshness=fresh")} />
+        <ExecutiveFact value={data.executive_summary?.effective_ownership.unowned ?? data.attention.unattributed_systems ?? 0} label="Ownership gaps" tone="attention" onClick={() => location.assign("/inventory?owner_status=unowned")} />
+        <ExecutiveFact value={data.executive_summary ? (data.executive_summary.findings.fresh_by_severity.critical ?? 0) + (data.executive_summary.findings.stale_by_severity.critical ?? 0) : data.exposure_summary?.counts.critical ?? 0} label="Critical findings" tone="attention" onClick={() => location.assign("/findings?severity=critical")} />
+        <ExecutiveFact value={reportingTargets} label="Reporting targets" tone="good" onClick={() => go("Connections")} />
       </div>
     </section>
     <section className="system-mix-strip">
       <div className="mix-heading"><span>Observed system mix</span><small>Root systems only · supporting software excluded</small></div>
       <div className="system-breakdown">
-        <button onClick={() => go("Systems")}><Bot size={18} /><span><b>{systems.autonomous_agent ?? 0}</b><small>Autonomous agents</small></span></button>
-        <button onClick={() => go("Systems")}><TerminalSquare size={18} /><span><b>{systems.agent_tool ?? 0}</b><small>Agent-capable tools</small></span></button>
-        <button onClick={() => go("Systems")}><BrainCircuit size={18} /><span><b>{systems.model_runtime ?? 0}</b><small>Model runtimes</small></span></button>
+        <button onClick={() => location.assign("/inventory?system_type=autonomous_agent")}><Bot size={18} /><span><b>{systems.autonomous_agent ?? 0}</b><small>Autonomous agents</small></span></button>
+        <button onClick={() => location.assign("/inventory?system_type=agent_tool")}><TerminalSquare size={18} /><span><b>{systems.agent_tool ?? 0}</b><small>Agent-capable tools</small></span></button>
+        <button onClick={() => location.assign("/inventory?system_type=model_runtime")}><BrainCircuit size={18} /><span><b>{systems.model_runtime ?? 0}</b><small>Model runtimes</small></span></button>
       </div>
     </section>
     <div className="executive-primary">
-      <section className="panel running-panel"><PanelHeading title="Running and confirmed" detail="AI systems active across currently reporting targets" action={<button className="text-button" onClick={() => go("Systems")}>Open systems <ArrowRight size={13} /></button>} />
-        {running.data?.items.length ? <div className="running-list">{running.data.items.map((item) => <button key={item.id} onClick={() => go("Systems")}><span className="running-mark"><CircleDot size={14} /></span><span><b>{item.name}</b><small>{pretty(item.system_type)} · {item.network_scope === "loopback" ? "Local access only" : pretty(item.network_scope)}</small></span><span><strong>{pretty(item.state)}</strong><small>{pretty(item.confidence)} evidence</small></span><ChevronRight size={14} /></button>)}</div> : <Empty icon={CheckCircle2} title="No confirmed systems running" detail="No active system has confirmed evidence in the current scan." />}
+      <section className="panel running-panel"><PanelHeading title="Who owns it?" detail="Known systems and effective ownership" action={<button className="text-button" onClick={() => go("Inventory")}>Open inventory <ArrowRight size={13} /></button>} />
+        {running.data?.items.length ? <div className="running-list">{running.data.items.map((item) => <button key={item.id} onClick={() => location.assign(`/systems/${encodeURIComponent(item.id)}`)}><span className="running-mark"><CircleDot size={14} /></span><span><b>{item.name}</b><small>{pretty(item.system_type)} · {item.effective_ownership?.owner_name || "Owner not established"}</small></span><span><strong>{pretty(item.state)}</strong><small>{pretty(item.confidence)} evidence</small></span><ChevronRight size={14} /></button>)}</div> : <Empty icon={CheckCircle2} title="No confirmed systems running" detail="No active system has confirmed evidence in the current scan." />}
       </section>
       <section className="panel attention-panel"><PanelHeading title="What needs attention" detail="Concrete findings, not an opaque risk score" />
-        {attention.length ? <div className="attention-list">{attention.map(([label, count, detail, destination]) => <button key={label} onClick={() => go(destination)}><span className="attention-count active">{count}</span><span><b>{label}</b><small>{detail}</small></span><ChevronRight size={14} /></button>)}</div> : <Empty icon={CheckCircle2} title="Nothing needs review" detail="No current discovery findings require attention." />}
+        {attention.length ? <div className="attention-list">{attention.map(([label, count, detail, destination, findingID]) => <button key={label} onClick={() => findingID ? location.assign(`/findings/${encodeURIComponent(findingID)}`) : destination === "Inventory" && label.startsWith("Ownership") ? location.assign("/inventory?owner_status=unowned") : go(destination)}><span className="attention-count active">{count}</span><span><b>{label}</b><small>{detail}</small></span><ChevronRight size={14} /></button>)}</div> : <Empty icon={CheckCircle2} title="Nothing needs review" detail="No current discovery findings require attention." />}
       </section>
     </div>
     <div className="executive-secondary">
       <section className="panel change-panel"><PanelHeading title="What changed" detail={`Repeated observations grouped over the last ${window}`} action={<button className="text-button" onClick={() => go("Changes")}>View history <ArrowRight size={13} /></button>} /><ChangeList items={changes} /></section>
-      <section className="panel evidence-posture"><PanelHeading title="Evidence posture" detail="How current and conclusive this view is" action={<button className="text-button" onClick={() => go("Coverage")}>Technical coverage <ArrowRight size={13} /></button>} /><StateDistribution values={states} total={totalSystems} /><ConfidenceSummary data={data.data_quality.confidence} /></section>
+      <section className="panel evidence-posture"><PanelHeading title="Evidence posture" detail="How current and conclusive this view is" action={<button className="text-button" onClick={() => go("Connections")}>Coverage details <ArrowRight size={13} /></button>} /><StateDistribution values={states} total={totalSystems} /><ConfidenceSummary data={data.data_quality.confidence} /></section>
     </div>
   </div>;
 }
 
+function FindingsPage({ api, revision }: { api: API; revision: number }) {
+  const navigate = useNavigate();
+  const { findingId } = useParams();
+  const [search, setSearch] = useSearchParams();
+  const [cursor, setCursor] = useState("");
+  const filters = { severity: search.get("severity") ?? "", freshness: search.get("freshness") ?? "all", owner_status: search.get("owner_status") ?? "", system_type: search.get("system_type") ?? "" };
+  const remote = useRemote(() => api.exposures({ ...filters, cursor }), [api, revision, cursor, search.toString()]);
+  const detail = useRemote(() => findingId ? api.exposure(findingId) : Promise.resolve(undefined), [api, findingId]);
+  const [items, setItems] = useState<ExposureFinding[]>([]);
+  useEffect(() => { if (remote.data) setItems((current) => cursor ? [...current, ...remote.data!.items] : remote.data!.items); }, [remote.data, cursor]);
+  const update = (key: string, value: string) => { const next = new URLSearchParams(search); value && value !== "all" ? next.set(key, value) : next.delete(key); setCursor(""); setItems([]); setSearch(next); };
+  if (remote.loading && !items.length) return <Loading />;
+  if (remote.error) return <Failure error={remote.error} retry={remote.reload} />;
+  return <div className="page-stack">
+    <FilterBar hideSearch><Select label="Severity" value={filters.severity} onChange={(value) => update("severity", value)} options={{ "": "All severities", critical: "Critical", high: "High", medium: "Medium", low: "Low" }} /><Select label="Evidence" value={filters.freshness} onChange={(value) => update("freshness", value)} options={{ all: "Fresh and stale", fresh: "Fresh", stale: "Stale" }} /><Select label="Ownership" value={filters.owner_status} onChange={(value) => update("owner_status", value)} options={{ "": "Any owner", unowned: "Owner missing", owned: "Owned" }} /><Select label="System type" value={filters.system_type} onChange={(value) => update("system_type", value)} options={{ "": "All systems", autonomous_agent: "Autonomous agents", agent_tool: "Agent tools", model_runtime: "Model runtimes" }} /></FilterBar>
+    <section className="panel data-panel"><PanelHeading title="What needs attention" detail="Ranked across the entire workspace; stale findings remain visible with their evidence age." count={items.length} /><div className="finding-list">{items.map((finding) => <button key={finding.id} className="finding-row" onClick={() => navigate(`/findings/${encodeURIComponent(finding.id)}?${search.toString()}`)}><span className={`severity-pill ${finding.severity}`}>{finding.severity}</span><span><b>{finding.title}</b><small>{finding.root_name} · evidence {finding.evidence_last_seen_at ? relative(finding.evidence_last_seen_at) : relative(finding.last_seen_at)}</small></span><span className={finding.effective_ownership?.owned ? "fact good" : "fact quiet"}>{finding.effective_ownership?.owner_name || "Owner missing"}</span><ChevronRight size={15} /></button>)}{!items.length && <Empty icon={CheckCircle2} title="No findings match this view" detail="Lens found no current evidence-backed findings for these filters." />}</div>{remote.data?.next_cursor && <button className="load-more" onClick={() => setCursor(remote.data!.next_cursor!)}>Load more findings <ChevronDown size={15} /></button>}</section>
+    {findingId && <AccessibleDialog title="Finding details" onClose={() => navigate(`/findings?${search.toString()}`)}>{detail.loading ? <InlineLoading /> : detail.error || !detail.data ? <InlineError text={detail.error || "Finding not found"} /> : <FindingDetail finding={detail.data} navigate={navigate} />}</AccessibleDialog>}
+  </div>;
+}
+
+function FindingDetail({ finding, navigate }: { finding: ExposureFinding; navigate: ReturnType<typeof useNavigate> }) {
+  return <div className="finding-detail"><span className={`severity-pill ${finding.severity}`}>{finding.severity}</span><h2>{finding.title}</h2><p>{finding.explanation}</p><dl><div><dt>Affected system</dt><dd><button className="text-button" onClick={() => navigate(`/systems/${encodeURIComponent(finding.root_entity_id)}`)}>{finding.root_name}</button></dd></div><div><dt>Evidence</dt><dd>{finding.evidence_freshness ? pretty(finding.evidence_freshness) : "Current"} · {relative(finding.evidence_last_seen_at || finding.last_seen_at)}</dd></div><div><dt>Owner</dt><dd>{finding.effective_ownership?.owner_name || "Not established"}</dd></div></dl><h3>Why Lens raised this</h3><ol className="evidence-path">{finding.path.map((step, index) => <li key={`${step.entity_id}-${index}`}><b>{step.name}</b><span>{pretty(step.kind)} · {pretty(step.basis)}</span>{step.edge && <small>{pretty(step.edge)}</small>}</li>)}</ol><div className="next-step"><b>Recommended next step</b><p>{finding.recommended_next_step}</p></div></div>;
+}
+
+function AccessibleDialog({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+  const ref = useRef<HTMLElement>(null);
+  const restore = useRef(document.activeElement as HTMLElement | null);
+  useEffect(() => {
+    ref.current?.focus();
+    const key = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); if (event.key === "Tab" && ref.current) { const focusable = [...ref.current.querySelectorAll<HTMLElement>('button,a,input,select,textarea,[tabindex]:not([tabindex="-1"])')]; if (!focusable.length) return; const first = focusable[0], last = focusable[focusable.length - 1]; if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); } } };
+    document.addEventListener("keydown", key);
+    return () => { document.removeEventListener("keydown", key); restore.current?.focus(); };
+  }, [onClose]);
+  return <div className="modal-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="detail-drawer" role="dialog" aria-modal="true" aria-label={title} tabIndex={-1} ref={ref}><button className="drawer-close" aria-label="Close dialog" onClick={onClose}><X size={18} /></button>{children}</section></div>;
+}
+
 function SystemsPage({ api, revision }: { api: API; revision: number }) {
-  const [filters, setFilters] = useState<Record<string, string>>({ sort: "last_seen", freshness: "fresh" });
+  const navigate = useNavigate();
+  const { systemId } = useParams();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [filters, setFilters] = useState<Record<string, string>>(() => ({ sort: "last_seen", freshness: searchParams.get("freshness") || "all", search: searchParams.get("search") || "", system_type: searchParams.get("system_type") || "", state: searchParams.get("state") || "", confidence: searchParams.get("confidence") || "", network_scope: searchParams.get("network_scope") || "", owner_status: searchParams.get("owner_status") || "" }));
   const [cursor, setCursor] = useState("");
   const [items, setItems] = useState<SystemItem[]>([]);
   const [next, setNext] = useState("");
-  const [selected, setSelected] = useState<string>();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -295,29 +377,33 @@ function SystemsPage({ api, revision }: { api: API; revision: number }) {
     return () => clearTimeout(timer);
   }, [api, revision, filters, cursor]);
 
-  const update = (key: string, value: string) => { setCursor(""); setItems([]); setFilters((current) => ({ ...current, [key]: value })); };
+  const update = (key: string, value: string) => { setCursor(""); setItems([]); setFilters((current) => ({ ...current, [key]: value })); const next = new URLSearchParams(searchParams); value && value !== "all" ? next.set(key, value) : next.delete(key); setSearchParams(next, { replace: true }); };
   return <div className="page-stack">
     <FilterBar search={filters.search ?? ""} setSearch={(value) => update("search", value)}>
       <Select label="System type" value={filters.system_type} onChange={(value) => update("system_type", value)} options={{ "": "All root systems", autonomous_agent: "Autonomous agents", agent_tool: "Agent-capable tools", model_runtime: "Model runtimes" }} />
       <Select label="State" value={filters.state} onChange={(value) => update("state", value)} options={{ "": "Any state", running: "Running", deployed: "Deployed", defined: "Defined", configured: "Configured", installed: "Installed", residual: "Residual", cached: "Cached" }} />
       <Select label="Confidence" value={filters.confidence} onChange={(value) => update("confidence", value)} options={{ "": "Any confidence", confirmed: "Confirmed", likely: "Likely", possible: "Possible" }} />
+      <Select label="Ownership" value={filters.owner_status} onChange={(value) => update("owner_status", value)} options={{ "": "Any owner", owned: "Owned", unowned: "Owner missing" }} />
       <Select label="Network" value={filters.network_scope} onChange={(value) => update("network_scope", value)} options={{ "": "Any scope", external: "External", network: "Network", loopback: "Loopback", none: "None", unknown: "Unknown" }} />
       <Select label="Reporting" value={filters.freshness} onChange={(value) => update("freshness", value)} options={{ fresh: "Fresh targets", stale: "Stale targets", all: "Fresh and stale" }} />
     </FilterBar>
     <section className="panel data-panel"><div className="table-summary"><span><b>{items.length}</b> {filters.freshness === "stale" ? "stale" : filters.freshness === "all" ? "fresh and stale" : "fresh"} systems</span>{filters.freshness === "fresh" && <span>Older identities remain available through Reporting filters and Coverage diagnostics</span>}</div>
       <div className="system-table table-scroll"><div className="system-row table-head"><span>System</span><span>Type</span><span>State</span><span>Target / surface</span><span>Attribution</span><span>Evidence</span><span /></div>
-        {items.map((item) => <button className="system-row" key={item.id} onClick={() => setSelected(item.id)}>
+        {items.map((item) => <button className="system-row" key={item.id} onClick={() => navigate(`/systems/${encodeURIComponent(item.id)}?${searchParams.toString()}`)}>
           <Identity kind={item.kind} name={item.name} detail={item.product_id ?? item.id} />
           <TypePill value={item.system_type} /><StatePill state={item.state} /><span className="stacked"><b>{item.target_name ?? "Unresolved target"}</b><small>{pretty(item.surface)}{item.target_freshness ? ` · ${pretty(item.target_freshness)}` : ""}</small></span>
-          <span className={item.attributed ? "fact good" : "fact quiet"}>{item.attributed ? "Attributed" : "Unattributed"}</span><ConfidencePill value={item.confidence} /><ChevronRight size={15} />
+          <span className={item.effective_ownership?.owned ? "fact good" : "fact quiet"}>{item.effective_ownership?.owner_name || (item.effective_ownership?.owned ? "Owned" : "Owner missing")}</span><ConfidencePill value={item.confidence} /><ChevronRight size={15} />
         </button>)}
         {!loading && !items.length && <Empty icon={Bot} title="No systems match this view" detail="Supporting runtimes and cached artifacts are intentionally excluded from the executive systems view." />}
       </div>
       {error && <InlineError text={error} />}{loading && <InlineLoading />}{next && !loading && <button className="load-more" onClick={() => setCursor(next)}>Load more systems <ChevronDown size={15} /></button>}
     </section>
-    {selected && <SystemDrawer api={api} id={selected} onClose={() => setSelected(undefined)} />}
+    {systemId && <SystemDrawer api={api} id={systemId} onClose={() => navigate(`/inventory?${searchParams.toString()}`)} />}
   </div>;
 }
+
+function SystemRoute({ api, revision }: { api: API; revision: number }) { return <SystemsPage api={api} revision={revision} />; }
+function EvidenceRoute({ api, revision }: { api: API; revision: number }) { const { systemId = "" } = useParams(); return <Suspense fallback={<Loading />}><EvidenceGraphPage api={api} revision={revision} initialSystemId={systemId} /></Suspense>; }
 
 const environmentCatalog: Array<{ kind: EnvironmentKind; title: string; detail: string; identifier: string; icon: LucideIcon; connector: string }> = [
   { kind: "aws_account", title: "AWS account", detail: "Bedrock, AgentCore, and SageMaker", identifier: "12-digit account ID", icon: Cloud, connector: "aws" },
@@ -328,10 +414,16 @@ const environmentCatalog: Array<{ kind: EnvironmentKind; title: string; detail: 
   { kind: "kubernetes_cluster", title: "Kubernetes", detail: "Read-only cluster collector", identifier: "Optional cluster reference", icon: Container, connector: "kubernetes" },
 ];
 
-function EnvironmentsPage({ api, revision, onResults }: { api: API; revision: number; onResults: () => void }) {
+function ConnectionsPage({ api, revision, onResults, startWizard = false }: { api: API; revision: number; onResults: () => void; startWizard?: boolean }) {
+  return <div className="page-stack"><EnvironmentsPage api={api} revision={revision} onResults={onResults} startWizard={startWizard} /><CoveragePage api={api} revision={revision} /></div>;
+}
+
+function EnvironmentsPage({ api, revision, onResults, startWizard = false }: { api: API; revision: number; onResults: () => void; startWizard?: boolean }) {
+  const navigate = useNavigate();
+  const { environmentId } = useParams();
   const environments = useRemote(() => api.environments(), [api, revision]);
   const session = useRemote(() => api.session(), [api]);
-  const [wizard, setWizard] = useState(false);
+  const [wizard, setWizard] = useState(startWizard);
   const [kind, setKind] = useState<EnvironmentKind>();
   const [name, setName] = useState("");
   const [externalID, setExternalID] = useState("");
@@ -343,8 +435,18 @@ function EnvironmentsPage({ api, revision, onResults }: { api: API; revision: nu
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [platform, setPlatform] = useState<"macos" | "windows" | "linux">("macos");
+  const [handoff, setHandoff] = useState<{ id: string; url: string; expires_at: string }>();
   const [connectors, setConnectors] = useState<Record<string, boolean>>({});
   useEffect(() => { authConfig().then((value) => setConnectors(value.connectors)).catch(() => undefined); }, []);
+  useEffect(() => { if (startWizard && connectors.endpoint && !kind) { setWizard(true); setKind("endpoint"); setName("Endpoint"); } }, [connectors.endpoint, kind, startWizard]);
+  useEffect(() => {
+    if (!environmentId || !environments.data) return;
+    const environment = environments.data.items.find((item) => item.id === environmentId);
+    if (!environment || environment.kind !== "endpoint" || environment.connection_status !== "setup_pending") return;
+    setKind("endpoint"); setName(environment.display_name); setWizard(true); setBusy(true);
+    api.rotateEndpointCredential(environment.id).then(setSetup).catch((reason) => setError(String(reason))).finally(() => setBusy(false));
+  }, [api, environmentId, environments.data]);
 
   useEffect(() => {
     if (!setup || !scan || ["complete", "partial", "failed", "cancelled"].includes(scan.status)) return;
@@ -368,7 +470,8 @@ function EnvironmentsPage({ api, revision, onResults }: { api: API; revision: nu
 
   const canManage = session.data?.role === "owner" || session.data?.role === "admin";
   const selected = environmentCatalog.find((item) => item.kind === kind);
-  const reset = () => { setWizard(false); setKind(undefined); setName(""); setExternalID(""); setTenantID(""); setProjectNumber(""); setSetup(undefined); setScan(undefined); setCollectorConnected(false); setMessage(""); setError(""); };
+  const isEndpointSetup = setup?.kind === "endpoint" || setup?.setup.method === "managed_collector";
+  const reset = () => { setWizard(false); setKind(undefined); setName(""); setExternalID(""); setTenantID(""); setProjectNumber(""); setSetup(undefined); setScan(undefined); setCollectorConnected(false); setMessage(""); setError(""); setHandoff(undefined); if (location.pathname !== "/connections") navigate("/connections", { replace: true }); };
   const createSetup = () => {
     if (!kind) return;
     setBusy(true); setError("");
@@ -385,6 +488,11 @@ function EnvironmentsPage({ api, revision, onResults }: { api: API; revision: nu
       environments.reload();
     }).catch((reason) => setError(String(reason))).finally(() => setBusy(false));
   };
+  const delegate = () => {
+    if (!setup) return;
+    setBusy(true); setError("");
+    api.createEndpointHandoff(setup.environment_id).then(setHandoff).catch((reason) => setError(String(reason))).finally(() => setBusy(false));
+  };
   const runScan = (environment: Environment) => {
     setError("");
     api.scanEnvironment(environment.id).then((result) => {
@@ -400,23 +508,30 @@ function EnvironmentsPage({ api, revision, onResults }: { api: API; revision: nu
   if (environments.loading || session.loading) return <Loading />;
   if (environments.error || session.error || !environments.data) return <Failure error={environments.error || session.error} retry={() => { environments.reload(); session.reload(); }} />;
   return <div className="page-stack environments-page">
-    <section className="panel environment-summary"><div><p className="eyebrow">UNMETERED MVP</p><h2>{environments.data.items.filter((item) => item.connection_status === "connected").length} connected environments</h2><p>Add the environments you choose. There are no plan limits, scan credits, resource allowances, or member caps.</p></div>{canManage && <button className="button primary" onClick={() => setWizard(true)}><Plus size={16} /> Add environment</button>}</section>
+    <section className="panel environment-summary"><div><p className="eyebrow">ENDPOINT BETA</p><h2>{environments.data.items.filter((item) => item.connection_status === "connected").length} connected endpoints</h2><p>Endpoint count is unlimited. Each installation is read-only and produces durable status from install through first results.</p></div>{canManage && <button className="button primary" onClick={() => navigate("/connections/new")}><Plus size={16} /> Connect endpoint</button>}</section>
     {error && <InlineError text={error} />}
     <section className="environment-list">
-      {environments.data.items.map((environment) => {
-        const catalog = environmentCatalog.find((item) => item.kind === environment.kind);
-        const Icon = catalog?.icon ?? Cloud;
-        return <article className="environment-card" key={environment.id}><span className="environment-icon"><Icon size={20} /></span><div className="environment-card-copy"><span><b>{environment.display_name}</b><small>{catalog?.title ?? pretty(environment.kind)}{environment.external_id ? ` · ${environment.external_id}` : ""}</small></span><p>{environment.last_error_message || (environment.verified_at ? `Verified ${relative(environment.verified_at)}` : "Setup has not been verified yet")}</p></div><span className={`connection-status ${environment.connection_status}`}><i />{pretty(environment.connection_status)}</span><div className="environment-actions">{canManage && environment.connection_status === "connected" && ["aws", "azure", "gcp"].includes(environment.provider || "") && <button className="button subtle" onClick={() => runScan(environment)}><RefreshCw size={14} /> Scan now</button>}{canManage && environment.connection_status !== "disconnected" && <button className="button quiet" onClick={() => disconnect(environment)}>Disconnect</button>}</div></article>;
-      })}
-      {!environments.data.items.length && <Empty icon={Cloud} title="No environments connected" detail={canManage ? "Add a cloud account, endpoint, repository, or cluster to start the first scan." : "Ask a workspace owner or admin to connect an environment."} />}
+      {environments.data.items.map((environment) => <EnvironmentActivationCard key={environment.id} api={api} environment={environment} revision={revision} canManage={canManage} onResume={() => navigate(`/connections/${environment.id}`)} onScan={() => runScan(environment)} onDisconnect={() => disconnect(environment)} />)}
+      {!environments.data.items.length && <div className="empty-state-actions"><Empty icon={ShieldCheck} title="Your organization is unassessed" detail={canManage ? "Connect this endpoint directly or create a 24-hour setup handoff for IT." : "Ask a workspace owner or admin to connect an endpoint."} />{canManage && <button className="button primary" onClick={() => navigate("/connections/new")}>Connect endpoint</button>}</div>}
     </section>
     {scan && <section className={`panel scan-progress ${scan.status}`}><div><span className="scan-spinner"><RefreshCw size={18} /></span><div><p className="eyebrow">SCAN STATUS</p><h2>{pretty(scan.phase || scan.status)}</h2><p>{scan.status === "complete" ? "Discovery is complete and results are ready." : scan.status === "partial" ? "Useful results are ready; some detectors or locations could not be read." : scan.safe_error?.message || "Lens is collecting inventory and coverage. Partial results remain visible if one detector fails."}</p></div></div>{["complete", "partial"].includes(scan.status) && <button className="button primary" onClick={onResults}>View results <ArrowRight size={15} /></button>}</section>}
     {wizard && <div className="modal-overlay environment-wizard-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) reset(); }}><section className="environment-wizard"><button className="drawer-close" onClick={reset}><X size={18} /></button><header><p className="eyebrow">ADD ENVIRONMENT</p><h2>{setup ? "Complete provider setup" : kind ? `Connect ${selected?.title}` : "What do you want Lens to scan?"}</h2><p>{setup ? "The generated setup is least-privilege and expires shortly. Lens stores no long-lived cloud keys." : "Every verified environment scans immediately and refreshes daily."}</p></header>
-      {!kind && <div className="environment-catalog">{environmentCatalog.map(({ kind: value, title, detail, icon: Icon, connector }) => { const enabled = connectors[connector] !== false; return <button key={value} disabled={!enabled} onClick={() => { setKind(value); setName(title); }}><Icon size={20} /><span><b>{title}</b><small>{enabled ? detail : "Not enabled in this deployment"}</small></span><ChevronRight size={15} /></button>; })}</div>}
+      {!kind && <div className="environment-catalog">{environmentCatalog.filter(({ connector }) => connectors[connector] === true).map(({ kind: value, title, detail, icon: Icon }) => <button key={value} onClick={() => { setKind(value); setName(title); }}><Icon size={20} /><span><b>{title}</b><small>{detail}</small></span><ChevronRight size={15} /></button>)}</div>}
       {kind && !setup && <div className="environment-details"><button className="wizard-back" onClick={() => setKind(undefined)}>← Choose another type</button><label>Display name<input value={name} onChange={(event) => setName(event.target.value)} placeholder="Production AI" autoFocus /></label><label>{selected?.identifier}<input value={externalID} onChange={(event) => setExternalID(event.target.value)} placeholder={kind === "aws_account" ? "123456789012" : kind === "azure_subscription" ? "00000000-0000-0000-0000-000000000000" : kind === "gcp_project" ? "my-project-id" : "Optional"} /></label>{kind === "azure_subscription" && <label>Microsoft Entra tenant ID<input value={tenantID} onChange={(event) => setTenantID(event.target.value)} placeholder="00000000-0000-0000-0000-000000000000" /></label>}{kind === "gcp_project" && <label>GCP project number<input value={projectNumber} onChange={(event) => setProjectNumber(event.target.value)} placeholder="123456789012" /></label>}<div className="wizard-boundary"><ShieldCheck size={18} /><p><b>Read-only by design</b><span>Lens inventories resources and relationships. It does not invoke models, read prompts or outputs, retrieve secrets, or remediate resources.</span></p></div><button className="button primary full" disabled={busy || !name.trim()} onClick={createSetup}>{busy ? "Preparing…" : "Generate least-privilege setup"}</button></div>}
-      {setup && <div className="setup-result"><div className="setup-read"><div><h3>Lens will read</h3>{setup.setup.what_lens_reads?.map((item) => <span key={item}><CheckCircle2 size={14} />{item}</span>)}</div><div><h3>Lens will not read</h3>{setup.setup.excluded?.map((item) => <span key={item}><X size={14} />{item}</span>)}</div></div>{setup.setup.install_url && <a className="button primary full" href={setup.setup.install_url} target="_blank" rel="noreferrer">Open provider setup <ArrowRight size={15} /></a>}{setup.setup.command && <CopyBlock value={setup.setup.command} />}{setup.setup.commands && (Array.isArray(setup.setup.commands) ? setup.setup.commands : Object.values(setup.setup.commands)).map((command) => <CopyBlock value={command} key={command} />)}{setup.setup.template && <details className="setup-template" open><summary>Generated setup template <ChevronDown size={13} /></summary><pre>{setup.setup.template}</pre><button className="button subtle" onClick={() => navigator.clipboard.writeText(setup.setup.template || "")}><Copy size={14} /> Copy template</button></details>}{collectorConnected ? <button className="button primary full" onClick={onResults}>View results <ArrowRight size={15} /></button> : <button className="button primary full" disabled={busy} onClick={verify}>{busy ? "Verifying…" : ["aws_account", "azure_subscription", "gcp_project"].includes(setup.kind) ? "I've completed setup — verify access" : "Check connection"}</button>}{message && <p className="form-status">{message}</p>}{error && <InlineError text={error} />}<small className="setup-expiry">Setup session expires {new Date(setup.expires_at).toLocaleTimeString()}.</small></div>}
+      {setup && <div className="setup-result"><div className="setup-read"><div><h3>Lens will read</h3>{setup.setup.what_lens_reads?.map((item) => <span key={item}><CheckCircle2 size={14} />{item}</span>)}</div><div><h3>Lens will not read</h3>{setup.setup.excluded?.map((item) => <span key={item}><X size={14} />{item}</span>)}</div></div>{isEndpointSetup && <><div className="platform-picker" aria-label="Installation platform">{(["macos", "windows", "linux"] as const).map((value) => <button key={value} aria-pressed={platform === value} className={platform === value ? "active" : ""} onClick={() => setPlatform(value)}>{value === "macos" ? "macOS" : pretty(value)}</button>)}</div><p className="setup-requirements">Requires Node.js 18+ and administrator access to install the background collector.</p>{!handoff && !Array.isArray(setup.setup.commands) && setup.setup.commands?.[platform] && <CopyBlock value={setup.setup.commands[platform]} />}{handoff ? <div className="handoff-result"><b>24-hour IT handoff</b><p>The recipient chooses their platform and generates a single-use 15-minute command.</p><CopyBlock value={handoff.url} /><small>Expires {new Date(handoff.expires_at).toLocaleString()}</small></div> : <button className="button subtle full" disabled={busy} onClick={delegate}>Delegate installation to IT</button>}</>}{setup.setup.install_url && <a className="button primary full" href={setup.setup.install_url} target="_blank" rel="noreferrer">Open provider setup <ArrowRight size={15} /></a>}{setup.setup.command && <CopyBlock value={setup.setup.command} />}{!isEndpointSetup && setup.setup.commands && (Array.isArray(setup.setup.commands) ? setup.setup.commands : Object.values(setup.setup.commands)).map((command) => <CopyBlock value={command} key={command} />)}{setup.setup.template && <details className="setup-template" open><summary>Generated setup template <ChevronDown size={13} /></summary><pre>{setup.setup.template}</pre><button className="button subtle" onClick={() => navigator.clipboard.writeText(setup.setup.template || "")}><Copy size={14} /> Copy template</button></details>}{collectorConnected ? <button className="button primary full" onClick={onResults}>View results <ArrowRight size={15} /></button> : <button className="button primary full" disabled={busy} onClick={verify}>{busy ? "Checking…" : ["aws_account", "azure_subscription", "gcp_project"].includes(setup.kind) ? "I've completed setup — verify access" : "Check installation status"}</button>}{message && <p className="form-status">{message}</p>}{error && <InlineError text={error} />}<small className="setup-expiry">This command expires {new Date(setup.expires_at).toLocaleTimeString()}. Rotate it from Connections if it is lost or expires.</small></div>}
     </section></div>}
   </div>;
+}
+
+function EnvironmentActivationCard({ api, environment, revision, canManage, onResume, onScan, onDisconnect }: { api: API; environment: Environment; revision: number; canManage: boolean; onResume: () => void; onScan: () => void; onDisconnect: () => void }) {
+  const remote = useRemote(() => api.activation(environment.id), [api, environment.id, revision]);
+  const catalog = environmentCatalog.find((item) => item.kind === environment.kind);
+  const Icon = catalog?.icon ?? Cloud;
+  const fallback = environment.connection_status === "setup_pending" ? "awaiting_install" : environment.last_result_status === "failed" ? "failed" : environment.last_result_status === "partial" ? "partial" : environment.last_result_at ? "ready" : environment.source_id ? "processing" : environment.connection_status;
+  const phase = remote.data?.phase ?? fallback;
+  const lastResult = remote.data?.last_result_at ?? environment.last_result_at;
+  const message = remote.data?.safe_error?.message || environment.last_error_message || (phase === "awaiting_install" ? "Installation has not completed" : phase === "connected" ? "Collector connected; awaiting the first snapshot" : phase === "processing" ? "First results are being normalized; you can leave this page" : phase === "stale" ? `Retained results are visible, but this endpoint last reported ${relative(remote.data?.last_seen_at || lastResult || "")}` : lastResult ? `Last result ${relative(lastResult)}${phase === "partial" ? " · partial coverage" : ""}` : "Waiting for endpoint evidence");
+  return <article className="environment-card"><span className="environment-icon"><Icon size={20} /></span><div className="environment-card-copy"><span><b>{environment.display_name}</b><small>{catalog?.title ?? pretty(environment.kind)}{environment.external_id ? ` · ${environment.external_id}` : ""}</small></span><p>{message}</p></div><span className={`connection-status ${phase}`}><i />{pretty(phase)}</span><div className="environment-actions">{canManage && environment.kind === "endpoint" && phase === "awaiting_install" && <button className="button subtle" onClick={onResume}>Resume setup</button>}{canManage && environment.connection_status === "connected" && ["aws", "azure", "gcp"].includes(environment.provider || "") && <button className="button subtle" onClick={onScan}><RefreshCw size={14} /> Scan now</button>}{canManage && phase !== "disconnected" && <button className="button quiet" onClick={onDisconnect}>Disconnect</button>}</div></article>;
 }
 
 function CopyBlock({ value }: { value: string }) {
@@ -454,12 +569,13 @@ function CoveragePage({ api, revision }: { api: API; revision: number }) {
 }
 
 function ChangesPage({ api, revision }: { api: API; revision: number }) {
-  const [filters, setFilters] = useState<Record<string, string>>({ window: "7d", system_role: "system" });
+  const [search, setSearch] = useSearchParams();
+  const filters: Record<string, string> = { window: search.get("window") || "7d", system_role: "system", category: search.get("category") || "", system_type: search.get("system_type") || "", surface: search.get("surface") || "" };
   const [cursor, setCursor] = useState("");
-  const remote = useRemote(() => api.changes({ ...filters, cursor }), [api, revision, filters, cursor]);
+  const remote = useRemote(() => api.changes({ ...filters, cursor }), [api, revision, search.toString(), cursor]);
   const [items, setItems] = useState<Change[]>([]);
   useEffect(() => { if (remote.data) setItems((current) => cursor ? [...current, ...remote.data!.items] : remote.data!.items); }, [remote.data, cursor]);
-  const update = (key: string, value: string) => { setCursor(""); setItems([]); setFilters((current) => ({ ...current, [key]: value })); };
+  const update = (key: string, value: string) => { const next = new URLSearchParams(search); value && !(key === "window" && value === "7d") ? next.set(key, value) : next.delete(key); setCursor(""); setItems([]); setSearch(next, { replace: true }); };
   return <div className="page-stack"><FilterBar hideSearch>
     <Select label="Window" value={filters.window} onChange={(value) => update("window", value)} options={{ "24h": "Last 24 hours", "7d": "Last 7 days", "30d": "Last 30 days", "90d": "Last 90 days" }} />
     <Select label="Category" value={filters.category} onChange={(value) => update("category", value)} options={{ "": "All material changes", state: "State", network_scope: "Network scope", attribution: "Attribution", capability: "Capability", confidence: "Confidence", identity: "Identity", freshness: "Freshness" }} />
@@ -503,9 +619,11 @@ function SystemDrawer({ api, id, onClose }: { api: API; id: string; onClose: () 
 }
 
 function SystemDetailView({ item }: { item: SystemDetail }) {
+  const navigate = useNavigate();
   const groups = groupConnections(item.connections);
   return <><div className="drawer-title"><Identity kind={item.kind} name={item.name} detail={item.product_id ?? item.id} /><div><TypePill value={item.system_type} /><StatePill state={item.state} /><ConfidencePill value={item.confidence} /></div></div>
-    <div className="fact-grid"><Fact label="Target" value={item.target_name ?? "Unresolved"} /><Fact label="Reporting" value={pretty(item.target_freshness ?? "unknown")} /><Fact label="Network scope" value={pretty(item.network_scope)} /><Fact label="Attribution" value={item.attributed ? "Authoritative" : "Not established"} /><Fact label="First discovered" value={relative(item.first_seen_at)} /><Fact label="Last observed" value={relative(item.last_seen_at)} /></div>
+    <div className="fact-grid"><Fact label="Target" value={item.target_name ?? "Unresolved"} /><Fact label="Reporting" value={pretty(item.target_freshness ?? "unknown")} /><Fact label="Network scope" value={pretty(item.network_scope)} /><Fact label="Effective owner" value={item.effective_ownership?.owner_name || (item.effective_ownership?.owned ? "Evidence-backed" : "Not established")} /><Fact label="First discovered" value={relative(item.first_seen_at)} /><Fact label="Last observed" value={relative(item.last_seen_at)} /></div>
+    <button className="button subtle" onClick={() => navigate(`/systems/${encodeURIComponent(item.id)}/evidence`)}><Network size={14} /> Open evidence graph</button>
     <section className="drawer-section"><h3>Connected inventory <span>{item.connections.length}</span></h3>{Object.entries(groups).map(([group, values]) => <div className="connection-group" key={group}><p>{pretty(group)}</p>{values.map((connection) => <ConnectionRow item={connection} key={connection.relationship_id} />)}</div>)}</section>
     <EvidenceSection items={item.evidence} />
   </>;
@@ -592,8 +710,8 @@ function groupChanges(items: Change[]): GroupedChange[] {
   return [...groups.values()].sort((left, right) => Date.parse(right.changed_at) - Date.parse(left.changed_at));
 }
 
-function ExecutiveFact({ value, label, tone = "neutral" }: { value: number; label: string; tone?: string }) {
-  return <div className={`executive-fact ${tone}`}><strong>{value}</strong><span>{label}</span></div>;
+function ExecutiveFact({ value, label, tone = "neutral", onClick }: { value: number; label: string; tone?: string; onClick: () => void }) {
+  return <button className={`executive-fact ${tone}`} onClick={onClick}><strong>{value}</strong><span>{label}</span></button>;
 }
 
 function ChangeList({ items, expanded = false }: { items: GroupedChange[]; expanded?: boolean }) {
@@ -639,7 +757,15 @@ function PanelHeading({ title, detail, count, action }: { title: string; detail:
 }
 
 function Drawer({ children, onClose }: { children: ReactNode; onClose: () => void }) {
-  return <div className="drawer-overlay" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><aside className="drawer"><button className="drawer-close" onClick={onClose}><X size={18} /></button><div className="drawer-body">{children}</div></aside></div>;
+  const ref = useRef<HTMLElement>(null);
+  const restore = useRef(document.activeElement as HTMLElement | null);
+  useEffect(() => {
+    ref.current?.focus();
+    const key = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); if (event.key === "Tab" && ref.current) { const focusable = [...ref.current.querySelectorAll<HTMLElement>('button,a,input,select,textarea,[tabindex]:not([tabindex="-1"])')]; if (!focusable.length) return; const first = focusable[0], last = focusable[focusable.length - 1]; if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); } } };
+    document.addEventListener("keydown", key);
+    return () => { document.removeEventListener("keydown", key); restore.current?.focus(); };
+  }, [onClose]);
+  return <div className="drawer-overlay" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><aside className="drawer" role="dialog" aria-modal="true" aria-label="System details" tabIndex={-1} ref={ref}><button className="drawer-close" aria-label="Close system details" onClick={onClose}><X size={18} /></button><div className="drawer-body">{children}</div></aside></div>;
 }
 
 function ExportMenu({ api }: { api: API }) {
@@ -649,6 +775,33 @@ function ExportMenu({ api }: { api: API }) {
 
 function About({ onClose }: { onClose: () => void }) {
   return <div className="modal-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) onClose(); }}><section className="about-modal"><button onClick={onClose}><X size={18} /></button><Brand /><p className="eyebrow">PRODUCT BOUNDARY</p><h2>Lens discovers and assesses exposure.</h2><p>It observes, normalizes, correlates, and reports factual inventory, operator context, and clearly labelled catalogue potential.</p><div className="boundary-grid"><span><CheckCircle2 size={15} /> Discovers systems and connections</span><span><CheckCircle2 size={15} /> Preserves sanitized evidence</span><span><CheckCircle2 size={15} /> Explains categorical findings</span><span><X size={15} /> No composite risk score</span><span><X size={15} /> No authorization verification or invocation</span><span><X size={15} /> No remediation or enforcement</span></div><small>Discovery Snapshot 1.2 adds cloud inventory while Hub continues accepting 1.1 collectors.</small></section></div>;
+}
+
+function AccountSettings({ api, onDeleted }: { api: API; onDeleted: () => Promise<void> }) {
+  const session = useRemote(() => api.session(), [api]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  if (session.loading) return <Loading />;
+  if (session.error || !session.data) return <Failure error={session.error} retry={session.reload} />;
+  const removeIdentity = async () => {
+    if (!window.confirm("Delete your Lens identity? This signs you out and cannot be undone.")) return;
+    setBusy(true); setError("");
+    try { await api.deleteAccount(); await onDeleted(); } catch (reason) { setError(String(reason)); setBusy(false); }
+  };
+  const removeWorkspace = async () => {
+    if (!window.confirm(`Delete ${session.data!.workspace.name} and all Lens data immediately?`)) return;
+    setBusy(true); setError("");
+    try { await api.deleteWorkspace(session.data!.workspace.id); await onDeleted(); } catch (reason) { setError(String(reason)); setBusy(false); }
+  };
+  return <div className="page-stack"><section className="panel settings-panel"><PanelHeading title="Your account" detail={`${session.data.user.id} · ${pretty(session.data.role)}`} /><p>{session.data.can_delete_account ? "You can delete your identity. Workspace evidence and settings remain available to other members." : "You are the workspace's sole owner. Transfer ownership or delete the workspace before deleting your identity."}</p><button className="button subtle" disabled={busy || !session.data.can_delete_account} onClick={removeIdentity}>Delete my identity</button></section>{session.data.role === "owner" && <section className="panel settings-panel danger-zone"><PanelHeading title="Delete workspace" detail="Immediately deletes connections, inventory, findings, evidence, and member access." /><button className="button quiet" disabled={busy} onClick={removeWorkspace}>Delete workspace</button></section>}{error && <InlineError text={error} />}</div>;
+}
+
+function NotificationBell({ api, revision, onOpen }: { api: API; revision: number; onOpen: () => void }) {
+  const notifications = useRemote(() => api.notifications(), [api, revision]);
+  const unread = notifications.data?.items.filter((item) => !item.read_at) ?? [];
+  if (!unread.length) return null;
+  const latest = unread[0];
+  return <button className="notification-button" title={`${unread.length} unread setup notifications`} onClick={() => { api.readNotification(latest.id).then(notifications.reload); onOpen(); }}><Activity size={15} /><b>{unread.length}</b></button>;
 }
 
 function Loading() { return <div className="loading"><Radar size={25} /><span>Resolving discovery posture…</span></div>; }

@@ -75,17 +75,20 @@ func (w CloudWorker) processOne(ctx context.Context) (bool, error) {
 	if err != nil {
 		return true, w.failOrRetry(ctx, job, err)
 	}
-	scanContext, cancel := context.WithCancel(ctx)
+	scanContext, cancel := context.WithTimeout(ctx, 15*time.Minute)
 	defer cancel()
 	disconnected := make(chan struct{})
 	go w.cancelWhenDisconnected(scanContext, cancel, job.Environment.OrganizationID, job.Environment.ID, disconnected)
 	progress := func(value cloud.Progress) {
 		encoded, _ := json.Marshal(value)
-		_, _ = w.Pool.Exec(scanContext, `UPDATE cloud_scan_jobs SET phase=$2,progress=$3 WHERE id=$1 AND status='running'`, job.ID, value.Phase, encoded)
+		_, _ = w.Pool.Exec(scanContext, `UPDATE cloud_scan_jobs SET phase=$2,progress=$3,heartbeat_at=now(),lease_expires_at=now()+interval '5 minutes' WHERE id=$1 AND status='running'`, job.ID, value.Phase, encoded)
 	}
 	snapshot, scanErr := adapter.Scan(scanContext, job.Environment, 0, progress)
 	close(disconnected)
 	if scanContext.Err() != nil {
+		if errors.Is(scanContext.Err(), context.DeadlineExceeded) {
+			return true, w.failOrRetry(ctx, job, &cloud.Error{Code: "scan_timeout", Message: "The provider scan exceeded 15 minutes", Retryable: true, Cause: scanContext.Err()})
+		}
 		_, _ = w.Pool.Exec(ctx, `UPDATE cloud_scan_jobs SET status='cancelled',phase='cancelled',completed_at=now(),error_code='disconnected',error_message='The environment was disconnected' WHERE id=$1 AND status IN ('running','queued')`, job.ID)
 		return true, nil
 	}
@@ -117,7 +120,7 @@ func (w CloudWorker) processOne(ctx context.Context) (bool, error) {
 	}
 	_, err = tx.Exec(ctx, `INSERT INTO ingestion_jobs(id,organization_id,source_id,snapshot_id,status,payload) VALUES($1,$2,$3,$4,'pending',$5)`, ingestionID, job.Environment.OrganizationID, job.Environment.SourceID, snapshot.SnapshotID, payload)
 	if err == nil {
-		_, err = tx.Exec(ctx, `UPDATE cloud_scan_jobs SET status='ingesting',phase='normalizing',progress=$2,ingestion_job_id=$3,error_code=NULL,error_message=NULL WHERE id=$1`, job.ID, jsonBytes(map[string]any{"entities": len(snapshot.Entities), "relationships": len(snapshot.Relationships), "coverage": snapshot.Coverage}), ingestionID)
+		_, err = tx.Exec(ctx, `UPDATE cloud_scan_jobs SET status='ingesting',phase='normalizing',progress=$2,ingestion_job_id=$3,error_code=NULL,error_message=NULL,heartbeat_at=now(),lease_expires_at=now()+interval '5 minutes' WHERE id=$1`, job.ID, jsonBytes(map[string]any{"entities": len(snapshot.Entities), "relationships": len(snapshot.Relationships), "coverage": snapshot.Coverage}), ingestionID)
 	}
 	if err != nil {
 		return true, err
@@ -131,6 +134,14 @@ func (w CloudWorker) claimOne(ctx context.Context) (claimedCloudJob, bool, error
 		return claimedCloudJob{}, false, err
 	}
 	defer tx.Rollback(ctx)
+	if _, err := tx.Exec(ctx, `UPDATE cloud_scan_jobs SET status='queued',phase='recovered',next_attempt_at=now(),started_at=NULL,lease_expires_at=NULL,heartbeat_at=NULL
+		WHERE status IN ('running','ingesting') AND lease_expires_at<now() AND attempts<5`); err != nil {
+		return claimedCloudJob{}, false, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE cloud_scan_jobs SET status='failed',phase='lease_expired',completed_at=now(),error_code='worker_interrupted',error_message='The scan worker stopped repeatedly before completion',lease_expires_at=NULL
+		WHERE status IN ('running','ingesting') AND lease_expires_at<now() AND attempts>=5`); err != nil {
+		return claimedCloudJob{}, false, err
+	}
 	var job claimedCloudJob
 	var config []byte
 	err = tx.QueryRow(ctx, `SELECT j.id,j.trigger,j.attempts,j.created_at,e.id::text,e.organization_id,e.provider,e.external_id,e.display_name,e.source_id,e.target_id,e.configuration
@@ -145,7 +156,7 @@ func (w CloudWorker) claimOne(ctx context.Context) (claimedCloudJob, bool, error
 		return claimedCloudJob{}, false, err
 	}
 	job.Environment.Configuration = config
-	if _, err = tx.Exec(ctx, `UPDATE cloud_scan_jobs SET status='running',phase='acquiring_credentials',started_at=COALESCE(started_at,now()),attempts=attempts+1 WHERE id=$1`, job.ID); err != nil {
+	if _, err = tx.Exec(ctx, `UPDATE cloud_scan_jobs SET status='running',phase='acquiring_credentials',started_at=COALESCE(started_at,now()),attempts=attempts+1,heartbeat_at=now(),lease_expires_at=now()+interval '5 minutes' WHERE id=$1`, job.ID); err != nil {
 		return claimedCloudJob{}, true, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -222,6 +233,8 @@ func (w CloudWorker) failOrRetry(ctx context.Context, job claimedCloudJob, scanE
 }
 
 func (w CloudWorker) finalizeOne(ctx context.Context) (bool, error) {
+	_, _ = w.Pool.Exec(ctx, `UPDATE cloud_scan_jobs j SET heartbeat_at=now(),lease_expires_at=now()+interval '5 minutes'
+		FROM ingestion_jobs i WHERE j.status='ingesting' AND j.ingestion_job_id=i.id AND i.status IN ('pending','processing')`)
 	tx, err := w.Pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return false, err
@@ -250,7 +263,7 @@ func (w CloudWorker) finalizeOne(ctx context.Context) (bool, error) {
 	} else if partial {
 		status, phase = "partial", "complete"
 	}
-	_, err = tx.Exec(ctx, `UPDATE cloud_scan_jobs SET status=$2,phase=$3,completed_at=now(),error_code=CASE WHEN $2='failed' THEN 'normalization_failed' ELSE error_code END,error_message=CASE WHEN $2='failed' THEN 'Lens could not normalize the provider result' ELSE error_message END WHERE id=$1`, jobID, status, phase)
+	_, err = tx.Exec(ctx, `UPDATE cloud_scan_jobs SET status=$2,phase=$3,completed_at=now(),lease_expires_at=NULL,error_code=CASE WHEN $2='failed' THEN 'normalization_failed' ELSE error_code END,error_message=CASE WHEN $2='failed' THEN 'Lens could not normalize the provider result' ELSE error_message END WHERE id=$1`, jobID, status, phase)
 	if err == nil && trigger == "first_scan" && status != "failed" {
 		_, err = tx.Exec(ctx, `INSERT INTO notification_outbox(id,organization_id,event_type,payload) VALUES($1,$2,'first_scan_completed',$3) ON CONFLICT DO NOTHING`, uuid.New(), orgID, jsonBytes(map[string]any{"environment_id": environmentID.String(), "scan_id": jobID.String(), "status": status}))
 	}

@@ -1,0 +1,31 @@
+# Managed Lens SaaS overlay. Apply after values.yaml.
+# Supply secrets through the Secret named by existingSecret; do not put them here.
+publicURL: https://lens.example.com
+
+auth:
+  mode: clerk
+  clerk:
+    issuer: https://your-instance.clerk.accounts.dev
+    publishableKey: pk_live_replace_me
+    authorizedParty: https://lens.example.com
+
+selfServe:
+  enabled: true
+  cisoOverviewV2: true
+  endpointHandoff: true
+  connectors:
+    aws: false
+    azure: false
+    gcp: false
+    endpoint: true
+    kubernetes: false
+    github: false
+
+exposure:
+  enabled: true
+
+oidc:
+  issuer: ""
+  clientID: ""
+  redirectURI: ""
+  adminGroup: ""

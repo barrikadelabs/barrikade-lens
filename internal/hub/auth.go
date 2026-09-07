@@ -130,6 +130,14 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 		if role == "" && claims.Admin {
 			role = "owner"
 		}
+		if claims.SourceID != "" {
+			var active bool
+			err = a.Pool.QueryRow(request.Context(), `SELECT revoked_at IS NULL FROM sources WHERE organization_id=$1 AND id=$2`, claims.OrganizationID, claims.SourceID).Scan(&active)
+			if err != nil || !active {
+				writeError(writer, http.StatusUnauthorized, "source_revoked", "The collector source is no longer active")
+				return
+			}
+		}
 		principal := Principal{OrganizationID: claims.OrganizationID, SourceID: claims.SourceID, Subject: claims.Subject, Scopes: scopes, Admin: claims.Admin, Role: role}
 		next.ServeHTTP(writer, request.WithContext(context.WithValue(request.Context(), principalKey{}, principal)))
 	})
@@ -176,19 +184,20 @@ func (a *Authenticator) authenticateClerk(ctx context.Context, raw string) (Prin
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return Principal{}, fmt.Errorf("validate managed account: %w", err)
 	}
-	var membershipStatus string
-	err = a.Pool.QueryRow(ctx, `SELECT status FROM workspace_memberships WHERE organization_id=$1 AND user_id=$2`, organizationID, "clerk:"+verified.Subject).Scan(&membershipStatus)
+	var membershipRole, membershipStatus string
+	err = a.Pool.QueryRow(ctx, `SELECT role,status FROM workspace_memberships WHERE organization_id=$1 AND user_id=$2`, organizationID, "clerk:"+verified.Subject).Scan(&membershipRole, &membershipStatus)
 	if err == nil && membershipStatus != "active" {
 		return Principal{}, fmt.Errorf("workspace membership is not active")
 	}
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return Principal{}, fmt.Errorf("validate workspace membership: %w", err)
 	}
+	if err == nil {
+		role = membershipRole
+	}
 	role = normalizeWorkspaceRole(role)
 	scopes := scopesForWorkspaceRole(role)
-	for _, permission := range permissions {
-		scopes[permission] = true
-	}
+	_ = permissions // Clerk permissions are identity-provider context; Lens roles authorize application access.
 	return Principal{OrganizationID: organizationID, Subject: "clerk:" + verified.Subject, Role: role, Admin: role == "owner" || role == "admin", Scopes: scopes}, nil
 }
 
