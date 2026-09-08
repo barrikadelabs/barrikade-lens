@@ -19,7 +19,41 @@ paths:
   /v1/auth/clerk/webhook:
     post: {security: [], operationId: receiveClerkWebhook, description: Signed and idempotent asynchronous membership and account cleanup., responses: {'202': {description: Clerk lifecycle event accepted}, '401': {description: Invalid Svix signature}}}
   /v1/session:
-    get: {operationId: getSession, responses: {'200': {description: 'Active user, workspace, role, and permissions'}, '401': {description: 'Session expired, revoked, banned, or has no active organization'}}}
+    get:
+      operationId: getSession
+      responses:
+        '200':
+          description: Active user, workspace, role, permissions, and analytics preference
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Session'}
+        '401': {description: 'Session expired, revoked, banned, or has no active organization'}
+  /v1/session/analytics:
+    patch:
+      operationId: updateSessionAnalytics
+      description: Updates the authenticated managed account's prospective analytics preference.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [enabled]
+              properties:
+                enabled: {type: boolean}
+      responses:
+        '200':
+          description: Analytics preference updated
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [enabled]
+                properties:
+                  enabled: {type: boolean}
+        '404': {description: Analytics preferences are unavailable in this deployment}
   /v1/account:
     delete: {operationId: deleteAccount, description: Deletes the current Clerk identity through the Lens backend after enforcing sole-owner rules., responses: {'204': {description: Identity deleted}, '409': {description: Sole owner must transfer ownership or delete the workspace first}, '503': {description: Clerk identity deletion is temporarily unavailable}}}
   /v1/workspaces/bootstrap:
@@ -151,6 +185,33 @@ components:
     Limit: {name: limit, in: query, schema: {type: integer, minimum: 1, maximum: 1000, default: 100}}
     Cursor: {name: cursor, in: query, schema: {type: string}, description: Opaque seek-pagination cursor returned by the previous page}
   schemas:
+    Session:
+      type: object
+      additionalProperties: false
+      required: [user, workspace, role, permissions, needs_bootstrap, can_delete_account, analytics]
+      properties:
+        user:
+          type: object
+          additionalProperties: false
+          required: [id]
+          properties: {id: {type: string}}
+        workspace:
+          type: object
+          additionalProperties: false
+          required: [id, name]
+          properties: {id: {type: string}, name: {type: string}}
+        role: {enum: [owner, admin, viewer]}
+        permissions: {type: array, items: {type: string}}
+        needs_bootstrap: {type: boolean}
+        can_delete_account: {type: boolean}
+        analytics:
+          type: object
+          additionalProperties: false
+          required: [enabled, user_id, workspace_id]
+          properties:
+            enabled: {type: boolean}
+            user_id: {type: string, pattern: '^(phu_[a-f0-9]{64})?$'}
+            workspace_id: {type: string, pattern: '^(phw_[a-f0-9]{64})?$'}
     Enrollment:
       type: object
       additionalProperties: false
