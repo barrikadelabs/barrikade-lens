@@ -353,6 +353,15 @@ func recomputeRelationshipFromCurrentObservations(ctx context.Context, tx pgx.Tx
 
 func postureRole(kind string, attrs map[string]any) (string, string) {
 	if kind == string(discovery.KindAgent) {
+		// Markdown definitions bundled beneath an installed runtime describe helper
+		// personas/components. They are useful inventory, but are not evidence that
+		// each definition is independently deployed as an autonomous root system.
+		// Keep the legacy shape check so existing observations are corrected before
+		// every endpoint has reported with the explicit entity_role marker.
+		if attrs["entity_role"] == "runtime_helper_definition" ||
+			(attrs["definition_format"] == "agent_markdown" && attrs["source_surface"] == "endpoint" && attrs["defined"] == true) {
+			return "component", ""
+		}
 		return "system", "autonomous_agent"
 	}
 	if kind == string(discovery.KindRuntime) {

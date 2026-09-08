@@ -6,7 +6,13 @@ async function authenticateDevelopment(page: Page) {
     mode: "development", enabled: false, development_bootstrap: true, exposure_enabled: true,
     self_serve_enabled: true, connectors: { endpoint: true, aws: false, azure: false, gcp: false, github: false, kubernetes: false },
   }}));
+  await page.route("**/v1/session", async (route) => route.fulfill({ json: {
+    user: { id: "browser-user" }, workspace: { id: "browser-workspace", name: "Browser test" }, role: "owner",
+    permissions: [], needs_bootstrap: false, can_delete_account: true,
+    analytics: { enabled: false, user_id: "browser-user", workspace_id: "browser-workspace" },
+  }}));
   await page.route("**/v1/notifications", async (route) => route.fulfill({ json: { items: [] } }));
+  await page.route("**/v1/products", async (route) => route.fulfill({ json: { items: [] } }));
 }
 
 test("delegated endpoint setup selects a platform before issuing a command", async ({ page }) => {
@@ -40,7 +46,6 @@ test("CISO overview makes an unassessed workspace actionable without navigation 
     changes: [], data_quality: { confidence: {}, confidence_note: "No evidence yet", coverage_note: "Connect an endpoint" },
     executive_summary: { coverage_state: "unassessed", systems: { known: 0, fresh: 0, stale: 0, fresh_by_type: {}, stale_by_type: {} }, findings: { fresh: 0, stale: 0, fresh_by_severity: {}, stale_by_severity: {} }, effective_ownership: { owned: 0, unowned: 0, unassigned_high_priority_findings: 0 }, top_findings: [] },
   }}));
-  await page.route("**/v1/systems?*", async (route) => route.fulfill({ json: { items: [], limit: 50 } }));
   await page.goto("/overview");
   await expect(page.getByRole("heading", { name: "Your organization is unassessed" })).toBeVisible();
   await expect(page.getByRole("button", { name: /Connect endpoint/ })).toBeVisible();

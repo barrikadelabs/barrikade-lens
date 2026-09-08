@@ -210,6 +210,7 @@ func (s *Server) routes() {
 	authenticated.HandleFunc("GET /v1/entities", s.listEntities)
 	authenticated.HandleFunc("GET /v1/entities/{id}", s.getEntity)
 	authenticated.HandleFunc("GET /v1/overview", s.overview)
+	authenticated.HandleFunc("GET /v1/products", s.listProducts)
 	authenticated.HandleFunc("GET /v1/systems", s.listSystems)
 	authenticated.HandleFunc("GET /v1/systems/{id}", s.getSystem)
 	authenticated.HandleFunc("GET /v1/targets", s.listTargets)

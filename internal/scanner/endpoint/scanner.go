@@ -749,6 +749,7 @@ func scanAgentDefinitions(
 		agentAttributes := map[string]any{
 			"state_present": true, "descriptor_valid": true, "definition_format": "agent_markdown",
 			"source_surface": "endpoint", "product_id": signature.ID, "defined": true,
+			"entity_role": "runtime_helper_definition",
 		}
 		runtimeID := addRuntime(runtimeAttributes, ref)
 		agentID := b.AddEntity(

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -346,6 +347,117 @@ func freshPostureTargetSQL(postureAlias string) string {
 	return postureAlias + `.target_id IS NULL OR EXISTS(SELECT 1 FROM discovery_targets freshness_target WHERE freshness_target.organization_id=` + postureAlias + `.organization_id AND freshness_target.id=` + postureAlias + `.target_id AND freshness_target.current=true AND freshness_target.last_seen_at IS NOT NULL AND freshness_target.last_seen_at>=now()-CASE freshness_target.target_type WHEN 'endpoint' THEN interval '60 minutes' WHEN 'kubernetes' THEN interval '12 hours' ELSE interval '36 hours' END)`
 }
 
+// listProducts is an organization-level projection over target-scoped system
+// instances. Product identity never replaces an instance: it groups installations
+// for presentation while retaining each endpoint, evidence age, and observed user.
+func (s *Server) listProducts(w http.ResponseWriter, r *http.Request) {
+	principal, err := requireScope(r, "inventory:read")
+	if err != nil {
+		writeError(w, 403, "forbidden", err.Error())
+		return
+	}
+	rows, err := s.db(r.Context()).Query(r.Context(), `SELECT p.product_id,e.id,e.kind,e.name,p.surface,p.system_type,p.product_category,p.discovery_state,p.confidence,p.first_seen_at,p.last_seen_at,
+		p.target_id,t.name,t.target_type,t.last_seen_at,
+		COALESCE(array_agg(DISTINCT observed_user.id) FILTER (WHERE observed_user.id IS NOT NULL),'{}'),
+		COALESCE(array_agg(DISTINCT observed_user.name) FILTER (WHERE observed_user.id IS NOT NULL),'{}')
+		FROM entity_posture p
+		JOIN entities e ON e.organization_id=p.organization_id AND e.id=p.entity_id
+		LEFT JOIN discovery_targets t ON t.organization_id=p.organization_id AND t.id=p.target_id
+		LEFT JOIN relationships observed ON observed.organization_id=p.organization_id AND observed.from_entity=p.entity_id AND observed.current=true AND observed.kind='owned_by' AND COALESCE((observed.attributes->>'authoritative')::boolean,false)=false
+		LEFT JOIN entities observed_user ON observed_user.organization_id=observed.organization_id AND observed_user.id=observed.to_entity AND observed_user.current=true AND observed_user.kind='user'
+		WHERE p.organization_id=$1 AND p.current=true AND p.system_role='system' AND NULLIF(btrim(COALESCE(p.product_id,'')),'') IS NOT NULL
+		GROUP BY p.product_id,e.id,e.kind,e.name,p.surface,p.system_type,p.product_category,p.discovery_state,p.confidence,p.first_seen_at,p.last_seen_at,p.target_id,t.name,t.target_type,t.current,t.last_seen_at
+		ORDER BY p.product_id,`+freshTargetSQL("p", "t")+` DESC,p.last_seen_at DESC,e.id`, principal.OrganizationID)
+	if err != nil {
+		writeError(w, 500, "database_error", "Could not query products")
+		return
+	}
+	defer rows.Close()
+	type productProjection struct {
+		ID                string
+		Name              string
+		SystemType        *string
+		ProductCategory   *string
+		InstallationCount int
+		FreshCount        int
+		StaleCount        int
+		RunningCount      int
+		LastSeenAt        time.Time
+		ObservedUsers     []string
+		Instances         []map[string]any
+		userIDSet         map[string]struct{}
+		userSet           map[string]struct{}
+	}
+	products := map[string]*productProjection{}
+	order := []string{}
+	now := time.Now().UTC()
+	for rows.Next() {
+		var productID, entityID, kind, name, surface, state, confidence string
+		var systemType, productCategory, targetID, targetName, targetType *string
+		var firstSeen, lastSeen time.Time
+		var targetLastSeen *time.Time
+		var observedUserIDs, observedUsers []string
+		if err := rows.Scan(&productID, &entityID, &kind, &name, &surface, &systemType, &productCategory, &state, &confidence, &firstSeen, &lastSeen, &targetID, &targetName, &targetType, &targetLastSeen, &observedUserIDs, &observedUsers); err != nil {
+			writeError(w, 500, "database_error", "Could not read products")
+			return
+		}
+		product := products[productID]
+		if product == nil {
+			product = &productProjection{ID: productID, Name: name, SystemType: systemType, ProductCategory: productCategory, userIDSet: map[string]struct{}{}, userSet: map[string]struct{}{}}
+			products[productID] = product
+			order = append(order, productID)
+		}
+		freshness := "unknown"
+		if targetType != nil {
+			freshness = freshnessState(*targetType, targetLastSeen, now)
+		}
+		if freshness == "fresh" || targetType == nil {
+			product.FreshCount++
+		} else {
+			product.StaleCount++
+		}
+		if state == "running" {
+			product.RunningCount++
+		}
+		product.InstallationCount++
+		if lastSeen.After(product.LastSeenAt) {
+			product.LastSeenAt = lastSeen
+		}
+		for _, userID := range observedUserIDs {
+			product.userIDSet[userID] = struct{}{}
+		}
+		for _, user := range observedUsers {
+			if strings.TrimSpace(user) != "" {
+				product.userSet[user] = struct{}{}
+			}
+		}
+		product.Instances = append(product.Instances, map[string]any{
+			"id": entityID, "kind": kind, "name": name, "target_id": targetID, "target_name": targetName,
+			"target_freshness": freshness, "surface": surface, "system_type": systemType, "state": state,
+			"confidence": confidence, "first_seen_at": firstSeen, "last_seen_at": lastSeen, "observed_users": observedUsers,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		writeError(w, 500, "database_error", "Could not read products")
+		return
+	}
+	items := make([]map[string]any, 0, len(order))
+	for _, id := range order {
+		product := products[id]
+		users := make([]string, 0, len(product.userSet))
+		for user := range product.userSet {
+			users = append(users, user)
+		}
+		slices.Sort(users)
+		items = append(items, map[string]any{
+			"id": product.ID, "name": product.Name, "system_type": product.SystemType, "product_category": product.ProductCategory,
+			"installation_count": product.InstallationCount, "fresh_count": product.FreshCount, "stale_count": product.StaleCount,
+			"running_count": product.RunningCount, "observed_user_count": len(product.userIDSet), "observed_users": users, "last_seen_at": product.LastSeenAt, "instances": product.Instances,
+		})
+	}
+	writeJSON(w, 200, map[string]any{"items": items})
+}
+
 func (s *Server) listSystems(w http.ResponseWriter, r *http.Request) {
 	principal, err := requireScope(r, "inventory:read")
 	if err != nil {
@@ -384,7 +496,7 @@ func (s *Server) listSystems(w http.ResponseWriter, r *http.Request) {
 	args := []any{principal.OrganizationID}
 	freshness := r.URL.Query().Get("freshness")
 	if freshness == "" {
-		freshness = "fresh"
+		freshness = "all"
 	}
 	switch freshness {
 	case "fresh":
@@ -400,7 +512,7 @@ func (s *Server) listSystems(w http.ResponseWriter, r *http.Request) {
 		args = append(args, value)
 		query += fmt.Sprintf(condition, len(args))
 	}
-	filters := []struct{ Param, Column string }{{"system_type", "p.system_type"}, {"state", "p.discovery_state"}, {"surface", "p.surface"}, {"target_id", "p.target_id"}, {"confidence", "p.confidence"}, {"network_scope", "p.network_scope"}}
+	filters := []struct{ Param, Column string }{{"system_type", "p.system_type"}, {"product_id", "p.product_id"}, {"state", "p.discovery_state"}, {"surface", "p.surface"}, {"target_id", "p.target_id"}, {"confidence", "p.confidence"}, {"network_scope", "p.network_scope"}}
 	for _, filter := range filters {
 		if value := r.URL.Query().Get(filter.Param); value != "" {
 			add(` AND `+filter.Column+`=$%d`, value)

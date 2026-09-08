@@ -12,7 +12,7 @@ Prefer durable ecosystem contracts over product-name lists:
 
 - Parse both the established `mcpServers` shape and the current MCP `servers` shape, but require each child to contain a non-empty command, endpoint, or recognized transport.
 - Treat a `SKILL.md` as a skill only when its frontmatter satisfies the open Agent Skills metadata rules. Linked skill directories are supported, bounded, and never recursively followed outside the descriptor.
-- Treat `.agent.md` and known user-agent-root documents as agent definitions only when they contain a valid, non-empty definition. `AGENTS.md`, `CLAUDE.md`, and similar files are repository instructions, not autonomous agents.
+- Treat `.agent.md` and known user-agent-root documents as agent definitions only when they contain a valid, non-empty definition. Runtime-bundled definitions remain subordinate components until deployment evidence establishes an autonomous root system. `AGENTS.md`, `CLAUDE.md`, and similar files are repository instructions, not autonomous agents.
 - Validate A2A Agent Cards by shape and support both the current `supportedInterfaces` endpoints and the earlier top-level URL.
 - Match container images and packages on identifier boundaries. Substrings such as `notollama` or `langchain-helper` must not match `ollama` or `langchain`.
 - Scope dependencies and source imports to their ecosystem with `language_packages` and `language_imports`; for example, Python's unrelated `ai` package must not identify the JavaScript Vercel AI SDK. For npm, Lens parses dependency collections rather than matching package names in keywords, descriptions, or funding URLs.

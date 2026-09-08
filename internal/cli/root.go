@@ -27,11 +27,13 @@ import (
 var Version = "2.0.0-dev"
 
 type Dependencies struct {
-	In             io.Reader
-	Out            io.Writer
-	Err            io.Writer
-	CollectOnce    func(context.Context, string) error
-	InstallService func(context.Context, string, string) (servicecontrol.Status, error)
+	In                      io.Reader
+	Out                     io.Writer
+	Err                     io.Writer
+	CollectOnce             func(context.Context, string) error
+	InstallService          func(context.Context, string, string) (servicecontrol.Status, error)
+	EnsureInstallPrivileges func(context.Context, []string) (bool, error)
+	Args                    []string
 }
 
 func Execute() int {
@@ -39,6 +41,7 @@ func Execute() int {
 }
 
 func ExecuteWith(dependencies Dependencies, args []string) int {
+	dependencies.Args = append([]string(nil), args...)
 	root := newRoot(dependencies)
 	root.SetArgs(args)
 	if err := root.Execute(); err != nil {
@@ -175,6 +178,19 @@ func newEnrollCommand(dependencies Dependencies) *cobra.Command {
 	command := &cobra.Command{
 		Use: "enroll [code]", Short: "Enroll this endpoint with a Lens Hub", Args: cobra.MaximumNArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
+			if installService {
+				ensurePrivileges := dependencies.EnsureInstallPrivileges
+				if ensurePrivileges == nil {
+					ensurePrivileges = servicecontrol.EnsureInstallPrivileges
+				}
+				relaunched, err := ensurePrivileges(command.Context(), dependencies.Args)
+				if err != nil {
+					return err
+				}
+				if relaunched {
+					return nil
+				}
+			}
 			code := ""
 			if len(args) == 1 {
 				code = args[0]
@@ -240,6 +256,17 @@ func newServiceCommand(dependencies Dependencies) *cobra.Command {
 	command := &cobra.Command{Use: "service", Short: "Manage the background endpoint collector"}
 	command.PersistentFlags().StringVar(&configPath, "config", "", "managed collector configuration path")
 	command.AddCommand(&cobra.Command{Use: "install", Short: "Install and start the managed collector", Args: cobra.NoArgs, RunE: func(command *cobra.Command, args []string) error {
+		ensurePrivileges := dependencies.EnsureInstallPrivileges
+		if ensurePrivileges == nil {
+			ensurePrivileges = servicecontrol.EnsureInstallPrivileges
+		}
+		relaunched, err := ensurePrivileges(command.Context(), dependencies.Args)
+		if err != nil {
+			return err
+		}
+		if relaunched {
+			return nil
+		}
 		if configPath == "" {
 			configPath, _ = lensconfig.Path()
 		}
