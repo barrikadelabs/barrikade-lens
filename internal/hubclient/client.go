@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
@@ -13,6 +14,7 @@ import (
 	"runtime"
 	"strings"
 	"time"
+	"unicode"
 
 	lensconfig "github.com/barrikadelabs/barrikade-lens/internal/config"
 	"github.com/barrikadelabs/barrikade-lens/internal/identity"
@@ -156,7 +158,18 @@ func (c *Client) doJSON(ctx context.Context, method, endpoint, bearer string, bo
 	}
 	defer httpResponse.Body.Close()
 	if httpResponse.StatusCode < 200 || httpResponse.StatusCode >= 300 {
-		return httpError{status: httpResponse.StatusCode}
+		var payload struct {
+			Error struct {
+				Code    string `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		_ = json.NewDecoder(io.LimitReader(httpResponse.Body, 64<<10)).Decode(&payload)
+		return httpError{
+			status:  httpResponse.StatusCode,
+			code:    safeHubErrorCode(payload.Error.Code),
+			message: safeHubErrorMessage(payload.Error.Message),
+		}
 	}
 	if response == nil {
 		return nil
@@ -168,9 +181,44 @@ func (c *Client) doJSON(ctx context.Context, method, endpoint, bearer string, bo
 	return nil
 }
 
-type httpError struct{ status int }
+type httpError struct {
+	status  int
+	code    string
+	message string
+}
 
-func (e httpError) Error() string { return fmt.Sprintf("Hub request failed with HTTP %d", e.status) }
+func (e httpError) Error() string {
+	if e.code != "" && e.message != "" {
+		return fmt.Sprintf("Lens Hub returned %s (HTTP %d): %s", e.code, e.status, e.message)
+	}
+	return fmt.Sprintf("Hub request failed with HTTP %d", e.status)
+}
+
+func safeHubErrorCode(value string) string {
+	if value == "" || len(value) > 64 {
+		return ""
+	}
+	for _, character := range value {
+		if character != '_' && character != '-' && (character < 'a' || character > 'z') && (character < 'A' || character > 'Z') && (character < '0' || character > '9') {
+			return ""
+		}
+	}
+	return value
+}
+
+func safeHubErrorMessage(value string) string {
+	value = strings.Map(func(character rune) rune {
+		if unicode.IsControl(character) {
+			return -1
+		}
+		return character
+	}, value)
+	runes := []rune(strings.TrimSpace(value))
+	if len(runes) > 512 {
+		runes = runes[:512]
+	}
+	return string(runes)
+}
 
 func validateHubURL(raw string) (string, error) {
 	u, err := url.Parse(strings.TrimSpace(raw))

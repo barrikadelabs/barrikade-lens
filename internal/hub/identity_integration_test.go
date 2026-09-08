@@ -30,6 +30,30 @@ func createTestEnrollmentCode(t *testing.T, server *Server, organizationID, code
 	}
 }
 
+func createTestEndpointSetup(t *testing.T, server *Server, organizationID, code string) uuid.UUID {
+	t.Helper()
+	environmentID, setupID := uuid.New(), uuid.New()
+	expiresAt := time.Now().Add(10 * time.Minute)
+	tx, err := server.config.Pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(t.Context())
+	if _, err = tx.Exec(t.Context(), `INSERT INTO environment_connections(id,organization_id,kind,provider,display_name,created_by) VALUES($1,$2,'endpoint','endpoint','Pending endpoint','test')`, environmentID, organizationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(t.Context(), `INSERT INTO connector_setup_sessions(id,organization_id,environment_id,token_hash,kind,created_by,expires_at) VALUES($1,$2,$3,$4,'endpoint','test',$5)`, setupID, organizationID, environmentID, tokenHash(normalizeCode(code)), expiresAt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = tx.Exec(t.Context(), `INSERT INTO enrollment_codes(code_hash,organization_id,environment_id,expires_at,uses_remaining,source_type) VALUES($1,$2,$3,$4,1,'endpoint')`, tokenHash(normalizeCode(code)), organizationID, environmentID, expiresAt); err != nil {
+		t.Fatal(err)
+	}
+	if err = tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	return environmentID
+}
+
 func exchangeTestIdentity(t *testing.T, server *Server, state identity.State, code, hostname string) (*httptest.ResponseRecorder, enrollmentResult) {
 	t.Helper()
 	proof, err := state.Sign(code, hostname, "darwin", "arm64", "2.0.0-test")
@@ -98,19 +122,19 @@ func TestSameHostnameDifferentIdentitiesRemainDistinct(t *testing.T) {
 	server, orgID := newIdentityTestServer(t)
 	firstIdentity, _ := identity.LoadOrCreate(filepath.Join(t.TempDir(), "identity.json"), "http://lens.test")
 	secondIdentity, _ := identity.LoadOrCreate(filepath.Join(t.TempDir(), "identity.json"), "http://lens.test")
-	createTestEnrollmentCode(t, server, orgID, "FIRST-HOST", 1)
-	createTestEnrollmentCode(t, server, orgID, "SECOND-HOST", 1)
+	firstEnvironment := createTestEndpointSetup(t, server, orgID, "FIRST-HOST")
+	secondEnvironment := createTestEndpointSetup(t, server, orgID, "SECOND-HOST")
 	firstResponse, first := exchangeTestIdentity(t, server, firstIdentity, "FIRST-HOST", "shared-name.local")
 	secondResponse, second := exchangeTestIdentity(t, server, secondIdentity, "SECOND-HOST", "shared-name.local")
 	if firstResponse.Code != 200 || secondResponse.Code != 200 || first.TargetID == second.TargetID || first.SourceID == second.SourceID {
-		t.Fatalf("distinct endpoint identities were not preserved")
+		t.Fatalf("distinct endpoint identities were not preserved: first=%d %s second=%d %s", firstResponse.Code, firstResponse.Body.String(), secondResponse.Code, secondResponse.Body.String())
 	}
-	var duplicates int
-	if err := server.config.Pool.QueryRow(t.Context(), `SELECT count(*) FROM discovery_targets t WHERE organization_id=$1 AND EXISTS(SELECT 1 FROM discovery_targets d WHERE d.organization_id=t.organization_id AND d.id<>t.id AND d.target_type=t.target_type AND lower(d.name)=lower(t.name))`, orgID).Scan(&duplicates); err != nil {
+	var activeEnvironments, distinctTargets, distinctSources int
+	if err := server.config.Pool.QueryRow(t.Context(), `SELECT count(*),count(DISTINCT target_id),count(DISTINCT source_id) FROM environment_connections WHERE organization_id=$1 AND id=ANY($2) AND kind='endpoint' AND external_id='shared-name.local' AND connection_status='connected'`, orgID, []uuid.UUID{firstEnvironment, secondEnvironment}).Scan(&activeEnvironments, &distinctTargets, &distinctSources); err != nil {
 		t.Fatal(err)
 	}
-	if duplicates != 2 {
-		t.Fatalf("expected both identities to be duplicate candidates, got %d", duplicates)
+	if activeEnvironments != 2 || distinctTargets != 2 || distinctSources != 2 {
+		t.Fatalf("same-hostname endpoints were collapsed: environments=%d targets=%d sources=%d", activeEnvironments, distinctTargets, distinctSources)
 	}
 }
 
