@@ -52,6 +52,11 @@ spec:
             - {name: LENS_CATALOG_ENABLED, value: {{ .Values.catalog.enabled | quote }}}
             - {name: LENS_CATALOG_MANIFEST, value: {{ .Values.catalog.manifest | quote }}}
             - {name: LENS_EXPOSURE_ENABLED, value: {{ .Values.exposure.enabled | quote }}}
+            - {name: LENS_POSTHOG_ENABLED, value: {{ .Values.analytics.enabled | quote }}}
+            - {name: LENS_POSTHOG_HOST, value: {{ .Values.analytics.host | quote }}}
+            - {name: LENS_DEPLOYMENT_ENVIRONMENT, value: {{ .Values.analytics.deploymentEnvironment | quote }}}
+            - {name: LENS_POSTHOG_PROJECT_TOKEN, valueFrom: {secretKeyRef: {name: {{ .Values.existingSecret }}, key: posthog-project-token, optional: true}}}
+            - {name: LENS_POSTHOG_ID_SALT, valueFrom: {secretKeyRef: {name: {{ .Values.existingSecret }}, key: posthog-id-salt, optional: true}}}
             - {name: LENS_OIDC_ISSUER, value: {{ .Values.oidc.issuer | quote }}}
             - {name: LENS_OIDC_CLIENT_ID, value: {{ .Values.oidc.clientID | quote }}}
             - {name: LENS_OIDC_REDIRECT_URI, value: {{ .Values.oidc.redirectURI | quote }}}

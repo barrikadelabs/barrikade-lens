@@ -172,7 +172,9 @@ func (s *Server) getEntity(w http.ResponseWriter, r *http.Request) {
 	attributes, _ := item["attributes"].(map[string]any)
 	name, _ := item["name"].(string)
 	item["evidence"] = s.evidenceForEntity(r.Context(), principal.OrganizationID, r.PathValue("id"), name, attributes, 500)
-	s.trackFirstResultViewed(r.Context(), principal, "entity")
+	if postureErr == nil && systemRole != nil && *systemRole == "system" {
+		s.trackFirstResultViewed(r.Context(), principal, "inventory")
+	}
 	writeJSON(w, 200, item)
 }
 
@@ -444,6 +446,14 @@ func (s *Server) exports(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := exporter.Write(w, snapshot, exportFormat); err != nil {
 		s.config.Logger.Error("export failed", "error", err)
+		return
+	}
+	analyticsFormat := "json"
+	if exportFormat == exporter.FormatCycloneDX {
+		analyticsFormat = "cyclonedx"
+	}
+	if err := recordProductEvent(r.Context(), s.db(r.Context()), s.config.ProductAnalytics, ProductEvent{OrganizationID: principal.OrganizationID, ActorID: principal.Subject, Name: "export_generated", Properties: map[string]any{"export_format": analyticsFormat}}); err != nil {
+		s.config.Logger.Warn("analytics event rejected", "event", "export_generated", "error", err)
 	}
 }
 

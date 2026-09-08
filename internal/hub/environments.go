@@ -88,12 +88,62 @@ func (s *Server) getSession(w http.ResponseWriter, r *http.Request) {
 	if !needsBootstrap {
 		_ = s.db(r.Context()).QueryRow(r.Context(), `SELECT count(*) FROM workspace_memberships WHERE organization_id=$1 AND role='owner' AND status='active'`, principal.OrganizationID).Scan(&ownerCount)
 	}
+	analyticsEnabled := false
+	if s.config.ProductAnalytics.Enabled && strings.HasPrefix(principal.Subject, "clerk:") {
+		var optedOut bool
+		if err := s.config.WorkerPool.QueryRow(r.Context(), `SELECT analytics_opted_out_at IS NOT NULL FROM managed_users WHERE user_id=$1`, principal.Subject).Scan(&optedOut); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, 500, "database_error", "Could not load analytics preference")
+			return
+		}
+		analyticsEnabled = !optedOut
+	}
 	writeJSON(w, 200, map[string]any{
 		"user":      map[string]any{"id": principal.Subject},
 		"workspace": map[string]any{"id": principal.OrganizationID, "name": name},
 		"role":      role, "permissions": permissions, "needs_bootstrap": needsBootstrap,
 		"can_delete_account": role != "owner" || ownerCount > 1,
+		"analytics": map[string]any{
+			"enabled": analyticsEnabled,
+			"user_id": func() string {
+				if analyticsEnabled {
+					return s.config.ProductAnalytics.UserID(principal.Subject)
+				}
+				return ""
+			}(),
+			"workspace_id": func() string {
+				if analyticsEnabled && !needsBootstrap {
+					return s.config.ProductAnalytics.WorkspaceID(principal.OrganizationID)
+				}
+				return ""
+			}(),
+		},
 	})
+}
+
+func (s *Server) updateSessionAnalytics(w http.ResponseWriter, r *http.Request) {
+	principal, ok := principalFrom(r.Context())
+	if !ok || !s.config.ProductAnalytics.Enabled || !strings.HasPrefix(principal.Subject, "clerk:") {
+		writeError(w, http.StatusNotFound, "analytics_unavailable", "Analytics preferences are not available")
+		return
+	}
+	var request struct {
+		Enabled *bool `json:"enabled"`
+	}
+	if err := decodeJSON(w, r, &request, 8<<10); err != nil {
+		return
+	}
+	if request.Enabled == nil {
+		writeError(w, http.StatusBadRequest, "invalid_preference", "enabled must be provided")
+		return
+	}
+	_, err := s.config.WorkerPool.Exec(r.Context(), `INSERT INTO managed_users(user_id,status,analytics_opted_out_at,updated_at)
+		VALUES($1,'active',CASE WHEN $2 THEN NULL ELSE now() END,now())
+		ON CONFLICT(user_id) DO UPDATE SET analytics_opted_out_at=CASE WHEN $2 THEN NULL ELSE now() END,updated_at=now()`, principal.Subject, *request.Enabled)
+	if err != nil {
+		writeError(w, 500, "database_error", "Could not update analytics preference")
+		return
+	}
+	writeJSON(w, 200, map[string]bool{"enabled": *request.Enabled})
 }
 
 func (s *Server) bootstrapWorkspace(w http.ResponseWriter, r *http.Request) {
@@ -136,10 +186,9 @@ func (s *Server) bootstrapWorkspace(w http.ResponseWriter, r *http.Request) {
 		_, err = tx.Exec(r.Context(), `INSERT INTO workspace_audit_events(id,organization_id,actor_id,event_type,target_type,target_id) VALUES($1,$2,$3,'workspace.created','workspace',$2)`, uuid.New(), principal.OrganizationID, principal.Subject)
 	}
 	if err == nil && created {
-		_, err = tx.Exec(r.Context(), `INSERT INTO product_events(id,organization_id,actor_id,event_type) VALUES($1,$2,$3,'workspace_created')`, uuid.New(), principal.OrganizationID, principal.Subject)
-	}
-	if err == nil && created {
-		_, err = tx.Exec(r.Context(), `INSERT INTO product_events(id,organization_id,actor_id,event_type) VALUES($1,$2,$3,'signup_completed') ON CONFLICT DO NOTHING`, uuid.New(), principal.OrganizationID, principal.Subject)
+		if analyticsErr := recordProductEvent(r.Context(), tx, s.config.ProductAnalytics, ProductEvent{OrganizationID: principal.OrganizationID, ActorID: principal.Subject, Name: "workspace_created", DedupeKey: "workspace"}); analyticsErr != nil {
+			s.config.Logger.Warn("analytics event was not recorded", "event", "workspace_created", "error", analyticsErr)
+		}
 	}
 	if err != nil || tx.Commit(r.Context()) != nil {
 		writeError(w, 500, "database_error", "Could not provision the workspace")
@@ -351,7 +400,9 @@ func (s *Server) createEnvironmentSetupSession(w http.ResponseWriter, r *http.Re
 		_, err = tx.Exec(r.Context(), `INSERT INTO workspace_audit_events(id,organization_id,actor_id,event_type,target_type,target_id,metadata) VALUES($1,$2,$3,'environment.setup_started','environment',$4,$5)`, uuid.New(), principal.OrganizationID, principal.Subject, environmentID.String(), jsonBytes(map[string]any{"kind": request.Kind, "provider": provider}))
 	}
 	if err == nil {
-		_, err = tx.Exec(r.Context(), `INSERT INTO product_events(id,organization_id,actor_id,event_type,properties) VALUES($1,$2,$3,'setup_started',$4)`, uuid.New(), principal.OrganizationID, principal.Subject, jsonBytes(map[string]any{"kind": request.Kind, "provider": provider}))
+		if analyticsErr := recordProductEvent(r.Context(), tx, s.config.ProductAnalytics, ProductEvent{OrganizationID: principal.OrganizationID, ActorID: principal.Subject, Name: "connection_setup_started", Properties: map[string]any{"connection_type": connectionType(request.Kind, provider), "lifecycle_phase": "setup"}, DedupeKey: environmentID.String()}); analyticsErr != nil {
+			s.config.Logger.Warn("analytics event was not recorded", "event", "connection_setup_started", "error", analyticsErr)
+		}
 	}
 	if err != nil || tx.Commit(r.Context()) != nil {
 		if isUniqueViolation(err) {
@@ -505,7 +556,9 @@ func (s *Server) verifyEnvironment(w http.ResponseWriter, r *http.Request) {
 		_, err = tx.Exec(r.Context(), `INSERT INTO workspace_audit_events(id,organization_id,actor_id,event_type,target_type,target_id,metadata) VALUES($1,$2,$3,'environment.verified','environment',$4,$5)`, uuid.New(), principal.OrganizationID, principal.Subject, id.String(), jsonBytes(map[string]any{"provider": *value.Provider, "principal": verification.Principal}))
 	}
 	if err == nil {
-		_, err = tx.Exec(r.Context(), `INSERT INTO product_events(id,organization_id,actor_id,event_type,properties) VALUES($1,$2,$3,'environment_verified',$4),($5,$2,$3,'first_scan_started',$4)`, uuid.New(), principal.OrganizationID, principal.Subject, jsonBytes(map[string]any{"kind": value.Kind, "provider": *value.Provider}), uuid.New())
+		if analyticsErr := recordProductEvent(r.Context(), tx, s.config.ProductAnalytics, ProductEvent{OrganizationID: principal.OrganizationID, ActorID: principal.Subject, Name: "environment_enrolled", Properties: map[string]any{"connection_type": connectionType(value.Kind, *value.Provider), "lifecycle_phase": "enrolled"}, DedupeKey: id.String()}); analyticsErr != nil {
+			s.config.Logger.Warn("analytics event was not recorded", "event", "environment_enrolled", "error", analyticsErr)
+		}
 	}
 	if err != nil || tx.Commit(r.Context()) != nil {
 		writeError(w, 500, "database_error", "Access was verified, but Lens could not activate the environment")
@@ -701,7 +754,9 @@ func (s *Server) disconnectEnvironment(w http.ResponseWriter, r *http.Request) {
 		_, err = tx.Exec(r.Context(), `INSERT INTO workspace_audit_events(id,organization_id,actor_id,event_type,target_type,target_id,metadata) VALUES($1,$2,$3,'environment.disconnected','environment',$4,$5)`, uuid.New(), principal.OrganizationID, principal.Subject, environmentID.String(), jsonBytes(map[string]any{"provider": provider}))
 	}
 	if err == nil {
-		_, err = tx.Exec(r.Context(), `INSERT INTO product_events(id,organization_id,actor_id,event_type,properties) VALUES($1,$2,$3,'disconnect',$4)`, uuid.New(), principal.OrganizationID, principal.Subject, jsonBytes(map[string]any{"provider": provider}))
+		if analyticsErr := recordProductEvent(r.Context(), tx, s.config.ProductAnalytics, ProductEvent{OrganizationID: principal.OrganizationID, ActorID: principal.Subject, Name: "connection_removed", Properties: map[string]any{"connection_type": connectionType("", provider), "lifecycle_phase": "removed"}, DedupeKey: environmentID.String()}); analyticsErr != nil {
+			s.config.Logger.Warn("analytics event was not recorded", "event", "connection_removed", "error", analyticsErr)
+		}
 	}
 	if err != nil || tx.Commit(r.Context()) != nil {
 		writeError(w, 500, "database_error", "Could not disconnect the environment")
@@ -810,7 +865,7 @@ func jsonBytes(value any) []byte {
 }
 
 func (s *Server) trackFirstResultViewed(ctx context.Context, principal Principal, surface string) {
-	_, _ = s.db(ctx).Exec(ctx, `INSERT INTO product_events(id,organization_id,actor_id,event_type,properties) VALUES($1,$2,$3,'first_result_viewed',$4) ON CONFLICT DO NOTHING`, uuid.New(), principal.OrganizationID, principal.Subject, jsonBytes(map[string]any{"surface": surface}))
+	_ = recordProductEvent(ctx, s.db(ctx), s.config.ProductAnalytics, ProductEvent{OrganizationID: principal.OrganizationID, ActorID: principal.Subject, Name: "first_credible_discovery_inspected", Properties: map[string]any{"surface": surface}, DedupeKey: "first"})
 }
 
 func isUniqueViolation(err error) bool {

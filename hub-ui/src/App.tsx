@@ -15,6 +15,7 @@ import {
   API, authConfig, exchangeOIDC, type AuthConfig, type Change, type Connection, type Evidence,
   type Environment, type EnvironmentKind, type EnvironmentScan, type ExposureFinding, type Overview, type SetupSession, type SystemDetail, type SystemItem,
 } from "./api";
+import { captureAnalytics, configureAnalytics, resetAnalytics, semanticPage } from "./analytics";
 const EvidenceGraphPage = lazy(() => import("./EvidenceGraph").then((module) => ({ default: module.EvidenceGraphPage })));
 
 type Page = "Overview" | "Findings" | "Inventory" | "Connections" | "Changes" | "Evidence" | "Settings";
@@ -105,7 +106,7 @@ function LegacyApplication({ config }: { config: AuthConfig }) {
   }, [saveToken]);
 
   if (!token) return <LegacySignIn config={config} onToken={saveToken} authError={authError} />;
-  return <Shell api={new API(token)} signOut={() => { sessionStorage.removeItem("lens-token"); setToken(""); }} selfServe={config.self_serve_enabled} />;
+  return <Shell api={new API(token)} signOut={() => { resetAnalytics(); sessionStorage.removeItem("lens-token"); setToken(""); }} selfServe={config.self_serve_enabled} />;
 }
 
 function ClerkApplication({ config }: { config: AuthConfig }) {
@@ -137,7 +138,7 @@ function ClerkApplication({ config }: { config: AuthConfig }) {
   if (!organization && bootstrapped === "needs-workspace") return <main className="signin"><section className="signin-story"><Brand /><div className="signin-copy"><span className="product-kicker"><Radar size={14} /> Set up Lens</span><h1>Name your security workspace.</h1><p>This name identifies the organization whose endpoint footprint Lens will assess.</p></div></section><section className="signin-access"><form className="access-card" onSubmit={(event) => { event.preventDefault(); const value = workspaceName.trim(); if (!value) return; setBootstrapped("creating"); Promise.resolve(memberships.createOrganization?.({ name: value })).then((created) => created && memberships.setActive?.({ organization: created.id })).catch((reason) => { setError(String(reason)); setBootstrapped("needs-workspace"); }); }}><p className="eyebrow">WORKSPACE</p><h2>Organization name</h2><label>Name<input value={workspaceName} maxLength={128} required autoFocus onChange={(event) => setWorkspaceName(event.target.value)} placeholder="Acme Security" /></label><button className="button primary full">Create workspace <ArrowRight size={16} /></button></form></section></main>;
   if (!organization || bootstrapped !== organization.id) return <Loading />;
   const controls = <div className="managed-account-controls"><OrganizationSwitcher hidePersonal organizationProfileMode="modal" afterCreateOrganizationUrl="/" afterSelectOrganizationUrl="/" /><UserButton userProfileMode="modal" /></div>;
-  return <Shell api={api} signOut={() => signOut()} accountControls={controls} selfServe={config.self_serve_enabled} />;
+  return <Shell api={api} signOut={() => { resetAnalytics(); return signOut(); }} accountControls={controls} selfServe={config.self_serve_enabled} analyticsConfig={config.analytics} />;
 }
 
 function ManagedSignIn() {
@@ -213,14 +214,20 @@ function LegacySignIn({ config, onToken, authError }: { config: AuthConfig; onTo
   </main>;
 }
 
-function Shell({ api, signOut, accountControls, selfServe = true }: { api: API; signOut: () => void; accountControls?: ReactNode; selfServe?: boolean }) {
+function Shell({ api, signOut, accountControls, selfServe = true, analyticsConfig }: { api: API; signOut: () => void; accountControls?: ReactNode; selfServe?: boolean; analyticsConfig?: AuthConfig["analytics"] }) {
   const location = useLocation();
   const navigate = useNavigate();
   const page = pageForPath(location.pathname);
   const [menuOpen, setMenuOpen] = useState(false);
   const [revision, setRevision] = useState(0);
   const [exposureEnabled, setExposureEnabled] = useState(false);
+	const analyticsSession = useRemote(() => api.session(), [api]);
   useEffect(() => { authConfig().then((config) => setExposureEnabled(config.exposure_enabled)).catch(() => setExposureEnabled(false)); }, []);
+	useEffect(() => {
+		configureAnalytics(analyticsConfig, analyticsSession.data?.analytics);
+		const lensPage = semanticPage(location.pathname);
+		if (lensPage && analyticsSession.data?.analytics.enabled) captureAnalytics({ name: "lens_page_viewed", properties: { lens_page: lensPage } });
+	}, [analyticsConfig, analyticsSession.data?.analytics, location.pathname]);
   const copy = pageCopy[page];
   return <div className="app-shell">
     <aside className={menuOpen ? "sidebar open" : "sidebar"}>
@@ -257,7 +264,7 @@ function Shell({ api, signOut, accountControls, selfServe = true }: { api: API; 
           <Route path="/connections/:environmentId" element={<ConnectionsPage api={api} revision={revision} onResults={() => navigate("/overview")} />} />
           <Route path="/systems/:systemId/evidence" element={<EvidenceRoute api={api} revision={revision} />} />
           <Route path="/changes" element={<ChangesPage api={api} revision={revision} />} />
-          <Route path="/settings" element={<AccountSettings api={api} onDeleted={async () => signOut()} />} />
+          <Route path="/settings" element={<AccountSettings api={api} onDeleted={async () => signOut()} onAnalyticsChanged={analyticsSession.reload} analyticsAvailable={Boolean(analyticsConfig?.enabled)} />} />
           <Route path="*" element={<Navigate to="/overview" replace />} />
         </Routes>
       </div>
@@ -337,7 +344,13 @@ function FindingsPage({ api, revision }: { api: API; revision: number }) {
   const remote = useRemote(() => api.exposures({ ...filters, cursor }), [api, revision, cursor, search.toString()]);
   const detail = useRemote(() => findingId ? api.exposure(findingId) : Promise.resolve(undefined), [api, findingId]);
   const [items, setItems] = useState<ExposureFinding[]>([]);
+	const inspectedFinding = useRef("");
   useEffect(() => { if (remote.data) setItems((current) => cursor ? [...current, ...remote.data!.items] : remote.data!.items); }, [remote.data, cursor]);
+	useEffect(() => {
+		if (!detail.data || inspectedFinding.current === detail.data.id) return;
+		inspectedFinding.current = detail.data.id;
+		captureAnalytics({ name: "finding_opened", properties: { severity: detail.data.severity, freshness: detail.data.evidence_freshness, owner_state: detail.data.effective_ownership?.owned ? "owned" : "unowned" } });
+	}, [detail.data]);
   const update = (key: string, value: string) => { const next = new URLSearchParams(search); value && value !== "all" ? next.set(key, value) : next.delete(key); setCursor(""); setItems([]); setSearch(next); };
   if (remote.loading && !items.length) return <Loading />;
   if (remote.error) return <Failure error={remote.error} retry={remote.reload} />;
@@ -374,6 +387,7 @@ function SystemsPage({ api, revision }: { api: API; revision: number }) {
   const [next, setNext] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+	const viewedInventory = useRef(false);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -382,6 +396,12 @@ function SystemsPage({ api, revision }: { api: API; revision: number }) {
     }, filters.search ? 220 : 0);
     return () => clearTimeout(timer);
   }, [api, revision, filters, cursor]);
+	useEffect(() => {
+		if (!loading && !error && !viewedInventory.current) {
+			viewedInventory.current = true;
+			captureAnalytics({ name: "inventory_viewed", properties: {} });
+		}
+	}, [error, loading]);
 
   const update = (key: string, value: string) => { setCursor(""); setItems([]); setFilters((current) => ({ ...current, [key]: value })); const next = new URLSearchParams(searchParams); value && value !== "all" ? next.set(key, value) : next.delete(key); setSearchParams(next, { replace: true }); };
   return <div className="page-stack">
@@ -420,6 +440,10 @@ const environmentCatalog: Array<{ kind: EnvironmentKind; title: string; detail: 
   { kind: "kubernetes_cluster", title: "Kubernetes", detail: "Read-only cluster collector", identifier: "Optional cluster reference", icon: Container, connector: "kubernetes" },
 ];
 
+function analyticsConnectionType(kind: EnvironmentKind): "aws" | "azure" | "gcp" | "endpoint" | "github" | "kubernetes" {
+	return ({ aws_account: "aws", azure_subscription: "azure", gcp_project: "gcp", endpoint: "endpoint", github_repository: "github", kubernetes_cluster: "kubernetes" } as const)[kind];
+}
+
 function ConnectionsPage({ api, revision, onResults, startWizard = false }: { api: API; revision: number; onResults: () => void; startWizard?: boolean }) {
   return <div className="page-stack"><EnvironmentsPage api={api} revision={revision} onResults={onResults} startWizard={startWizard} /><CoveragePage api={api} revision={revision} /></div>;
 }
@@ -442,10 +466,20 @@ function EnvironmentsPage({ api, revision, onResults, startWizard = false }: { a
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [platform, setPlatform] = useState<"macos" | "windows" | "linux">("macos");
+	const selectedPlatformEvent = useRef("");
   const [handoff, setHandoff] = useState<{ id: string; url: string; expires_at: string }>();
   const [connectors, setConnectors] = useState<Record<string, boolean>>({});
+	const selected = environmentCatalog.find((item) => item.kind === kind);
+	const isEndpointSetup = setup?.kind === "endpoint" || setup?.setup.method === "managed_collector";
   useEffect(() => { authConfig().then((value) => setConnectors(value.connectors)).catch(() => undefined); }, []);
-  useEffect(() => { if (startWizard && connectors.endpoint && !kind) { setWizard(true); setKind("endpoint"); setName("Endpoint"); } }, [connectors.endpoint, kind, startWizard]);
+  useEffect(() => { if (startWizard && connectors.endpoint && !kind) { setWizard(true); setKind("endpoint"); setName("Endpoint"); captureAnalytics({ name: "connection_type_selected", properties: { connection_type: "endpoint" } }); } }, [connectors.endpoint, kind, startWizard]);
+	useEffect(() => {
+		if (!setup || !isEndpointSetup) return;
+		const key = `${setup.id}:${platform}`;
+		if (selectedPlatformEvent.current === key) return;
+		selectedPlatformEvent.current = key;
+		captureAnalytics({ name: "install_platform_selected", properties: { platform } });
+	}, [isEndpointSetup, platform, setup]);
   useEffect(() => {
     if (!environmentId || !environments.data) return;
     const environment = environments.data.items.find((item) => item.id === environmentId);
@@ -475,8 +509,6 @@ function EnvironmentsPage({ api, revision, onResults, startWizard = false }: { a
   }, [api, collectorConnected, environments, scan, setup]);
 
   const canManage = session.data?.role === "owner" || session.data?.role === "admin";
-  const selected = environmentCatalog.find((item) => item.kind === kind);
-  const isEndpointSetup = setup?.kind === "endpoint" || setup?.setup.method === "managed_collector";
   const reset = () => { setWizard(false); setKind(undefined); setName(""); setExternalID(""); setTenantID(""); setProjectNumber(""); setSetup(undefined); setScan(undefined); setCollectorConnected(false); setMessage(""); setError(""); setHandoff(undefined); if (location.pathname !== "/connections") navigate("/connections", { replace: true }); };
   const createSetup = () => {
     if (!kind) return;
@@ -522,7 +554,7 @@ function EnvironmentsPage({ api, revision, onResults, startWizard = false }: { a
     </section>
     {scan && <section className={`panel scan-progress ${scan.status}`}><div><span className="scan-spinner"><RefreshCw size={18} /></span><div><p className="eyebrow">SCAN STATUS</p><h2>{pretty(scan.phase || scan.status)}</h2><p>{scan.status === "complete" ? "Discovery is complete and results are ready." : scan.status === "partial" ? "Useful results are ready; some detectors or locations could not be read." : scan.safe_error?.message || "Lens is collecting inventory and coverage. Partial results remain visible if one detector fails."}</p></div></div>{["complete", "partial"].includes(scan.status) && <button className="button primary" onClick={onResults}>View results <ArrowRight size={15} /></button>}</section>}
     {wizard && <div className="modal-overlay environment-wizard-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) reset(); }}><section className="environment-wizard"><button className="drawer-close" onClick={reset}><X size={18} /></button><header><p className="eyebrow">ADD ENVIRONMENT</p><h2>{setup ? "Complete provider setup" : kind ? `Connect ${selected?.title}` : "What do you want Lens to scan?"}</h2><p>{setup ? "The generated setup is least-privilege and expires shortly. Lens stores no long-lived cloud keys." : "Every verified environment scans immediately and refreshes daily."}</p></header>
-      {!kind && <div className="environment-catalog">{environmentCatalog.filter(({ connector }) => connectors[connector] === true).map(({ kind: value, title, detail, icon: Icon }) => <button key={value} onClick={() => { setKind(value); setName(title); }}><Icon size={20} /><span><b>{title}</b><small>{detail}</small></span><ChevronRight size={15} /></button>)}</div>}
+      {!kind && <div className="environment-catalog">{environmentCatalog.filter(({ connector }) => connectors[connector] === true).map(({ kind: value, title, detail, icon: Icon }) => <button key={value} onClick={() => { setKind(value); setName(title); captureAnalytics({ name: "connection_type_selected", properties: { connection_type: analyticsConnectionType(value) } }); }}><Icon size={20} /><span><b>{title}</b><small>{detail}</small></span><ChevronRight size={15} /></button>)}</div>}
       {kind && !setup && <div className="environment-details"><button className="wizard-back" onClick={() => setKind(undefined)}>← Choose another type</button><label>Display name<input value={name} onChange={(event) => setName(event.target.value)} placeholder="Production AI" autoFocus /></label><label>{selected?.identifier}<input value={externalID} onChange={(event) => setExternalID(event.target.value)} placeholder={kind === "aws_account" ? "123456789012" : kind === "azure_subscription" ? "00000000-0000-0000-0000-000000000000" : kind === "gcp_project" ? "my-project-id" : "Optional"} /></label>{kind === "azure_subscription" && <label>Microsoft Entra tenant ID<input value={tenantID} onChange={(event) => setTenantID(event.target.value)} placeholder="00000000-0000-0000-0000-000000000000" /></label>}{kind === "gcp_project" && <label>GCP project number<input value={projectNumber} onChange={(event) => setProjectNumber(event.target.value)} placeholder="123456789012" /></label>}<div className="wizard-boundary"><ShieldCheck size={18} /><p><b>Read-only by design</b><span>Lens inventories resources and relationships. It does not invoke models, read prompts or outputs, retrieve secrets, or remediate resources.</span></p></div><button className="button primary full" disabled={busy || !name.trim()} onClick={createSetup}>{busy ? "Preparing…" : "Generate least-privilege setup"}</button></div>}
       {setup && <div className="setup-result"><div className="setup-read"><div><h3>Lens will read</h3>{setup.setup.what_lens_reads?.map((item) => <span key={item}><CheckCircle2 size={14} />{item}</span>)}</div><div><h3>Lens will not read</h3>{setup.setup.excluded?.map((item) => <span key={item}><X size={14} />{item}</span>)}</div></div>{isEndpointSetup && <><div className="platform-picker" aria-label="Installation platform">{(["macos", "windows", "linux"] as const).map((value) => <button key={value} aria-pressed={platform === value} className={platform === value ? "active" : ""} onClick={() => setPlatform(value)}>{value === "macos" ? "macOS" : pretty(value)}</button>)}</div><p className="setup-requirements">Requires Node.js 18+ and administrator access to install the background collector.</p>{!handoff && !Array.isArray(setup.setup.commands) && setup.setup.commands?.[platform] && <CopyBlock value={setup.setup.commands[platform]} />}{handoff ? <div className="handoff-result"><b>24-hour IT handoff</b><p>The recipient chooses their platform and generates a single-use 15-minute command.</p><CopyBlock value={handoff.url} /><small>Expires {new Date(handoff.expires_at).toLocaleString()}</small></div> : <button className="button subtle full" disabled={busy} onClick={delegate}>Delegate installation to IT</button>}</>}{setup.setup.install_url && <a className="button primary full" href={setup.setup.install_url} target="_blank" rel="noreferrer">Open provider setup <ArrowRight size={15} /></a>}{setup.setup.command && <CopyBlock value={setup.setup.command} />}{!isEndpointSetup && setup.setup.commands && (Array.isArray(setup.setup.commands) ? setup.setup.commands : Object.values(setup.setup.commands)).map((command) => <CopyBlock value={command} key={command} />)}{setup.setup.template && <details className="setup-template" open><summary>Generated setup template <ChevronDown size={13} /></summary><pre>{setup.setup.template}</pre><button className="button subtle" onClick={() => navigator.clipboard.writeText(setup.setup.template || "")}><Copy size={14} /> Copy template</button></details>}{collectorConnected ? <button className="button primary full" onClick={onResults}>View results <ArrowRight size={15} /></button> : <button className="button primary full" disabled={busy} onClick={verify}>{busy ? "Checking…" : ["aws_account", "azure_subscription", "gcp_project"].includes(setup.kind) ? "I've completed setup — verify access" : "Check installation status"}</button>}{message && <p className="form-status">{message}</p>}{error && <InlineError text={error} />}<small className="setup-expiry">This command expires {new Date(setup.expires_at).toLocaleTimeString()}. Rotate it from Connections if it is lost or expires.</small></div>}
     </section></div>}
@@ -580,7 +612,9 @@ function ChangesPage({ api, revision }: { api: API; revision: number }) {
   const [cursor, setCursor] = useState("");
   const remote = useRemote(() => api.changes({ ...filters, cursor }), [api, revision, search.toString(), cursor]);
   const [items, setItems] = useState<Change[]>([]);
+	const viewedChanges = useRef(false);
   useEffect(() => { if (remote.data) setItems((current) => cursor ? [...current, ...remote.data!.items] : remote.data!.items); }, [remote.data, cursor]);
+	useEffect(() => { if (remote.data && !viewedChanges.current) { viewedChanges.current = true; captureAnalytics({ name: "changes_viewed", properties: {} }); } }, [remote.data]);
   const update = (key: string, value: string) => { const next = new URLSearchParams(search); value && !(key === "window" && value === "7d") ? next.set(key, value) : next.delete(key); setCursor(""); setItems([]); setSearch(next, { replace: true }); };
   return <div className="page-stack"><FilterBar hideSearch>
     <Select label="Window" value={filters.window} onChange={(value) => update("window", value)} options={{ "24h": "Last 24 hours", "7d": "Last 7 days", "30d": "Last 30 days", "90d": "Last 90 days" }} />
@@ -596,6 +630,12 @@ function ChangesPage({ api, revision }: { api: API; revision: number }) {
 
 function SystemDrawer({ api, id, onClose }: { api: API; id: string; onClose: () => void }) {
   const remote = useRemote(() => api.system(id), [api, id]);
+	const opened = useRef("");
+	useEffect(() => {
+		if (!remote.data || opened.current === remote.data.id) return;
+		opened.current = remote.data.id;
+		captureAnalytics({ name: "system_opened", properties: { system_kind: remote.data.system_type, confidence: remote.data.confidence, freshness: remote.data.target_freshness === "fresh" || remote.data.target_freshness === "stale" ? remote.data.target_freshness : undefined, owner_state: remote.data.effective_ownership?.owned ? "owned" : "unowned" } });
+	}, [remote.data]);
   return <Drawer onClose={onClose}>{remote.loading ? <Loading /> : remote.error || !remote.data ? <Failure error={remote.error} retry={remote.reload} /> : <SystemDetailView item={remote.data} />}</Drawer>;
 }
 
@@ -733,7 +773,7 @@ function ExportMenu({ api }: { api: API }) {
   return <div className="export"><button className="button subtle" onClick={() => setOpen((value) => !value)}><Download size={15} /> Export <ChevronDown size={13} /></button>{open && <div>{(["lens", "ndjson", "cyclonedx"] as const).map((format) => <button key={format} onClick={() => { setOpen(false); api.downloadExport(format); }}>{format === "lens" ? "Lens JSON" : format === "ndjson" ? "NDJSON" : "CycloneDX 1.7"}</button>)}</div>}</div>;
 }
 
-function AccountSettings({ api, onDeleted }: { api: API; onDeleted: () => Promise<void> }) {
+function AccountSettings({ api, onDeleted, onAnalyticsChanged, analyticsAvailable }: { api: API; onDeleted: () => Promise<void>; onAnalyticsChanged: () => void; analyticsAvailable: boolean }) {
   const session = useRemote(() => api.session(), [api]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -749,7 +789,11 @@ function AccountSettings({ api, onDeleted }: { api: API; onDeleted: () => Promis
     setBusy(true); setError("");
     try { await api.deleteWorkspace(session.data!.workspace.id); await onDeleted(); } catch (reason) { setError(String(reason)); setBusy(false); }
   };
-  return <div className="page-stack"><section className="panel settings-panel"><PanelHeading title="Your account" detail={`${session.data.user.id} · ${pretty(session.data.role)}`} /><p>{session.data.can_delete_account ? "You can delete your identity. Workspace evidence and settings remain available to other members." : "You are the workspace's sole owner. Transfer ownership or delete the workspace before deleting your identity."}</p><button className="button subtle" disabled={busy || !session.data.can_delete_account} onClick={removeIdentity}>Delete my identity</button></section>{session.data.role === "owner" && <section className="panel settings-panel danger-zone"><PanelHeading title="Delete workspace" detail="Immediately deletes connections, inventory, findings, evidence, and member access." /><button className="button quiet" disabled={busy} onClick={removeWorkspace}>Delete workspace</button></section>}{error && <InlineError text={error} />}</div>;
+	const updateAnalytics = async (enabled: boolean) => {
+		setBusy(true); setError("");
+		try { await api.updateAnalytics(enabled); if (!enabled) resetAnalytics(); session.reload(); onAnalyticsChanged(); } catch (reason) { setError(String(reason)); } finally { setBusy(false); }
+	};
+  return <div className="page-stack"><section className="panel settings-panel"><PanelHeading title="Your account" detail={`${session.data.user.id} · ${pretty(session.data.role)}`} /><p>{session.data.can_delete_account ? "You can delete your identity. Workspace evidence and settings remain available to other members." : "You are the workspace's sole owner. Transfer ownership or delete the workspace before deleting your identity."}</p><button className="button subtle" disabled={busy || !session.data.can_delete_account} onClick={removeIdentity}>Delete my identity</button></section>{analyticsAvailable && <section className="panel settings-panel"><PanelHeading title="Product analytics" detail="Help Barrikade improve managed Lens" /><label className="analytics-preference"><input type="checkbox" checked={session.data.analytics.enabled} disabled={busy} onChange={(event) => void updateAnalytics(event.target.checked)} /><span><b>Share privacy-minimized usage events</b><small>Lens sends pseudonymous activation and feature-use events. It never sends names, email addresses, workspace names, inventory, evidence, URLs, commands, or infrastructure identifiers. Browser privacy signals disable capture on this browser.</small></span></label><p className="muted">Turning this off affects future events. Contact Barrikade to request erasure of previously collected pseudonymous analytics.</p></section>}{session.data.role === "owner" && <section className="panel settings-panel danger-zone"><PanelHeading title="Delete workspace" detail="Immediately deletes connections, inventory, findings, evidence, and member access." /><button className="button quiet" disabled={busy} onClick={removeWorkspace}>Delete workspace</button></section>}{error && <InlineError text={error} />}</div>;
 }
 
 function NotificationBell({ api, revision, onOpen }: { api: API; revision: number; onOpen: () => void }) {

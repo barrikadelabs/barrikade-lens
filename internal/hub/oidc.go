@@ -26,6 +26,14 @@ func (s *Server) oidcConfig(w http.ResponseWriter, r *http.Request) {
 			"kubernetes": s.config.KubernetesConnectorEnabled,
 		},
 	}
+	if s.config.ProductAnalytics.Enabled {
+		response["analytics"] = map[string]any{
+			"enabled":                true,
+			"host":                   s.config.ProductAnalytics.Host,
+			"project_token":          s.config.ProductAnalytics.ProjectToken,
+			"deployment_environment": s.config.ProductAnalytics.DeploymentEnvironment,
+		}
+	}
 	if s.config.AuthMode == "clerk" {
 		response["clerk_publishable_key"] = s.config.ClerkPublishableKey
 	}

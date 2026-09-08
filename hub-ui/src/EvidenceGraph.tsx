@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Background, BackgroundVariant, BaseEdge, Controls, Handle, MarkerType, Position, ReactFlow,
   type Edge, type EdgeProps, type Node, type NodeProps,
@@ -10,6 +10,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { API, type Confidence, type Connection, type Evidence, type SystemDetail, type SystemItem } from "./api";
+import { captureAnalytics } from "./analytics";
 
 type GraphNodeData = {
   role: "root" | "entity" | "evidence" | "cluster";
@@ -83,6 +84,7 @@ export function EvidenceGraphPage({ api, revision, initialSystemId = "" }: { api
   const [moreSystems, setMoreSystems] = useState(false);
   const [systemError, setSystemError] = useState("");
   const [graphError, setGraphError] = useState("");
+	const viewedSystem = useRef("");
 
   useEffect(() => {
     let active = true;
@@ -107,6 +109,12 @@ export function EvidenceGraphPage({ api, revision, initialSystemId = "" }: { api
     api.system(selectedSystem).then((result) => active && setDetail(result)).catch((reason) => active && setGraphError(String(reason))).finally(() => active && setLoadingGraph(false));
     return () => { active = false; };
   }, [api, selectedSystem, revision]);
+
+	useEffect(() => {
+		if (!detail || viewedSystem.current === detail.id) return;
+		viewedSystem.current = detail.id;
+		captureAnalytics({ name: "evidence_graph_viewed", properties: { system_kind: detail.system_type, confidence: detail.confidence } });
+	}, [detail]);
 
   const visibleSystems = systems.filter((system) => {
     const query = systemSearch.trim().toLowerCase();
