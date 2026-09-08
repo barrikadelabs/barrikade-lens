@@ -102,6 +102,7 @@ export function configureAnalytics(config: RuntimeConfig | undefined, session: S
         autocapture: false,
         capture_pageview: false,
         capture_pageleave: false,
+        capture_exceptions: false,
         disable_session_recording: true,
         disable_surveys: true,
         advanced_disable_flags: true,
