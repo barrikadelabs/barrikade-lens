@@ -23,6 +23,13 @@ selfServe:
 exposure:
   enabled: true
 
+# Ship the managed build with capture disabled. Staging enablement is a
+# separate, deliberate operation after PostHog project review.
+analytics:
+  enabled: false
+  host: https://eu.i.posthog.com
+  deploymentEnvironment: staging
+
 oidc:
   issuer: ""
   clientID: ""

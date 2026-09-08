@@ -16,9 +16,10 @@ import (
 )
 
 type Worker struct {
-	Pool         *pgxpool.Pool
-	Logger       *slog.Logger
-	PollInterval time.Duration
+	Pool             *pgxpool.Pool
+	Logger           *slog.Logger
+	PollInterval     time.Duration
+	ProductAnalytics ProductAnalyticsConfig
 }
 
 var errSnapshotAlreadyApplied = errors.New("snapshot sequence already applied")
@@ -53,11 +54,13 @@ func (w Worker) processOne(ctx context.Context) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	processingStarted := time.Now().UTC()
 	defer tx.Rollback(ctx)
 	var jobID uuid.UUID
 	var payload []byte
 	var attempts int
-	err = tx.QueryRow(ctx, `SELECT id,payload,attempts FROM ingestion_jobs WHERE status='pending' AND next_attempt_at<=now() ORDER BY next_attempt_at,created_at FOR UPDATE SKIP LOCKED LIMIT 1`).Scan(&jobID, &payload, &attempts)
+	var queuedAt time.Time
+	err = tx.QueryRow(ctx, `SELECT id,payload,attempts,created_at FROM ingestion_jobs WHERE status='pending' AND next_attempt_at<=now() ORDER BY next_attempt_at,created_at FOR UPDATE SKIP LOCKED LIMIT 1`).Scan(&jobID, &payload, &attempts, &queuedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
 	}
@@ -105,6 +108,7 @@ func (w Worker) processOne(ctx context.Context) (bool, error) {
 				WHERE organization_id=$1 AND source_id=$2 AND connection_status='connected' RETURNING id,organization_id
 			) INSERT INTO notification_outbox(id,organization_id,event_type,payload)
 			SELECT gen_random_uuid(),organization_id,'first_scan_completed',jsonb_build_object('environment_id',id,'status','failed') FROM updated ON CONFLICT DO NOTHING`, snapshot.OrganizationID, snapshot.SourceID, safeError(err))
+			_ = recordProductEvent(ctx, w.Pool, w.ProductAnalytics, ProductEvent{OrganizationID: snapshot.OrganizationID, Name: "scan_failed", Properties: map[string]any{"failure": failureCategory("normalization_failed"), "duration_ms": time.Since(processingStarted).Milliseconds(), "queue_ms": processingStarted.Sub(queuedAt).Milliseconds()}, DedupeKey: jobID.String()})
 		}
 		return true, err
 	}
@@ -122,10 +126,44 @@ func (w Worker) processOne(ctx context.Context) (bool, error) {
 	if _, err = tx.Exec(ctx, `UPDATE ingestion_jobs SET status='complete',payload=NULL,error_code=NULL,error_message=NULL,completed_at=now(),expires_at=NULL WHERE id=$1`, jobID); err != nil {
 		return true, err
 	}
+	if analyticsErr := recordSuccessfulScanAnalytics(ctx, tx, w.ProductAnalytics, snapshot, jobID, resultStatus, processingStarted, queuedAt); analyticsErr != nil {
+		w.Logger.Warn("scan analytics were not recorded", "error", analyticsErr)
+	}
 	if err = tx.Commit(ctx); err != nil {
 		return true, err
 	}
 	return true, nil
+}
+
+func recordSuccessfulScanAnalytics(ctx context.Context, parent pgx.Tx, config ProductAnalyticsConfig, snapshot discovery.Snapshot, jobID uuid.UUID, resultStatus string, processingStarted, queuedAt time.Time) error {
+	// Keep all analytics-only reads and writes behind a savepoint. Any analytics
+	// failure rolls back here without changing the normalized scan transaction.
+	tx, err := parent.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var rootSystems int
+	if err = tx.QueryRow(ctx, `SELECT count(*) FROM source_entities se
+		JOIN entities e ON e.organization_id=se.organization_id AND e.id=se.entity_id AND e.current=true
+		JOIN entity_posture p ON p.organization_id=e.organization_id AND p.entity_id=e.id
+		WHERE se.organization_id=$1 AND se.source_id=$2 AND se.current=true AND p.system_role='system'`, snapshot.OrganizationID, snapshot.SourceID).Scan(&rootSystems); err != nil {
+		return err
+	}
+	properties := map[string]any{"status": resultStatus, "partial": resultStatus == "partial", "duration_ms": time.Since(processingStarted).Milliseconds(), "queue_ms": processingStarted.Sub(queuedAt).Milliseconds(), "system_count_bucket": systemCountBucket(max(rootSystems, 1))}
+	// A zero-result scan is still completed, but never marks activation.
+	if rootSystems == 0 {
+		delete(properties, "system_count_bucket")
+	}
+	if err = recordProductEvent(ctx, tx, config, ProductEvent{OrganizationID: snapshot.OrganizationID, Name: "scan_completed", Properties: properties, DedupeKey: jobID.String()}); err != nil {
+		return err
+	}
+	if rootSystems > 0 {
+		if err = recordProductEvent(ctx, tx, config, ProductEvent{OrganizationID: snapshot.OrganizationID, Name: "first_credible_discovery_completed", Properties: properties, DedupeKey: "first"}); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
 }
 
 func permanentNormalizationError(err error) bool {

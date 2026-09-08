@@ -45,6 +45,10 @@ catalog:
   manifest: https://raw.githubusercontent.com/jentic/jentic-public-apis/refs/heads/main/apis/openapi/apis.json
 exposure:
   enabled: false
+analytics:
+  enabled: false
+  host: https://eu.i.posthog.com
+  deploymentEnvironment: production
 oidc:
   issuer: ""
   clientID: ""

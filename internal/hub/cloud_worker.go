@@ -16,10 +16,11 @@ import (
 )
 
 type CloudWorker struct {
-	Pool         *pgxpool.Pool
-	Adapters     cloud.Registry
-	Logger       *slog.Logger
-	PollInterval time.Duration
+	Pool             *pgxpool.Pool
+	Adapters         cloud.Registry
+	Logger           *slog.Logger
+	PollInterval     time.Duration
+	ProductAnalytics ProductAnalyticsConfig
 }
 
 func (w CloudWorker) Run(ctx context.Context) error {
@@ -121,6 +122,11 @@ func (w CloudWorker) processOne(ctx context.Context) (bool, error) {
 	_, err = tx.Exec(ctx, `INSERT INTO ingestion_jobs(id,organization_id,source_id,snapshot_id,status,payload) VALUES($1,$2,$3,$4,'pending',$5)`, ingestionID, job.Environment.OrganizationID, job.Environment.SourceID, snapshot.SnapshotID, payload)
 	if err == nil {
 		_, err = tx.Exec(ctx, `UPDATE cloud_scan_jobs SET status='ingesting',phase='normalizing',progress=$2,ingestion_job_id=$3,error_code=NULL,error_message=NULL,heartbeat_at=now(),lease_expires_at=now()+interval '5 minutes' WHERE id=$1`, job.ID, jsonBytes(map[string]any{"entities": len(snapshot.Entities), "relationships": len(snapshot.Relationships), "coverage": snapshot.Coverage}), ingestionID)
+	}
+	if err == nil {
+		if analyticsErr := recordProductEvent(ctx, tx, w.ProductAnalytics, ProductEvent{OrganizationID: job.Environment.OrganizationID, Name: "scan_received", Properties: map[string]any{"connection_type": connectionType("", job.Environment.Provider), "lifecycle_phase": "received"}, DedupeKey: ingestionID.String()}); analyticsErr != nil {
+			w.Logger.Warn("analytics event was not recorded", "event", "scan_received", "error", analyticsErr)
+		}
 	}
 	if err != nil {
 		return true, err
@@ -227,7 +233,7 @@ func (w CloudWorker) failOrRetry(ctx context.Context, job claimedCloudJob, scanE
 		return err
 	}
 	if status == "failed" {
-		_, _ = w.Pool.Exec(ctx, `INSERT INTO product_events(id,organization_id,event_type,properties) VALUES($1,$2,'scan_failed',$3)`, uuid.New(), job.Environment.OrganizationID, jsonBytes(map[string]any{"provider": job.Environment.Provider, "reason": code, "queue_ms": time.Since(job.QueuedAt).Milliseconds()}))
+		_ = recordProductEvent(ctx, w.Pool, w.ProductAnalytics, ProductEvent{OrganizationID: job.Environment.OrganizationID, Name: "scan_failed", Properties: map[string]any{"failure": failureCategory(code), "queue_ms": time.Since(job.QueuedAt).Milliseconds()}, DedupeKey: job.ID.String()})
 	}
 	return scanErr
 }
@@ -266,19 +272,6 @@ func (w CloudWorker) finalizeOne(ctx context.Context) (bool, error) {
 	_, err = tx.Exec(ctx, `UPDATE cloud_scan_jobs SET status=$2,phase=$3,completed_at=now(),lease_expires_at=NULL,error_code=CASE WHEN $2='failed' THEN 'normalization_failed' ELSE error_code END,error_message=CASE WHEN $2='failed' THEN 'Lens could not normalize the provider result' ELSE error_message END WHERE id=$1`, jobID, status, phase)
 	if err == nil && trigger == "first_scan" && status != "failed" {
 		_, err = tx.Exec(ctx, `INSERT INTO notification_outbox(id,organization_id,event_type,payload) VALUES($1,$2,'first_scan_completed',$3) ON CONFLICT DO NOTHING`, uuid.New(), orgID, jsonBytes(map[string]any{"environment_id": environmentID.String(), "scan_id": jobID.String(), "status": status}))
-	}
-	if err == nil {
-		started := createdAt
-		if startedAt != nil {
-			started = *startedAt
-		}
-		eventType := "scan_completed"
-		if status == "failed" {
-			eventType = "scan_failed"
-		} else if trigger == "first_scan" {
-			eventType = "first_scan_completed"
-		}
-		_, err = tx.Exec(ctx, `INSERT INTO product_events(id,organization_id,event_type,properties) VALUES($1,$2,$3,$4)`, uuid.New(), orgID, eventType, jsonBytes(map[string]any{"status": status, "queue_ms": started.Sub(createdAt).Milliseconds(), "duration_ms": time.Since(started).Milliseconds()}))
 	}
 	if err != nil {
 		return true, err

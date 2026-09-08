@@ -55,6 +55,11 @@ func run() error {
 	clerkWebhookSecret := flag.String("clerk-webhook-secret", os.Getenv("LENS_CLERK_WEBHOOK_SECRET"), "Clerk webhook signing secret")
 	clerkSecretKey := flag.String("clerk-secret-key", os.Getenv("LENS_CLERK_SECRET_KEY"), "Clerk backend secret for Lens-governed identity deletion")
 	selfServeEnabled := flag.Bool("self-serve-enabled", env("LENS_SELF_SERVE_ENABLED", "false") == "true", "enable self-serve environment onboarding")
+	posthogEnabled := flag.Bool("posthog-enabled", env("LENS_POSTHOG_ENABLED", "false") == "true", "enable privacy-minimized PostHog activation analytics")
+	posthogProjectToken := flag.String("posthog-project-token", os.Getenv("LENS_POSTHOG_PROJECT_TOKEN"), "PostHog project token exposed to authenticated managed browsers")
+	posthogHost := flag.String("posthog-host", env("LENS_POSTHOG_HOST", "https://eu.i.posthog.com"), "PostHog EU ingestion origin")
+	posthogIDSalt := flag.String("posthog-id-salt", os.Getenv("LENS_POSTHOG_ID_SALT"), "server-only salt for analytics pseudonyms")
+	deploymentEnvironment := flag.String("deployment-environment", env("LENS_DEPLOYMENT_ENVIRONMENT", "development"), "deployment environment label")
 	awsConnectorEnabled := flag.Bool("aws-connector-enabled", env("LENS_AWS_CONNECTOR_ENABLED", "false") == "true", "enable the AWS cloud connector")
 	azureConnectorEnabled := flag.Bool("azure-connector-enabled", env("LENS_AZURE_CONNECTOR_ENABLED", "false") == "true", "enable the Azure cloud connector")
 	gcpConnectorEnabled := flag.Bool("gcp-connector-enabled", env("LENS_GCP_CONNECTOR_ENABLED", "false") == "true", "enable the GCP cloud connector")
@@ -113,6 +118,13 @@ func run() error {
 		defer workerPool.Close()
 	}
 	hub.Version = version
+	analyticsConfig := hub.ProductAnalyticsConfig{
+		Enabled: *posthogEnabled, ProjectToken: *posthogProjectToken, Host: *posthogHost,
+		IDSalt: []byte(*posthogIDSalt), DeploymentEnvironment: *deploymentEnvironment,
+	}
+	if err := analyticsConfig.Validate(*authMode, *selfServeEnabled); err != nil {
+		return err
+	}
 	var githubClient *githubapp.Client
 	if *githubAppID != "" || *githubPrivateKeyFile != "" || *githubWebhookSecret != "" {
 		if *githubAppID == "" || *githubPrivateKeyFile == "" || *githubWebhookSecret == "" {
@@ -172,17 +184,25 @@ func run() error {
 		GCPAssertionAudience:       *gcpAssertionAudience,
 		ManagedIdentityPrincipalID: *managedIdentityPrincipalID,
 		CloudAdapters:              cloudAdapters,
+		ProductAnalytics:           analyticsConfig,
 	})
 	if err != nil {
 		return err
 	}
 	httpServer := &http.Server{Addr: *listen, Handler: server.Handler(), ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 35 * time.Second, WriteTimeout: 35 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 1 << 20}
 	errChannel := make(chan error, 5)
-	go func() { errChannel <- hub.Worker{Pool: workerPool, Logger: slog.Default()}.Run(ctx) }()
+	go func() {
+		errChannel <- hub.Worker{Pool: workerPool, Logger: slog.Default(), ProductAnalytics: analyticsConfig}.Run(ctx)
+	}()
 	go func() { errChannel <- hub.WebhookWorker{Pool: workerPool, Logger: slog.Default()}.Run(ctx) }()
 	if *selfServeEnabled {
 		go func() {
-			errChannel <- hub.CloudWorker{Pool: workerPool, Adapters: cloudAdapters, Logger: slog.Default()}.Run(ctx)
+			errChannel <- hub.CloudWorker{Pool: workerPool, Adapters: cloudAdapters, Logger: slog.Default(), ProductAnalytics: analyticsConfig}.Run(ctx)
+		}()
+	}
+	if analyticsConfig.Enabled {
+		go func() {
+			errChannel <- (&hub.PostHogWorker{Pool: workerPool, Logger: slog.Default(), Config: analyticsConfig}).Run(ctx)
 		}()
 	}
 	if *catalogEnabled {

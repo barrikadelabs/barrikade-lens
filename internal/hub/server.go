@@ -69,6 +69,7 @@ type Config struct {
 	GCPWorkloadAudience        string
 	GCPAssertionAudience       string
 	ManagedIdentityPrincipalID string
+	ProductAnalytics           ProductAnalyticsConfig
 }
 
 type Server struct {
@@ -107,6 +108,9 @@ func NewServer(ctx context.Context, config Config) (*Server, error) {
 	}
 	if config.AuthMode != "clerk" && config.AuthMode != "oidc" && config.AuthMode != "development" {
 		return nil, fmt.Errorf("auth mode must be clerk, oidc, or development")
+	}
+	if err := config.ProductAnalytics.Validate(config.AuthMode, config.SelfServeEnabled); err != nil {
+		return nil, err
 	}
 	if config.AuthMode == "clerk" {
 		if config.ClerkIssuer == "" || config.ClerkPublishableKey == "" || config.ClerkAuthorizedParty == "" || config.ClerkSecretKey == "" || config.ClerkWebhookSecret == "" {
@@ -181,6 +185,7 @@ func (s *Server) routes() {
 	}
 	authenticated := http.NewServeMux()
 	authenticated.HandleFunc("GET /v1/session", s.getSession)
+	authenticated.HandleFunc("PATCH /v1/session/analytics", s.updateSessionAnalytics)
 	authenticated.HandleFunc("DELETE /v1/account", s.deleteAccount)
 	authenticated.HandleFunc("POST /v1/workspaces/bootstrap", s.rateLimit("workspace_bootstrap", 10, 5*time.Minute, principalRequestKey, s.bootstrapWorkspace))
 	authenticated.HandleFunc("DELETE /v1/workspaces/current", s.deleteWorkspace)
@@ -537,6 +542,11 @@ func (s *Server) exchangeEnrollment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "database_error", "Could not issue credentials")
 		return
 	}
+	if setupErr == nil {
+		if analyticsErr := recordProductEvent(r.Context(), tx, s.config.ProductAnalytics, ProductEvent{OrganizationID: orgID, Name: "environment_enrolled", Properties: map[string]any{"connection_type": connectionType(setupKind, sourceType), "lifecycle_phase": "enrolled"}, DedupeKey: setupEnvironmentID.String()}); analyticsErr != nil {
+			s.config.Logger.Warn("analytics event was not recorded", "event", "environment_enrolled", "error", analyticsErr)
+		}
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, 500, "database_error", "Could not complete enrollment")
 		return
@@ -675,6 +685,11 @@ func (s *Server) submitSnapshot(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, 500, "database_error", "Could not queue snapshot")
 		return
+	}
+	if id == jobID {
+		if err := recordProductEvent(r.Context(), s.db(r.Context()), s.config.ProductAnalytics, ProductEvent{OrganizationID: snapshot.OrganizationID, Name: "scan_received", Properties: map[string]any{"connection_type": connectionType(expectedSourceType, expectedSourceType), "lifecycle_phase": "received"}, DedupeKey: id.String()}); err != nil {
+			s.config.Logger.Warn("analytics event rejected", "event", "scan_received", "error", err)
+		}
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"id": id, "status": status})
 }

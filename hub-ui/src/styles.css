@@ -676,6 +676,10 @@ button.system-row:hover, button.inventory-row:hover, button.target-row:hover { c
 .settings-panel { display:grid; max-width:760px; gap:14px; }
 .settings-panel > p { margin:0; color:var(--text-3); font-size:11px; line-height:1.6; }
 .settings-panel .button { width:max-content; }
+.analytics-preference { display:flex; align-items:flex-start; gap:12px; cursor:pointer; }
+.analytics-preference input { margin-top:3px; accent-color:var(--orange); }
+.analytics-preference span { display:grid; gap:5px; }
+.analytics-preference small { color:var(--text-3); line-height:1.55; max-width:68ch; }
 .danger-zone { border-color:rgba(255,90,90,.18); }
 .empty-state-actions { display:grid; place-items:center; gap:12px; padding:30px; border:1px solid var(--line); border-radius:9px; background:var(--surface-soft); }
 .connection-status.ready { color:var(--green); background:var(--green-soft); }

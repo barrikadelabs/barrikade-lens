@@ -585,6 +585,7 @@ func (s *Server) getExposure(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "database_error", "Could not read exposure")
 		return
 	}
+	s.trackFirstResultViewed(r.Context(), principal, "finding")
 	writeJSON(w, 200, item)
 }
 

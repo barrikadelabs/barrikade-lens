@@ -272,6 +272,7 @@ export type AuthConfig = {
   client_id?: string;
   redirect_uri?: string;
   scopes?: string[];
+	analytics?: { enabled: boolean; host: string; project_token: string; deployment_environment: string };
 };
 
 export type Session = {
@@ -281,6 +282,7 @@ export type Session = {
   permissions: string[];
   needs_bootstrap: boolean;
   can_delete_account: boolean;
+	analytics: { enabled: boolean; user_id: string; workspace_id: string };
 };
 
 export type EnvironmentKind = "aws_account" | "azure_subscription" | "gcp_project" | "endpoint" | "github_repository" | "kubernetes_cluster";
@@ -403,6 +405,10 @@ export class API {
   }
 
   session() { return this.request<Session>("/v1/session"); }
+
+  updateAnalytics(enabled: boolean) {
+	return this.request<{ enabled: boolean }>("/v1/session/analytics", { method: "PATCH", body: JSON.stringify({ enabled }) });
+  }
 
   bootstrapWorkspace(name: string) {
     return this.request<{ id: string; name: string; role: string; created: boolean }>("/v1/workspaces/bootstrap", { method: "POST", body: JSON.stringify({ name }) });

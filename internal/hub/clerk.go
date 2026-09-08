@@ -76,6 +76,18 @@ func (s *Server) clerkWebhook(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 422, "invalid_webhook", "Clerk lifecycle payload could not be applied")
 		return
 	}
+	if envelope.Type == "user.created" {
+		var user struct {
+			ID string `json:"id"`
+		}
+		if json.Unmarshal(envelope.Data, &user) != nil || user.ID == "" {
+			writeError(w, 422, "invalid_webhook", "Clerk lifecycle payload could not be applied")
+			return
+		}
+		if analyticsErr := recordProductEvent(r.Context(), tx, s.config.ProductAnalytics, ProductEvent{ActorID: "clerk:" + user.ID, Name: "signup_completed", DedupeKey: id}); analyticsErr != nil {
+			s.config.Logger.Warn("analytics event was not recorded", "event", "signup_completed", "error", analyticsErr)
+		}
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, 500, "database_error", "Could not commit webhook")
 		return
