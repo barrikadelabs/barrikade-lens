@@ -58,6 +58,30 @@ func TestEnrollInstallCompletesOnboardingInOneCommand(t *testing.T) {
 	}
 }
 
+func TestEnrollInstallElevatesBeforeConsumingEnrollmentCode(t *testing.T) {
+	serverCalled := false
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { serverCalled = true }))
+	defer server.Close()
+	var output bytes.Buffer
+	var received []string
+	code := ExecuteWith(Dependencies{
+		In: os.Stdin, Out: &output, Err: &output,
+		EnsureInstallPrivileges: func(_ context.Context, args []string) (bool, error) {
+			received = append([]string(nil), args...)
+			return true, nil
+		},
+	}, []string{"enroll", "one-time-code", "--hub", server.URL, "--install"})
+	if code != 0 {
+		t.Fatalf("elevation handoff failed: code=%d output=%s", code, output.String())
+	}
+	if serverCalled {
+		t.Fatal("enrollment code was consumed before the elevated process started")
+	}
+	if strings.Join(received, "|") != "enroll|one-time-code|--hub|"+server.URL+"|--install" {
+		t.Fatalf("elevated invocation did not preserve arguments: %#v", received)
+	}
+}
+
 func TestEnrollInstallUploadsBeforeStartingService(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	uploaded := false

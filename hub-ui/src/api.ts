@@ -127,6 +127,37 @@ export type Connection = {
 
 export type SystemDetail = SystemItem & { connections: Connection[]; evidence: Evidence[] };
 
+export type ProductInstallation = {
+  id: string;
+  kind: string;
+  name: string;
+  target_id?: string;
+  target_name?: string;
+  target_freshness: "fresh" | "stale" | "never" | "unknown";
+  surface: string;
+  system_type?: SystemType;
+  state: string;
+  confidence: Confidence;
+  first_seen_at: string;
+  last_seen_at: string;
+  observed_users: string[];
+};
+
+export type ProductItem = {
+  id: string;
+  name: string;
+  system_type?: SystemType;
+  product_category?: string;
+  installation_count: number;
+  fresh_count: number;
+  stale_count: number;
+  running_count: number;
+  observed_user_count: number;
+  observed_users: string[];
+  last_seen_at: string;
+  instances: ProductInstallation[];
+};
+
 export type EntityContext = {
   owner_name?: string;
   owner_type?: "person" | "team";
@@ -472,6 +503,10 @@ export class API {
 
   overview(window = "7d") {
     return this.request<Overview>(queryPath("/v1/overview", { window }));
+  }
+
+  products() {
+    return this.request<{ items: ProductItem[] }>("/v1/products");
   }
 
   systems(filters: Record<string, string | number | undefined> = {}) {

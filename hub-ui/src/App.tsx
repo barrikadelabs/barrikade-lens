@@ -13,7 +13,7 @@ import {
 } from "lucide-react";
 import {
   API, authConfig, exchangeOIDC, type AuthConfig, type Change, type Connection, type Evidence,
-  type Environment, type EnvironmentKind, type EnvironmentScan, type ExposureFinding, type Overview, type SetupSession, type SystemDetail, type SystemItem,
+  type Environment, type EnvironmentKind, type EnvironmentScan, type ExposureFinding, type Overview, type ProductItem, type SetupSession, type SystemDetail, type SystemItem,
 } from "./api";
 import { captureAnalytics, configureAnalytics, resetAnalytics, semanticPage } from "./analytics";
 const EvidenceGraphPage = lazy(() => import("./EvidenceGraph").then((module) => ({ default: module.EvidenceGraphPage })));
@@ -275,11 +275,12 @@ function Shell({ api, signOut, accountControls, selfServe = true, analyticsConfi
 
 function OverviewPage({ api, revision, go }: { api: API; revision: number; go: (page: Page) => void }) {
   const [search, setSearch] = useSearchParams();
+	const [selectedProduct, setSelectedProduct] = useState<ProductItem>();
   const window = search.get("window") || "7d";
   const overview = useRemote(() => api.overview(window), [api, revision, window]);
-  const running = useRemote(() => api.systems({ state: "running", confidence: "confirmed", freshness: "fresh", limit: 8 }), [api, revision]);
-  if (overview.loading || running.loading) return <Loading />;
-  if (overview.error || !overview.data) return <Failure error={overview.error} retry={overview.reload} />;
+  const products = useRemote(() => api.products(), [api, revision]);
+  if (overview.loading || products.loading) return <Loading />;
+  if (overview.error || products.error || !overview.data) return <Failure error={overview.error || products.error} retry={() => { overview.reload(); products.reload(); }} />;
   const data = overview.data;
   const systems = data.footprint.system_types;
   const states = data.footprint.states;
@@ -321,8 +322,8 @@ function OverviewPage({ api, revision, go }: { api: API; revision: number; go: (
       </div>
     </section>
     <div className="executive-primary">
-      <section className="panel running-panel"><PanelHeading title="Who owns it?" detail="Known systems and effective ownership" action={<button className="text-button" onClick={() => go("Inventory")}>Open inventory <ArrowRight size={13} /></button>} />
-        {running.data?.items.length ? <div className="running-list">{running.data.items.map((item) => <button key={item.id} onClick={() => location.assign(`/systems/${encodeURIComponent(item.id)}`)}><span className="running-mark"><CircleDot size={14} /></span><span><b>{item.name}</b><small>{pretty(item.system_type)} · {item.effective_ownership?.owner_name || "Owner not established"}</small></span><span><strong>{pretty(item.state)}</strong><small>{pretty(item.confidence)} evidence</small></span><ChevronRight size={14} /></button>)}</div> : <Empty icon={CheckCircle2} title="No confirmed systems running" detail="No active system has confirmed evidence in the current scan." />}
+      <section className="panel running-panel"><PanelHeading title="Who uses it?" detail="Products across every installation; observed accounts are not business owners" action={<button className="text-button" onClick={() => go("Inventory")}>Open inventory <ArrowRight size={13} /></button>} />
+        {products.data?.items.length ? <div className="running-list">{products.data.items.slice(0, 8).map((item) => <button key={item.id} onClick={() => setSelectedProduct(item)}><span className="running-mark"><CircleDot size={14} /></span><span><b>{item.name}</b><small>{item.installation_count} {item.installation_count === 1 ? "installation" : "installations"} · {item.observed_user_count} observed {item.observed_user_count === 1 ? "user" : "users"}</small></span><span><strong>{item.fresh_count} fresh · {item.stale_count} stale</strong><small>Last observed {relative(item.last_seen_at)}</small></span><ChevronRight size={14} /></button>)}</div> : <Empty icon={CheckCircle2} title="No products discovered" detail="Products appear here after a connected target reports system evidence." />}
       </section>
       <section className="panel attention-panel"><PanelHeading title="What needs attention" detail="Concrete findings, not an opaque risk score" />
         {attention.length ? <div className="attention-list">{attention.map(([label, count, detail, destination, findingID]) => <button key={label} onClick={() => findingID ? location.assign(`/findings/${encodeURIComponent(findingID)}`) : destination === "Inventory" && label.startsWith("Ownership") ? location.assign("/inventory?owner_status=unowned") : go(destination)}><span className="attention-count active">{count}</span><span><b>{label}</b><small>{detail}</small></span><ChevronRight size={14} /></button>)}</div> : <Empty icon={CheckCircle2} title="Nothing needs review" detail="No current discovery findings require attention." />}
@@ -332,7 +333,17 @@ function OverviewPage({ api, revision, go }: { api: API; revision: number; go: (
       <section className="panel change-panel"><PanelHeading title="What changed" detail={`Repeated observations grouped over the last ${window}`} action={<button className="text-button" onClick={() => go("Changes")}>View history <ArrowRight size={13} /></button>} /><ChangeList items={changes} /></section>
       <section className="panel evidence-posture"><PanelHeading title="Evidence posture" detail="How current and conclusive this view is" action={<button className="text-button" onClick={() => go("Connections")}>Coverage details <ArrowRight size={13} /></button>} /><StateDistribution values={states} total={totalSystems} /><ConfidenceSummary data={data.data_quality.confidence} /></section>
     </div>
+		{selectedProduct && <ProductDrawer item={selectedProduct} onClose={() => setSelectedProduct(undefined)} />}
   </div>;
+}
+
+function ProductDrawer({ item, onClose }: { item: ProductItem; onClose: () => void }) {
+	return <Drawer onClose={onClose}>
+		<div className="drawer-title"><Identity kind="runtime" name={item.name} detail={item.id} /><div>{item.system_type && <TypePill value={item.system_type} />}</div></div>
+		<div className="fact-grid"><Fact label="Installations" value={String(item.installation_count)} /><Fact label="Observed users" value={String(item.observed_user_count)} /><Fact label="Fresh evidence" value={String(item.fresh_count)} /><Fact label="Stale evidence retained" value={String(item.stale_count)} /></div>
+		<section className="drawer-section"><h3>Observed users <span>{item.observed_user_count}</span></h3><p>{item.observed_users.length ? item.observed_users.join(", ") : "No OS account was observed."}</p><small>Counts retain target-scoped identities even when separate endpoints use the same local account name. Usage does not establish a business or technical owner.</small></section>
+		<section className="drawer-section"><h3>Installations <span>{item.instances.length}</span></h3><div className="running-list">{item.instances.map((instance) => <button key={instance.id} onClick={() => location.assign(`/systems/${encodeURIComponent(instance.id)}`)}><span className="running-mark"><Monitor size={14} /></span><span><b>{instance.target_name ?? "Unresolved target"}</b><small>{instance.observed_users.length ? `Observed user: ${instance.observed_users.join(", ")}` : "No observed user"}</small></span><span><strong>{pretty(instance.target_freshness)}</strong><small>{pretty(instance.state)} · {relative(instance.last_seen_at)}</small></span><ChevronRight size={14} /></button>)}</div></section>
+	</Drawer>;
 }
 
 function FindingsPage({ api, revision }: { api: API; revision: number }) {

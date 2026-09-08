@@ -3,6 +3,8 @@ package hub
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -11,6 +13,107 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+func TestProductProjectionRetainsInstallationsAndObservedUsersAcrossTargets(t *testing.T) {
+	ctx, pool := integrationPool(t)
+	orgID := "products-" + uuid.NewString()
+	sources := []string{"source:" + uuid.NewString(), "source:" + uuid.NewString()}
+	if _, err := pool.Exec(ctx, `INSERT INTO organizations(id,name) VALUES($1,'product projection test')`, orgID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM organizations WHERE id=$1`, orgID) })
+	users := []string{"alice", `WORKSTATION\bob`}
+	for index, sourceID := range sources {
+		if err := insertTestSource(ctx, pool, orgID, sourceID, "endpoint", "endpoint-"+users[index]); err != nil {
+			t.Fatal(err)
+		}
+		runtimeKey := "target:" + sourceID + ":runtime:claude"
+		userKey := "target:" + sourceID + ":user:" + users[index]
+		runtimeID := discovery.StableID(orgID, discovery.KindRuntime, runtimeKey)
+		userID := discovery.StableID(orgID, discovery.KindUser, userKey)
+		snapshot := discovery.NewSnapshot(orgID, sourceID, discovery.SourceEndpoint, discovery.Collector{ID: "test", Name: "test", Version: "2", Mode: "managed"})
+		snapshot.Sequence = 1
+		snapshot.Entities = []discovery.Entity{
+			{ID: runtimeID, Kind: discovery.KindRuntime, CanonicalKey: runtimeKey, Name: "Claude Code", Attributes: map[string]any{"product_id": "claude", "product_category": "agent_tool", "configured": true, "running_at_scan": index == 1, "source_surface": "endpoint"}, Confidence: discovery.ConfidenceConfirmed},
+			{ID: userID, Kind: discovery.KindUser, CanonicalKey: userKey, Name: users[index], Confidence: discovery.ConfidenceConfirmed},
+		}
+		snapshot.Relationships = []discovery.Relationship{{
+			ID: discovery.RelationshipID(orgID, discovery.RelationshipOwnedBy, runtimeID, userID), Kind: discovery.RelationshipOwnedBy,
+			From: runtimeID, To: userID, Attributes: map[string]any{"attribution": "observed_user", "authoritative": false}, Confidence: discovery.ConfidenceConfirmed,
+		}}
+		if err := applyTestSnapshot(ctx, pool, snapshot); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := pool.Exec(ctx, `UPDATE discovery_targets SET last_seen_at=now()-interval '2 hours' WHERE organization_id=$1 AND id=$2`, orgID, sources[0]); err != nil {
+		t.Fatal(err)
+	}
+	server, err := NewServer(ctx, Config{Pool: pool, JWTSecret: []byte("0123456789012345678901234567890123456789"), DevAdminToken: "product-admin", DefaultOrganizationID: orgID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/v1/products", nil)
+	request.Header.Set("Authorization", "Bearer product-admin")
+	response := httptest.NewRecorder()
+	server.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("product projection returned %d: %s", response.Code, response.Body.String())
+	}
+	var result struct {
+		Items []struct {
+			ID                string           `json:"id"`
+			Name              string           `json:"name"`
+			InstallationCount int              `json:"installation_count"`
+			FreshCount        int              `json:"fresh_count"`
+			StaleCount        int              `json:"stale_count"`
+			ObservedUserCount int              `json:"observed_user_count"`
+			ObservedUsers     []string         `json:"observed_users"`
+			Instances         []map[string]any `json:"instances"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Items) != 1 || result.Items[0].ID != "claude" || result.Items[0].InstallationCount != 2 || result.Items[0].FreshCount != 1 || result.Items[0].StaleCount != 1 {
+		t.Fatalf("unexpected product projection: %s", response.Body.String())
+	}
+	if result.Items[0].ObservedUserCount != 2 || len(result.Items[0].ObservedUsers) != 2 || len(result.Items[0].Instances) != 2 {
+		t.Fatalf("product projection collapsed users or target instances: %s", response.Body.String())
+	}
+}
+
+func TestRuntimeHelperMigrationBackfillsExistingPosture(t *testing.T) {
+	ctx, pool := integrationPool(t)
+	orgID := "helper-backfill-" + uuid.NewString()
+	entityID := discovery.StableID(orgID, discovery.KindAgent, "target:endpoint:agent-definition:claude:gsd-planner.md")
+	if _, err := pool.Exec(ctx, `INSERT INTO organizations(id,name) VALUES($1,'helper backfill test')`, orgID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM organizations WHERE id=$1`, orgID) })
+	if _, err := pool.Exec(ctx, `INSERT INTO entities(organization_id,id,kind,name,attributes,confidence,provenance,current,stale,first_seen_at,last_seen_at)
+		VALUES($1,$2,'agent','GSD planner','{"defined":true,"definition_format":"agent_markdown","source_surface":"endpoint"}','confirmed','{}',true,false,now(),now())`, orgID, entityID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO entity_posture(organization_id,entity_id,surface,system_role,system_type,discovery_state,network_scope,attributed,confidence,current,first_seen_at,last_seen_at,material_digest)
+		VALUES($1,$2,'endpoint','system','autonomous_agent','defined','none',false,'confirmed',true,now(),now(),'before')`, orgID, entityID); err != nil {
+		t.Fatal(err)
+	}
+	migration, err := migrationFiles.ReadFile("migrations/0014_runtime_helper_posture.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, string(migration)); err != nil {
+		t.Fatal(err)
+	}
+	var role string
+	var systemType *string
+	if err := pool.QueryRow(ctx, `SELECT system_role,system_type FROM entity_posture WHERE organization_id=$1 AND entity_id=$2`, orgID, entityID).Scan(&role, &systemType); err != nil {
+		t.Fatal(err)
+	}
+	if role != "component" || systemType != nil {
+		t.Fatalf("backfilled posture=(%q,%v), want component with no system type", role, systemType)
+	}
+}
 
 func applyTestSnapshot(ctx context.Context, pool *pgxpool.Pool, snapshot discovery.Snapshot) error {
 	tx, err := pool.BeginTx(ctx, pgx.TxOptions{})

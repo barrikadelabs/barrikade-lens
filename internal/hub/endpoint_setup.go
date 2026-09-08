@@ -251,7 +251,7 @@ func (s *Server) resolveEndpointHandoff(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, 200, map[string]any{
 		"workspace_name": workspaceName, "environment_name": environmentName,
 		"platform": request.Platform, "command": commands[request.Platform], "expires_at": expiresAt,
-		"prerequisites":   []string{"Node.js 18 or newer", "Administrator access to install the background collector"},
+		"prerequisites":   []string{"Node.js 18 or newer", "On Windows, approve the automatic administrator prompt when shown"},
 		"what_lens_reads": setup["what_lens_reads"], "excluded": setup["excluded"],
 	})
 }

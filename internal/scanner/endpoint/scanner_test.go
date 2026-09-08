@@ -455,7 +455,7 @@ func TestKnownAgentRootFindsDefinitionWithoutRetainingInstructions(t *testing.T)
 	}
 	found := false
 	for _, entity := range snapshot.Entities {
-		if entity.Kind == discovery.KindAgent && entity.Name == "release-planner" && entity.Attributes["defined"] == true && entity.Confidence == discovery.ConfidenceConfirmed {
+		if entity.Kind == discovery.KindAgent && entity.Name == "release-planner" && entity.Attributes["defined"] == true && entity.Attributes["entity_role"] == "runtime_helper_definition" && entity.Confidence == discovery.ConfidenceConfirmed {
 			found = true
 		}
 	}

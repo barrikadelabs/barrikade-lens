@@ -144,7 +144,7 @@ output "lens_workload_identity_audience" {
 				"linux":   endpointInstallCommand("linux", token, hub),
 				"windows": endpointInstallCommand("windows", token, hub),
 			},
-			"prerequisites":   []string{"Node.js 18 or newer", "Administrator access to install the background collector"},
+			"prerequisites":   []string{"Node.js 18 or newer", "On Windows, approve the automatic administrator prompt when shown"},
 			"what_lens_reads": []string{"Installed and running AI tools and runtimes", "Local configuration metadata and network listeners"},
 			"excluded":        []string{"Prompt and conversation contents", "Secret values", "Source file bodies", "Write access"},
 		}

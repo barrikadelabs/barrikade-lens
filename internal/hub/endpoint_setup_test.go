@@ -17,3 +17,13 @@ func TestEndpointInstallCommandUsesPublishedLauncher(t *testing.T) {
 		t.Fatalf("command should normalize the Hub URL: %s", command)
 	}
 }
+
+func TestWindowsEndpointInstallRemainsOnePasteCommand(t *testing.T) {
+	command := endpointInstallCommand("windows", "single'use-token", "https://lens.example/")
+	if strings.Count(command, "npx ") != 1 || !strings.Contains(command, " --install") {
+		t.Fatalf("Windows setup is not a single enrollment command: %s", command)
+	}
+	if !strings.Contains(command, "'single''use-token'") {
+		t.Fatalf("Windows enrollment token was not safely quoted: %s", command)
+	}
+}

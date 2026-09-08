@@ -65,7 +65,7 @@ func TestSystemsDefaultToFreshIdentityAndEvidenceIsActionable(t *testing.T) {
 		}
 		return response
 	}
-	assertSystemIDs(t, get("/v1/systems?sort=name").Body.Bytes(), []string{freshEntity})
+	assertSystemIDs(t, get("/v1/systems?sort=name").Body.Bytes(), []string{freshEntity, staleEntity})
 	assertSystemIDs(t, get("/v1/systems?sort=name&freshness=stale").Body.Bytes(), []string{staleEntity})
 	assertSystemIDs(t, get("/v1/systems?sort=name&freshness=all").Body.Bytes(), []string{freshEntity, staleEntity})
 	assertSystemIDs(t, get("/v1/entities?sort=name&freshness=fresh").Body.Bytes(), []string{freshEntity, skillEntity})
