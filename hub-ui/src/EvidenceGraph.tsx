@@ -130,7 +130,7 @@ export function EvidenceGraphPage({ api, revision, initialSystemId = "" }: { api
       <div className="graph-panel-heading"><div><span>ROOT SYSTEMS</span><h2>Choose a system</h2><p>Searches stay server-side so large inventories remain usable.</p></div><b>{loadingSystems ? "…" : `${systems.length}${moreSystems ? "+" : ""}`}</b></div>
       <label className="graph-system-search"><Search size={14} /><input value={systemSearch} onChange={(event) => setSystemSearch(event.target.value)} placeholder="Find a system" aria-label="Find a system" /></label>
       <div className="graph-system-list">
-        {visibleSystems.map((system) => <button className={selectedSystem === system.id ? "active" : ""} key={system.id} onClick={() => setSelectedSystem(system.id)} aria-pressed={selectedSystem === system.id}>
+        {visibleSystems.map((system) => <button className={selectedSystem === system.id ? "active" : ""} key={system.id} onClick={() => { captureAnalytics({ name: "lens_interaction", properties: { surface: "evidence", interaction: "open", control: "system" } }); setSelectedSystem(system.id); }} aria-pressed={selectedSystem === system.id}>
           <KindIcon kind={system.kind} /><span><b>{system.name}</b><small>{pretty(system.system_type)} · {pretty(system.state)}</small></span><i className={`confidence-dot ${system.confidence}`} title={`${pretty(system.confidence)} evidence`} />
         </button>)}
         {!visibleSystems.length && !loadingSystems && <p className="graph-list-empty">No systems match “{systemSearch}”.</p>}
@@ -178,8 +178,8 @@ function SystemEvidenceMap({ detail }: { detail: SystemDetail }) {
     <div className="graph-toolbar">
       <label><Search size={14} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter connected nodes" aria-label="Filter connected nodes" /></label>
       <div className="relation-filters" aria-label="Relationship filters">
-        {Object.entries(relationCounts).map(([kind, count]) => <button className={hiddenKinds.has(kind) ? "muted" : "active"} onClick={() => toggleKind(kind)} key={kind} aria-pressed={!hiddenKinds.has(kind)}><i className={`edge-swatch relation-${safeClass(kind)}`} />{pretty(kind)} <b>{count}</b></button>)}
-        <button className={showEvidence ? "active evidence-toggle" : "muted evidence-toggle"} onClick={() => setShowEvidence((value) => !value)} aria-pressed={showEvidence}><i className="edge-swatch evidence" />{showEvidence ? "Hide evidence" : "Show evidence"} <b>{detail.evidence.length}</b></button>
+        {Object.entries(relationCounts).map(([kind, count]) => <button className={hiddenKinds.has(kind) ? "muted" : "active"} onClick={() => { captureAnalytics({ name: "lens_interaction", properties: { surface: "evidence", interaction: "filter_changed" } }); toggleKind(kind); }} key={kind} aria-pressed={!hiddenKinds.has(kind)}><i className={`edge-swatch relation-${safeClass(kind)}`} />{pretty(kind)} <b>{count}</b></button>)}
+        <button className={showEvidence ? "active evidence-toggle" : "muted evidence-toggle"} onClick={() => { captureAnalytics({ name: "lens_interaction", properties: { surface: "evidence", interaction: "filter_changed", control: "evidence" } }); setShowEvidence((value) => !value); }} aria-pressed={showEvidence}><i className="edge-swatch evidence" />{showEvidence ? "Hide evidence" : "Show evidence"} <b>{detail.evidence.length}</b></button>
       </div>
     </div>
     <div className="graph-stage">
@@ -198,7 +198,7 @@ function SystemEvidenceMap({ detail }: { detail: SystemDetail }) {
           nodesDraggable={false}
           nodesConnectable={false}
           zoomOnDoubleClick={false}
-          onNodeClick={(_, node) => node.data.role !== "cluster" && setSelectedNode(node.id)}
+          onNodeClick={(_, node) => { if (node.data.role !== "cluster") { captureAnalytics({ name: "lens_interaction", properties: { surface: "evidence", interaction: "open", control: "evidence" } }); setSelectedNode(node.id); } }}
           onPaneClick={() => setSelectedNode(detail.id)}
           proOptions={{ hideAttribution: true }}
           aria-label={`Evidence graph for ${detail.name}`}
