@@ -30,7 +30,7 @@ const navigation: Array<{ page: Page; icon: LucideIcon; detail: string }> = [
 const pageCopy: Record<Page, { eyebrow: string; title: string; detail: string }> = {
   Overview: { eyebrow: "DISCOVERY", title: "Organization AI posture", detail: "Evidence-backed visibility across connected cloud accounts, endpoints, repositories, and clusters." },
   Findings: { eyebrow: "ATTENTION", title: "Findings", detail: "Workspace-wide priorities ranked by severity, freshness, ownership, and latest observation." },
-  Inventory: { eyebrow: "INVENTORY", title: "Systems", detail: "Agents, agent-capable tools, and model runtimes, with stale evidence retained and clearly aged." },
+  Inventory: { eyebrow: "INVENTORY", title: "Organization inventory", detail: "Products grouped across the organization, with every endpoint installation and its evidence one level below." },
   Connections: { eyebrow: "VISIBILITY", title: "Connections", detail: "Connect endpoints, resume setup, and understand reporting coverage." },
   Changes: { eyebrow: "HISTORY", title: "Changes", detail: "Material inventory changes. Routine scan refreshes are suppressed." },
   Evidence: { eyebrow: "EVIDENCE", title: "Evidence graph", detail: "Trace a system to its capabilities, deployment surfaces, observed users, and sanitized evidence." },
@@ -392,6 +392,13 @@ function SystemsPage({ api, revision }: { api: API; revision: number }) {
   const navigate = useNavigate();
   const { systemId } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
+  const hasInstallationFilter = ["freshness", "system_type", "state", "confidence", "network_scope", "owner_status"].some((key) => searchParams.has(key));
+  const [inventoryView, setInventoryView] = useState<"products" | "installations">(() => systemId || searchParams.get("view") === "installations" || hasInstallationFilter ? "installations" : "products");
+  const [productSearch, setProductSearch] = useState("");
+  const [productType, setProductType] = useState("");
+  const [productReach, setProductReach] = useState("");
+  const [productActivity, setProductActivity] = useState("");
+  const [selectedProduct, setSelectedProduct] = useState<ProductItem>();
   const [filters, setFilters] = useState<Record<string, string>>(() => ({ sort: "last_seen", freshness: searchParams.get("freshness") || "all", search: searchParams.get("search") || "", system_type: searchParams.get("system_type") || "", state: searchParams.get("state") || "", confidence: searchParams.get("confidence") || "", network_scope: searchParams.get("network_scope") || "", owner_status: searchParams.get("owner_status") || "" }));
   const [cursor, setCursor] = useState("");
   const [items, setItems] = useState<SystemItem[]>([]);
@@ -400,6 +407,8 @@ function SystemsPage({ api, revision }: { api: API; revision: number }) {
   const [error, setError] = useState("");
 	const viewedInventory = useRef(false);
 	const lastTrackedSearch = useRef("");
+	const productInventory = useRemote(() => api.products(), [api, revision]);
+	const overview = useRemote(() => api.overview("7d"), [api, revision]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -422,27 +431,87 @@ function SystemsPage({ api, revision }: { api: API; revision: number }) {
 	}, [error, filters.search, loading]);
 
   const update = (key: string, value: string) => { if (key !== "search") captureAnalytics({ name: "lens_interaction", properties: { surface: "inventory", interaction: "filter_changed", control: analyticsControl(key) } }); setCursor(""); setItems([]); setFilters((current) => ({ ...current, [key]: value })); const next = new URLSearchParams(searchParams); value && value !== "all" ? next.set(key, value) : next.delete(key); setSearchParams(next, { replace: true }); };
+  const switchView = (view: "products" | "installations") => {
+    setInventoryView(view);
+    captureAnalytics({ name: "lens_interaction", properties: { surface: "inventory", interaction: "filter_changed", control: "inventory_scope" } });
+    const next = new URLSearchParams(searchParams);
+    view === "products" ? next.delete("view") : next.set("view", "installations");
+    setSearchParams(next, { replace: true });
+  };
+  const products = productInventory.data?.items ?? [];
+  const reportingEndpoints = overview.data?.coverage.find((item) => item.target_type === "endpoint")?.reporting ?? 0;
+  const productItems = products.filter((item) => {
+    const endpointCount = new Set(item.instances.map((instance) => instance.target_id).filter(Boolean)).size;
+    return (!productSearch || item.name.toLowerCase().includes(productSearch.toLowerCase()))
+      && (!productType || item.system_type === productType)
+      && (!productReach || (productReach === "broad" ? endpointCount > 1 : endpointCount <= 1))
+      && (!productActivity || (productActivity === "running" ? item.running_count > 0 : item.running_count === 0));
+  });
+  const installationCount = products.reduce((total, item) => total + item.installation_count, 0);
+  const runningCount = products.reduce((total, item) => total + item.running_count, 0);
+  const staleCount = products.reduce((total, item) => total + item.stale_count, 0);
   return <div className="page-stack">
-    <FilterBar search={filters.search ?? ""} setSearch={(value) => update("search", value)}>
-      <Select label="System type" value={filters.system_type} onChange={(value) => update("system_type", value)} options={{ "": "All root systems", autonomous_agent: "Autonomous agents", agent_tool: "Agent-capable tools", model_runtime: "Model runtimes" }} />
-      <Select label="State" value={filters.state} onChange={(value) => update("state", value)} options={{ "": "Any state", running: "Running", deployed: "Deployed", defined: "Defined", configured: "Configured", installed: "Installed", residual: "Residual", cached: "Cached" }} />
-      <Select label="Confidence" value={filters.confidence} onChange={(value) => update("confidence", value)} options={{ "": "Any confidence", confirmed: "Confirmed", likely: "Likely", possible: "Possible" }} />
-      <Select label="Ownership" value={filters.owner_status} onChange={(value) => update("owner_status", value)} options={{ "": "Any owner", owned: "Owned", unowned: "Owner missing" }} />
-      <Select label="Network" value={filters.network_scope} onChange={(value) => update("network_scope", value)} options={{ "": "Any scope", external: "External", network: "Network", loopback: "Loopback", none: "None", unknown: "Unknown" }} />
-      <Select label="Reporting" value={filters.freshness} onChange={(value) => update("freshness", value)} options={{ fresh: "Fresh targets", stale: "Stale targets", all: "Fresh and stale" }} />
-    </FilterBar>
-    <section className="panel data-panel"><div className="table-summary"><span><b>{items.length}</b> {filters.freshness === "stale" ? "stale" : filters.freshness === "all" ? "fresh and stale" : "fresh"} systems</span>{filters.freshness === "fresh" && <span>Older identities remain available through Reporting filters and Coverage diagnostics</span>}</div>
-      <div className="system-table table-scroll"><div className="system-row table-head"><span>System</span><span>Type</span><span>State</span><span>Target / surface</span><span>Attribution</span><span>Evidence</span><span /></div>
-        {items.map((item) => <button className="system-row" key={item.id} onClick={() => navigate(`/systems/${encodeURIComponent(item.id)}?${searchParams.toString()}`)}>
-          <Identity kind={item.kind} name={item.name} detail={item.product_id ?? item.id} />
-          <TypePill value={item.system_type} /><StatePill state={item.state} /><span className="stacked"><b>{item.target_name ?? "Unresolved target"}</b><small>{pretty(item.surface)}{item.target_freshness ? ` · ${pretty(item.target_freshness)}` : ""}</small></span>
-          <span className={item.effective_ownership?.owned ? "fact good" : "fact quiet"}>{item.effective_ownership?.owner_name || (item.effective_ownership?.owned ? "Owned" : "Owner missing")}</span><ConfidencePill value={item.confidence} /><ChevronRight size={15} />
-        </button>)}
-        {!loading && !items.length && <Empty icon={Bot} title="No systems match this view" detail="Supporting runtimes and cached artifacts are intentionally excluded from the executive systems view." />}
+    <section className="inventory-viewbar">
+      <div><p className="eyebrow">SCOPE</p><h2>{inventoryView === "products" ? "Organization products" : "Endpoint installations"}</h2><p>{inventoryView === "products" ? "One row per product, regardless of how many endpoints report it." : "Every target-scoped system observation, retained for investigation and evidence review."}</p></div>
+      <div className="inventory-view-switch" role="group" aria-label="Inventory scope">
+        <button className={inventoryView === "products" ? "active" : ""} onClick={() => switchView("products")}><PackageSearch size={15} /> Products</button>
+        <button className={inventoryView === "installations" ? "active" : ""} onClick={() => switchView("installations")}><Monitor size={15} /> Installations</button>
       </div>
-      {error && <InlineError text={error} />}{loading && <InlineLoading />}{next && !loading && <button className="load-more" onClick={() => { captureAnalytics({ name: "lens_interaction", properties: { surface: "inventory", interaction: "load_more" } }); setCursor(next); }}>Load more systems <ChevronDown size={15} /></button>}
     </section>
-    {systemId && <SystemDrawer api={api} id={systemId} onClose={() => navigate(`/inventory?${searchParams.toString()}`)} />}
+    {inventoryView === "products" ? <>
+      <section className="product-inventory-summary">
+        <div><span>Products</span><b>{products.length}</b><small>unique organization-wide</small></div>
+        <div><span>Installations</span><b>{installationCount}</b><small>across every endpoint</small></div>
+        <div><span>Running now</span><b className="good">{runningCount}</b><small>confirmed active state</small></div>
+        <div><span>Reporting endpoints</span><b className="good">{reportingEndpoints || "—"}</b><small>{staleCount ? `${staleCount} stale installations` : "all evidence current"}</small></div>
+      </section>
+      <FilterBar search={productSearch} setSearch={setProductSearch}>
+        <Select label="Product type" value={productType} onChange={setProductType} options={{ "": "All products", autonomous_agent: "Autonomous agents", agent_tool: "Agent-capable tools", model_runtime: "Model runtimes" }} />
+        <Select label="Endpoint reach" value={productReach} onChange={setProductReach} options={{ "": "Any reach", broad: "Multiple endpoints", single: "Single endpoint" }} />
+        <Select label="Activity" value={productActivity} onChange={setProductActivity} options={{ "": "Any activity", running: "Running somewhere", quiet: "Not running" }} />
+      </FilterBar>
+      <section className="panel data-panel product-inventory-panel"><div className="table-summary"><span><b>{productItems.length}</b> organization products</span><span>Open a product to see its endpoint installations and observed accounts</span></div>
+        <div className="table-scroll"><div className="product-inventory-row table-head"><span>Product</span><span>Endpoint reach</span><span>Activity</span><span>Observed users</span><span>Evidence</span><span>Last observed</span><span /></div>
+          {productItems.map((item) => {
+            const targets = new Set(item.instances.map((instance) => instance.target_id).filter(Boolean)).size;
+            const confirmed = item.instances.some((instance) => instance.confidence === "confirmed");
+            const likely = item.instances.some((instance) => instance.confidence === "likely");
+            const confidence: "confirmed" | "likely" | "possible" = confirmed ? "confirmed" : likely ? "likely" : "possible";
+            return <button className="product-inventory-row" key={item.id} onClick={() => setSelectedProduct(item)}>
+              <Identity kind={item.system_type === "model_runtime" ? "model_server" : "agent"} name={item.name} detail={pretty(item.system_type ?? item.product_category ?? "discovered product")} />
+              <span className="product-reach"><b>{targets} of {reportingEndpoints || Math.max(targets, 1)}</b><small>reporting endpoints</small><i><em style={{ width: `${Math.min(100, (targets / Math.max(reportingEndpoints, targets, 1)) * 100)}%` }} /></i></span>
+              <span className="stacked"><b className={item.running_count ? "good" : ""}>{item.running_count ? `${item.running_count} running` : "Not running"}</b><small>{item.installation_count} {item.installation_count === 1 ? "installation" : "installations"}</small></span>
+              <span className="stacked"><b>{item.observed_user_count}</b><small>observed {item.observed_user_count === 1 ? "account" : "accounts"}</small></span>
+              <ConfidencePill value={confidence} /><span className="observed">{relative(item.last_seen_at)}</span><ChevronRight size={15} />
+            </button>;
+          })}
+          {!productInventory.loading && !productItems.length && <Empty icon={PackageSearch} title="No products match this view" detail="Try a broader search or filter. Endpoint-level observations remain available under Installations." />}
+        </div>
+        {productInventory.error && <InlineError text={productInventory.error} />}{productInventory.loading && <InlineLoading />}
+      </section>
+    </> : <>
+      <FilterBar search={filters.search ?? ""} setSearch={(value) => update("search", value)}>
+        <Select label="System type" value={filters.system_type} onChange={(value) => update("system_type", value)} options={{ "": "All root systems", autonomous_agent: "Autonomous agents", agent_tool: "Agent-capable tools", model_runtime: "Model runtimes" }} />
+        <Select label="State" value={filters.state} onChange={(value) => update("state", value)} options={{ "": "Any state", running: "Running", deployed: "Deployed", defined: "Defined", configured: "Configured", installed: "Installed", residual: "Residual", cached: "Cached" }} />
+        <Select label="Confidence" value={filters.confidence} onChange={(value) => update("confidence", value)} options={{ "": "Any confidence", confirmed: "Confirmed", likely: "Likely", possible: "Possible" }} />
+        <Select label="Ownership" value={filters.owner_status} onChange={(value) => update("owner_status", value)} options={{ "": "Any owner", owned: "Owned", unowned: "Owner missing" }} />
+        <Select label="Network" value={filters.network_scope} onChange={(value) => update("network_scope", value)} options={{ "": "Any scope", external: "External", network: "Network", loopback: "Loopback", none: "None", unknown: "Unknown" }} />
+        <Select label="Reporting" value={filters.freshness} onChange={(value) => update("freshness", value)} options={{ fresh: "Fresh targets", stale: "Stale targets", all: "Fresh and stale" }} />
+      </FilterBar>
+      <section className="panel data-panel"><div className="table-summary"><span><b>{items.length}</b> {filters.freshness === "stale" ? "stale" : filters.freshness === "all" ? "fresh and stale" : "fresh"} installations</span>{filters.freshness === "fresh" && <span>Older identities remain available through Reporting filters and Coverage diagnostics</span>}</div>
+        <div className="system-table table-scroll"><div className="system-row table-head"><span>System</span><span>Type</span><span>State</span><span>Target / surface</span><span>Attribution</span><span>Evidence</span><span /></div>
+          {items.map((item) => <button className="system-row" key={item.id} onClick={() => navigate(`/systems/${encodeURIComponent(item.id)}?${searchParams.toString()}`)}>
+            <Identity kind={item.kind} name={item.name} detail={item.product_id ?? item.id} />
+            <TypePill value={item.system_type} /><StatePill state={item.state} /><span className="stacked"><b>{item.target_name ?? "Unresolved target"}</b><small>{pretty(item.surface)}{item.target_freshness ? ` · ${pretty(item.target_freshness)}` : ""}</small></span>
+            <span className={item.effective_ownership?.owned ? "fact good" : "fact quiet"}>{item.effective_ownership?.owner_name || (item.effective_ownership?.owned ? "Owned" : "Owner missing")}</span><ConfidencePill value={item.confidence} /><ChevronRight size={15} />
+          </button>)}
+          {!loading && !items.length && <Empty icon={Bot} title="No installations match this view" detail="Supporting runtimes and cached artifacts are intentionally excluded from the executive systems view." />}
+        </div>
+        {error && <InlineError text={error} />}{loading && <InlineLoading />}{next && !loading && <button className="load-more" onClick={() => { captureAnalytics({ name: "lens_interaction", properties: { surface: "inventory", interaction: "load_more" } }); setCursor(next); }}>Load more installations <ChevronDown size={15} /></button>}
+      </section>
+    </>}
+    {selectedProduct && <ProductDrawer item={selectedProduct} onClose={() => setSelectedProduct(undefined)} />}
+    {systemId && <SystemDrawer api={api} id={systemId} onClose={() => navigate(`/inventory?view=installations&${searchParams.toString()}`)} />}
   </div>;
 }
 
