@@ -407,8 +407,6 @@ function SystemsPage({ api, revision }: { api: API; revision: number }) {
   const [error, setError] = useState("");
 	const viewedInventory = useRef(false);
 	const lastTrackedSearch = useRef("");
-	const productInventory = useRemote(() => api.products(), [api, revision]);
-	const overview = useRemote(() => api.overview("7d"), [api, revision]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -431,25 +429,6 @@ function SystemsPage({ api, revision }: { api: API; revision: number }) {
 	}, [error, filters.search, loading]);
 
   const update = (key: string, value: string) => { if (key !== "search") captureAnalytics({ name: "lens_interaction", properties: { surface: "inventory", interaction: "filter_changed", control: analyticsControl(key) } }); setCursor(""); setItems([]); setFilters((current) => ({ ...current, [key]: value })); const next = new URLSearchParams(searchParams); value && value !== "all" ? next.set(key, value) : next.delete(key); setSearchParams(next, { replace: true }); };
-  const switchView = (view: "products" | "installations") => {
-    setInventoryView(view);
-    captureAnalytics({ name: "lens_interaction", properties: { surface: "inventory", interaction: "filter_changed", control: "inventory_scope" } });
-    const next = new URLSearchParams(searchParams);
-    view === "products" ? next.delete("view") : next.set("view", "installations");
-    setSearchParams(next, { replace: true });
-  };
-  const products = productInventory.data?.items ?? [];
-  const reportingEndpoints = overview.data?.coverage.find((item) => item.target_type === "endpoint")?.reporting ?? 0;
-  const productItems = products.filter((item) => {
-    const endpointCount = new Set(item.instances.map((instance) => instance.target_id).filter(Boolean)).size;
-    return (!productSearch || item.name.toLowerCase().includes(productSearch.toLowerCase()))
-      && (!productType || item.system_type === productType)
-      && (!productReach || (productReach === "broad" ? endpointCount > 1 : endpointCount <= 1))
-      && (!productActivity || (productActivity === "running" ? item.running_count > 0 : item.running_count === 0));
-  });
-  const installationCount = products.reduce((total, item) => total + item.installation_count, 0);
-  const runningCount = products.reduce((total, item) => total + item.running_count, 0);
-  const staleCount = products.reduce((total, item) => total + item.stale_count, 0);
   return <div className="page-stack">
     <section className="inventory-viewbar">
       <div><p className="eyebrow">SCOPE</p><h2>{inventoryView === "products" ? "Organization products" : "Endpoint installations"}</h2><p>{inventoryView === "products" ? "One row per product, regardless of how many endpoints report it." : "Every target-scoped system observation, retained for investigation and evidence review."}</p></div>
@@ -457,6 +436,7 @@ function SystemsPage({ api, revision }: { api: API; revision: number }) {
         <button className={inventoryView === "products" ? "active" : ""} onClick={() => switchView("products")}><PackageSearch size={15} /> Products</button>
         <button className={inventoryView === "installations" ? "active" : ""} onClick={() => switchView("installations")}><Monitor size={15} /> Installations</button>
       </div>
+      {error && <InlineError text={error} />}{loading && <InlineLoading />}{next && !loading && <button className="load-more" onClick={() => { captureAnalytics({ name: "lens_interaction", properties: { surface: "inventory", interaction: "load_more" } }); setCursor(next); }}>Load more systems <ChevronDown size={15} /></button>}
     </section>
     {inventoryView === "products" ? <>
       <section className="product-inventory-summary">

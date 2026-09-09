@@ -23,6 +23,7 @@ import (
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/oauth2"
 )
@@ -520,6 +521,7 @@ func (s *Server) exchangeEnrollment(w http.ResponseWriter, r *http.Request) {
 		err = setupErr
 	}
 	if err != nil {
+		s.logEnrollmentDatabaseFailure("activate_environment", err)
 		writeError(w, 500, "database_error", "Could not activate the environment")
 		return
 	}
@@ -827,6 +829,16 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 func writeError(w http.ResponseWriter, status int, code, message string) {
 	writeJSON(w, status, map[string]any{"error": map[string]string{"code": code, "message": message}})
 }
+
+func (s *Server) logEnrollmentDatabaseFailure(operation string, err error) {
+	attributes := []any{"operation", operation, "failure", "database_operation"}
+	var postgresError *pgconn.PgError
+	if errors.As(err, &postgresError) {
+		attributes = append(attributes, "sqlstate", postgresError.Code, "constraint", postgresError.ConstraintName)
+	}
+	s.config.Logger.Error("collector enrollment database operation failed", attributes...)
+}
+
 func normalizeCode(value string) string {
 	return strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(value), "-", ""))
 }
