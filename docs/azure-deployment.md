@@ -2,7 +2,9 @@
 
 The Lens pilot runs as an Azure Container App backed by Azure Database for
 PostgreSQL. GitHub Actions builds and deploys the Hub image after the `ci`
-workflow succeeds on `main`.
+workflow succeeds on `main`. Its public origin is
+[`https://lens.barrikade.ai`](https://lens.barrikade.ai); the default Azure
+Container Apps hostname is not a supported browser or enrollment origin.
 
 The pilot is the staging environment. The deploy workflow explicitly enables
 the privacy-minimized PostHog integration, uses the EU ingestion host, and sets
@@ -19,12 +21,19 @@ required Container App secret is missing.
    `sha-<git-sha>` tag to Azure Container Registry.
 5. Azure Container Apps creates a revision and keeps the previous revision live
    until the new revision is ready.
-6. The workflow verifies the ready revision and calls `/readyz`.
+6. The workflow confirms that `lens.barrikade.ai` remains bound to the Container
+   App, verifies the ready revision through the custom domain, and calls
+   `/readyz`.
 
 The verification request uses `/readyz` so a revision is accepted only after
 the database is reachable and startup migrations have completed. It also checks
-`/v1/auth/config` for Clerk self-service mode and confirms that the EU staging
-analytics configuration is exposed with a browser-safe `phc_` project token.
+`/v1/auth/config` for Clerk self-service mode, confirms that the public URL is
+`https://lens.barrikade.ai`, and confirms that the EU staging analytics
+configuration is exposed with a browser-safe `phc_` project token.
+
+The workflow sets both `LENS_PUBLIC_URL` and `LENS_CLERK_AUTHORIZED_PARTY` to
+`https://lens.barrikade.ai`. Keep the same origin in the Clerk application's
+allowed origins and redirect URLs. Do not include a trailing slash.
 
 Deployments are serialized through the `azure-pilot` concurrency group. A
 failed CI run never starts a deployment. The workflow can also be started

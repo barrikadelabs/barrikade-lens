@@ -53,14 +53,14 @@ docker compose --profile development up --build
 
 Open `http://localhost:8080` and use the quickstart token `lens-local-admin`. The compose credentials are deliberately development-only; use [the self-hosting guide](docs/self-hosting.md) for a real deployment.
 
-The Barrikade Azure pilot is deployed through the CI-gated [Azure deployment workflow](docs/azure-deployment.md).
+The Barrikade Azure pilot is available at [lens.barrikade.ai](https://lens.barrikade.ai) and deployed through the CI-gated [Azure deployment workflow](docs/azure-deployment.md).
 
 For the Barrikade pilot, the compose stack opens the `org_local` tenant used by the managed collector. The [live-device customer-story demo](docs/demo-live-device.md) shows how to present one real finding and its evidence without loading sample inventory or implying that Lens makes approval decisions.
 
 From **Connections**, choose **Connect endpoint**, select macOS, Windows, or Linux, and run the generated command. The Hub pins the collector release and expires each command after 15 minutes:
 
 ```sh
-npx --yes barrikade-lens@2.0.6 enroll ABCDE-FGHIJ --hub https://lens.example.com --install
+npx --yes barrikade-lens@2.0.6 enroll ABCDE-FGHIJ --hub https://lens.barrikade.ai --install
 ```
 
 The command exchanges the single-use code, stores rotating collector credentials privately, installs a stable background collector, and starts reporting. Run it with administrator privileges for system-wide macOS or Windows coverage. Node.js 18 or newer is required for the npm launcher; managed fleets can continue to pre-position the native binary. A CISO can instead create a revocable 24-hour IT handoff. The recipient selects a platform before Lens generates a 15-minute command, and enrollment permanently closes the handoff.

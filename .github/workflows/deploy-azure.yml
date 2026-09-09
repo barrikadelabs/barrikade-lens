@@ -32,6 +32,8 @@ jobs:
       AZURE_CONTAINER_APP: ca-lens-hub-pilot
       AZURE_CONTAINER_REGISTRY: acrlenspilotnef635
       IMAGE_REPOSITORY: lens-hub
+      LENS_PUBLIC_URL: https://lens.barrikade.ai
+      LENS_CLERK_AUTHORIZED_PARTY: https://lens.barrikade.ai
       LENS_POSTHOG_ENABLED: "true"
       LENS_POSTHOG_HOST: https://eu.i.posthog.com
       LENS_DEPLOYMENT_ENVIRONMENT: staging
@@ -114,16 +116,22 @@ jobs:
               "LENS_POSTHOG_ENABLED=$LENS_POSTHOG_ENABLED" \
               "LENS_POSTHOG_HOST=$LENS_POSTHOG_HOST" \
               "LENS_DEPLOYMENT_ENVIRONMENT=$LENS_DEPLOYMENT_ENVIRONMENT" \
+              "LENS_PUBLIC_URL=$LENS_PUBLIC_URL" \
+              "LENS_CLERK_AUTHORIZED_PARTY=$LENS_CLERK_AUTHORIZED_PARTY" \
               "LENS_POSTHOG_PROJECT_TOKEN=secretref:posthog-project-token" \
               "LENS_POSTHOG_ID_SALT=secretref:posthog-id-salt" \
             --output none
 
-          fqdn="$(az containerapp show \
+          custom_domain="$(az containerapp show \
             --resource-group "$AZURE_RESOURCE_GROUP" \
             --name "$AZURE_CONTAINER_APP" \
-            --query properties.configuration.ingress.fqdn \
+            --query "properties.configuration.ingress.customDomains[?name=='lens.barrikade.ai'].name | [0]" \
             --output tsv)"
-          echo "app-url=https://$fqdn" >> "$GITHUB_OUTPUT"
+          [[ "$custom_domain" == "lens.barrikade.ai" ]] || {
+            echo "Custom domain is not bound to the Container App: lens.barrikade.ai" >&2
+            exit 1
+          }
+          echo "app-url=$LENS_PUBLIC_URL" >> "$GITHUB_OUTPUT"
 
       - name: Verify the new revision
         shell: bash
@@ -166,6 +174,7 @@ jobs:
           jq -e '
             .mode == "clerk" and
             .self_serve_enabled == true and
+            .public_url == "https://lens.barrikade.ai" and
             .analytics.enabled == true and
             .analytics.host == "https://eu.i.posthog.com" and
             .analytics.deployment_environment == "staging" and
