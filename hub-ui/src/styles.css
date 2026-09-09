@@ -106,11 +106,15 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .discover-boundary span { display: grid; gap: 2px; }
 .discover-boundary b { color: white; font-size: 10px; }
 .discover-boundary small { color: var(--text-3); font: 8px var(--mono); }
-.sidebar-footer { display: grid; margin-top: auto; padding: 12px 7px 0; gap: 8px; border-top: 1px solid var(--line-soft); }
+.sidebar-footer { display: grid; margin-top: auto; padding: 12px 7px 0; gap: 10px; border-top: 1px solid var(--line-soft); }
+.sidebar-organization { width: 100%; min-width: 0; overflow: hidden; }
+.sidebar-organization > div { width: 100%; min-width: 0; }
+.sidebar-organization button { width: 100%; min-width: 0; max-width: 100%; }
 .sidebar-footer-actions { display: flex; width: 100%; align-items: center; gap: 6px; }
 .sidebar-footer button { display: inline-flex; padding: 4px; align-items: center; gap: 6px; border: 0; color: var(--text-4); background: none; font-size: 9px; }
 .sidebar-footer button:hover { color: white; }
-.sidebar-footer-actions > button:first-child { flex: 1; }
+.sidebar-footer-actions > button:not(.logout) { flex: 1; }
+.sidebar-user { display: grid; width: 32px; height: 36px; flex: 0 0 32px; place-items: center; }
 .sidebar-footer-actions .logout { width: 36px; flex: 0 0 36px; justify-content: center; }
 .main-area { min-width: 0; grid-column: 2; }
 .topbar { position: sticky; z-index: 50; top: 0; display: flex; height: 57px; padding: 0 clamp(20px,3vw,40px); align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line-soft); background: rgba(12,12,12,.86); backdrop-filter: blur(17px); }
@@ -1197,8 +1201,6 @@ body { background: #0b0b0b; }
 /* Managed identity and self-serve environments */
 .button:disabled, .environment-catalog button:disabled { cursor: not-allowed; opacity: .42; }
 .managed-signin .signin-access { background: radial-gradient(circle at 50% 45%, rgba(255,107,0,.07), transparent 22rem); }
-.managed-account-controls { display: flex; width: 100%; min-width: 0; align-items: center; justify-content: space-between; gap: 10px; }
-.managed-account-controls > div:first-child { min-width: 0; max-width: none; flex: 1; }
 .environment-summary { display: flex; min-height: 120px; padding: 25px 27px; align-items: center; justify-content: space-between; gap: 24px; background: radial-gradient(circle at 6% 15%,rgba(255,107,0,.08),transparent 28rem),var(--surface-soft); }
 .environment-summary h2 { margin: 0 0 7px; font-size: 25px; letter-spacing: -.035em; }
 .environment-summary p:last-child { max-width: 700px; margin: 0; color: var(--text-3); font-size: 11px; line-height: 1.55; }

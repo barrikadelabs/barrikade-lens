@@ -137,8 +137,9 @@ function ClerkApplication({ config }: { config: AuthConfig }) {
   if (error) return <Failure error={error} retry={() => { setError(""); setBootstrapped(""); }} />;
   if (!organization && bootstrapped === "needs-workspace") return <main className="signin"><section className="signin-story"><Brand /><div className="signin-copy"><span className="product-kicker"><Radar size={14} /> Set up Lens</span><h1>Name your security workspace.</h1><p>This name identifies the organization whose endpoint footprint Lens will assess.</p></div></section><section className="signin-access"><form className="access-card" onSubmit={(event) => { event.preventDefault(); const value = workspaceName.trim(); if (!value) return; setBootstrapped("creating"); Promise.resolve(memberships.createOrganization?.({ name: value })).then((created) => created && memberships.setActive?.({ organization: created.id })).catch((reason) => { setError(String(reason)); setBootstrapped("needs-workspace"); }); }}><p className="eyebrow">WORKSPACE</p><h2>Organization name</h2><label>Name<input value={workspaceName} maxLength={128} required autoFocus onChange={(event) => setWorkspaceName(event.target.value)} placeholder="Acme Security" /></label><button className="button primary full">Create workspace <ArrowRight size={16} /></button></form></section></main>;
   if (!organization || bootstrapped !== organization.id) return <Loading />;
-  const controls = <div className="managed-account-controls"><OrganizationSwitcher hidePersonal organizationProfileMode="modal" afterCreateOrganizationUrl="/" afterSelectOrganizationUrl="/" /><UserButton userProfileMode="modal" /></div>;
-  return <Shell api={api} signOut={() => { resetAnalytics(); return signOut(); }} accountControls={controls} selfServe={config.self_serve_enabled} analyticsConfig={config.analytics} />;
+  const organizationControl = <OrganizationSwitcher hidePersonal organizationProfileMode="modal" afterCreateOrganizationUrl="/" afterSelectOrganizationUrl="/" />;
+  const userControl = <UserButton userProfileMode="modal" />;
+  return <Shell api={api} signOut={() => { resetAnalytics(); return signOut(); }} organizationControl={organizationControl} userControl={userControl} selfServe={config.self_serve_enabled} analyticsConfig={config.analytics} />;
 }
 
 function ManagedSignIn() {
@@ -214,7 +215,7 @@ function LegacySignIn({ config, onToken, authError }: { config: AuthConfig; onTo
   </main>;
 }
 
-function Shell({ api, signOut, accountControls, selfServe = true, analyticsConfig }: { api: API; signOut: () => void; accountControls?: ReactNode; selfServe?: boolean; analyticsConfig?: AuthConfig["analytics"] }) {
+function Shell({ api, signOut, organizationControl, userControl, selfServe = true, analyticsConfig }: { api: API; signOut: () => void; organizationControl?: ReactNode; userControl?: ReactNode; selfServe?: boolean; analyticsConfig?: AuthConfig["analytics"] }) {
   const location = useLocation();
   const navigate = useNavigate();
   const page = pageForPath(location.pathname);
@@ -238,8 +239,9 @@ function Shell({ api, signOut, accountControls, selfServe = true, analyticsConfi
         </button>)}
       </nav>
       <div className="sidebar-footer">
-        {accountControls}
+        {organizationControl && <div className="sidebar-organization">{organizationControl}</div>}
         <div className="sidebar-footer-actions">
+          {userControl && <div className="sidebar-user">{userControl}</div>}
           <button onClick={() => navigate("/settings")}><UserRound size={15} /> Account settings</button>
           <button className="logout" onClick={signOut} aria-label="Sign out" title="Sign out"><LogOut size={16} /></button>
         </div>
