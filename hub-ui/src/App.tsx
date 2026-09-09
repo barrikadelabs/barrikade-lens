@@ -233,7 +233,7 @@ function Shell({ api, signOut, accountControls, selfServe = true, analyticsConfi
     <aside className={menuOpen ? "sidebar open" : "sidebar"}>
       <div className="sidebar-brand"><Brand /></div>
       <nav className="main-nav">
-        {navigation.filter((item) => (item.page !== "Findings" || exposureEnabled) && (item.page !== "Connections" || selfServe)).map(({ page: item, icon: Icon, detail }) => <button key={item} className={page === item ? "active" : ""} onClick={() => { navigate(pagePath[item]); setMenuOpen(false); }}>
+        {navigation.filter((item) => (item.page !== "Findings" || exposureEnabled) && (item.page !== "Connections" || selfServe)).map(({ page: item, icon: Icon, detail }) => <button key={item} className={page === item ? "active" : ""} onClick={() => { captureAnalytics({ name: "lens_interaction", properties: { surface: "navigation", interaction: "open", control: "navigation" } }); navigate(pagePath[item]); setMenuOpen(false); }}>
           <Icon size={17} /><span><b>{item}</b><small>{detail}</small></span>{page === item && <ChevronRight size={14} />}
         </button>)}
       </nav>
@@ -250,7 +250,7 @@ function Shell({ api, signOut, accountControls, selfServe = true, analyticsConfi
         <header className="page-heading">
           <button className="mobile-menu" aria-label={menuOpen ? "Close navigation" : "Open navigation"} onClick={() => setMenuOpen((value) => !value)}>{menuOpen ? <X size={20} /> : <Menu size={20} />}</button>
           <div><p className="eyebrow">{copy.eyebrow}</p><h1>{copy.title}</h1><p>{copy.detail}</p></div>
-          <div className="page-actions"><NotificationBell api={api} revision={revision} onOpen={() => navigate("/connections")} /><button className="icon-button" onClick={() => setRevision((value) => value + 1)} title="Refresh"><RefreshCw size={16} /></button><ExportMenu api={api} /></div>
+          <div className="page-actions"><NotificationBell api={api} revision={revision} onOpen={() => navigate("/connections")} /><button className="icon-button" onClick={() => { captureAnalytics({ name: "lens_interaction", properties: { surface: semanticPage(location.pathname) ?? "navigation", interaction: "refresh" } }); setRevision((value) => value + 1); }} title="Refresh"><RefreshCw size={16} /></button><ExportMenu api={api} /></div>
         </header>
         <Routes>
           <Route path="/" element={<Navigate to="/overview" replace />} />
@@ -300,7 +300,7 @@ function OverviewPage({ api, revision, go }: { api: API; revision: number; go: (
   const changes = groupChanges(data.changes).slice(0, 4);
 
   return <div className="page-stack executive-overview">
-    <div className="overview-toolbar"><span>Updated {relative(data.generated_at)}</span><div className="window-switch">{["24h", "7d", "30d"].map((item) => <button className={window === item ? "active" : ""} onClick={() => { const next = new URLSearchParams(search); item === "7d" ? next.delete("window") : next.set("window", item); setSearch(next, { replace: true }); }} key={item}>{item}</button>)}</div></div>
+    <div className="overview-toolbar"><span>Updated {relative(data.generated_at)}</span><div className="window-switch">{["24h", "7d", "30d"].map((item) => <button className={window === item ? "active" : ""} onClick={() => { captureAnalytics({ name: "lens_interaction", properties: { surface: "overview", interaction: "filter_changed", control: "window" } }); const next = new URLSearchParams(search); item === "7d" ? next.delete("window") : next.set("window", item); setSearch(next, { replace: true }); }} key={item}>{item}</button>)}</div></div>
     {data.executive_summary?.coverage_state === "unassessed" && <section className="panel unassessed-state"><div><p className="eyebrow">START HERE</p><h2>Your organization is unassessed</h2><p>Install the read-only endpoint collector here, or create a 24-hour handoff for IT. Results appear after normalization completes.</p></div><button className="button primary" onClick={() => go("Connections")}>Connect endpoint <ArrowRight size={15} /></button></section>}
     {data.executive_summary?.coverage_state === "ready" && data.executive_summary.systems.known === 0 && <section className="panel successful-empty"><CheckCircle2 size={18} /><div><h2>No AI systems found in the checked scope</h2><p>Lens completed the latest endpoint scan {data.executive_summary.last_successful_evidence_at ? relative(data.executive_summary.last_successful_evidence_at) : "recently"}. Open Connections to review the reporting endpoint and coverage.</p></div></section>}
     {data.executive_summary && data.executive_summary.coverage_state !== "ready" && <section className={`coverage-limitation ${data.executive_summary.coverage_state}`} role="status"><AlertCircle size={16} /><span><b>{pretty(data.executive_summary.coverage_state)} coverage.</b> Executive conclusions include retained evidence and show its age. Last successful evidence {data.executive_summary.last_successful_evidence_at ? relative(data.executive_summary.last_successful_evidence_at) : "has not arrived yet"}.</span></section>}
@@ -362,12 +362,12 @@ function FindingsPage({ api, revision }: { api: API; revision: number }) {
 		inspectedFinding.current = detail.data.id;
 		captureAnalytics({ name: "finding_opened", properties: { severity: detail.data.severity, freshness: detail.data.evidence_freshness, owner_state: detail.data.effective_ownership?.owned ? "owned" : "unowned" } });
 	}, [detail.data]);
-  const update = (key: string, value: string) => { const next = new URLSearchParams(search); value && value !== "all" ? next.set(key, value) : next.delete(key); setCursor(""); setItems([]); setSearch(next); };
+  const update = (key: string, value: string) => { captureAnalytics({ name: "lens_interaction", properties: { surface: "findings", interaction: "filter_changed", control: analyticsControl(key) } }); const next = new URLSearchParams(search); value && value !== "all" ? next.set(key, value) : next.delete(key); setCursor(""); setItems([]); setSearch(next); };
   if (remote.loading && !items.length) return <Loading />;
   if (remote.error) return <Failure error={remote.error} retry={remote.reload} />;
   return <div className="page-stack">
     <FilterBar hideSearch><Select label="Severity" value={filters.severity} onChange={(value) => update("severity", value)} options={{ "": "All severities", critical: "Critical", high: "High", medium: "Medium", low: "Low" }} /><Select label="Evidence" value={filters.freshness} onChange={(value) => update("freshness", value)} options={{ all: "Fresh and stale", fresh: "Fresh", stale: "Stale" }} /><Select label="Ownership" value={filters.owner_status} onChange={(value) => update("owner_status", value)} options={{ "": "Any owner", unowned: "Owner missing", owned: "Owned" }} /><Select label="System type" value={filters.system_type} onChange={(value) => update("system_type", value)} options={{ "": "All systems", autonomous_agent: "Autonomous agents", agent_tool: "Agent tools", model_runtime: "Model runtimes" }} /></FilterBar>
-    <section className="panel data-panel"><PanelHeading title="What needs attention" detail="Ranked across the entire workspace; stale findings remain visible with their evidence age." count={items.length} /><div className="finding-list">{items.map((finding) => <button key={finding.id} className="finding-row" onClick={() => navigate(`/findings/${encodeURIComponent(finding.id)}?${search.toString()}`)}><span className={`severity-pill ${finding.severity}`}>{finding.severity}</span><span><b>{finding.title}</b><small>{finding.root_name} · evidence {finding.evidence_last_seen_at ? relative(finding.evidence_last_seen_at) : relative(finding.last_seen_at)}</small></span><span className={finding.effective_ownership?.owned ? "fact good" : "fact quiet"}>{finding.effective_ownership?.owner_name || "Owner missing"}</span><ChevronRight size={15} /></button>)}{!items.length && <Empty icon={CheckCircle2} title="No findings match this view" detail="Lens found no current evidence-backed findings for these filters." />}</div>{remote.data?.next_cursor && <button className="load-more" onClick={() => setCursor(remote.data!.next_cursor!)}>Load more findings <ChevronDown size={15} /></button>}</section>
+    <section className="panel data-panel"><PanelHeading title="What needs attention" detail="Ranked across the entire workspace; stale findings remain visible with their evidence age." count={items.length} /><div className="finding-list">{items.map((finding) => <button key={finding.id} className="finding-row" onClick={() => navigate(`/findings/${encodeURIComponent(finding.id)}?${search.toString()}`)}><span className={`severity-pill ${finding.severity}`}>{finding.severity}</span><span><b>{finding.title}</b><small>{finding.root_name} · evidence {finding.evidence_last_seen_at ? relative(finding.evidence_last_seen_at) : relative(finding.last_seen_at)}</small></span><span className={finding.effective_ownership?.owned ? "fact good" : "fact quiet"}>{finding.effective_ownership?.owner_name || "Owner missing"}</span><ChevronRight size={15} /></button>)}{!items.length && <Empty icon={CheckCircle2} title="No findings match this view" detail="Lens found no current evidence-backed findings for these filters." />}</div>{remote.data?.next_cursor && <button className="load-more" onClick={() => { captureAnalytics({ name: "lens_interaction", properties: { surface: "findings", interaction: "load_more" } }); setCursor(remote.data!.next_cursor!); }}>Load more findings <ChevronDown size={15} /></button>}</section>
     {findingId && <AccessibleDialog title="Finding details" onClose={() => navigate(`/findings?${search.toString()}`)}>{detail.loading ? <InlineLoading /> : detail.error || !detail.data ? <InlineError text={detail.error || "Finding not found"} /> : <FindingDetail finding={detail.data} navigate={navigate} />}</AccessibleDialog>}
   </div>;
 }
@@ -399,6 +399,7 @@ function SystemsPage({ api, revision }: { api: API; revision: number }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 	const viewedInventory = useRef(false);
+	const lastTrackedSearch = useRef("");
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -413,8 +414,14 @@ function SystemsPage({ api, revision }: { api: API; revision: number }) {
 			captureAnalytics({ name: "inventory_viewed", properties: {} });
 		}
 	}, [error, loading]);
+	useEffect(() => {
+		if (!loading && !error && filters.search && filters.search !== lastTrackedSearch.current) {
+			lastTrackedSearch.current = filters.search;
+			captureAnalytics({ name: "lens_interaction", properties: { surface: "inventory", interaction: "search_used" } });
+		}
+	}, [error, filters.search, loading]);
 
-  const update = (key: string, value: string) => { setCursor(""); setItems([]); setFilters((current) => ({ ...current, [key]: value })); const next = new URLSearchParams(searchParams); value && value !== "all" ? next.set(key, value) : next.delete(key); setSearchParams(next, { replace: true }); };
+  const update = (key: string, value: string) => { if (key !== "search") captureAnalytics({ name: "lens_interaction", properties: { surface: "inventory", interaction: "filter_changed", control: analyticsControl(key) } }); setCursor(""); setItems([]); setFilters((current) => ({ ...current, [key]: value })); const next = new URLSearchParams(searchParams); value && value !== "all" ? next.set(key, value) : next.delete(key); setSearchParams(next, { replace: true }); };
   return <div className="page-stack">
     <FilterBar search={filters.search ?? ""} setSearch={(value) => update("search", value)}>
       <Select label="System type" value={filters.system_type} onChange={(value) => update("system_type", value)} options={{ "": "All root systems", autonomous_agent: "Autonomous agents", agent_tool: "Agent-capable tools", model_runtime: "Model runtimes" }} />
@@ -433,7 +440,7 @@ function SystemsPage({ api, revision }: { api: API; revision: number }) {
         </button>)}
         {!loading && !items.length && <Empty icon={Bot} title="No systems match this view" detail="Supporting runtimes and cached artifacts are intentionally excluded from the executive systems view." />}
       </div>
-      {error && <InlineError text={error} />}{loading && <InlineLoading />}{next && !loading && <button className="load-more" onClick={() => setCursor(next)}>Load more systems <ChevronDown size={15} /></button>}
+      {error && <InlineError text={error} />}{loading && <InlineLoading />}{next && !loading && <button className="load-more" onClick={() => { captureAnalytics({ name: "lens_interaction", properties: { surface: "inventory", interaction: "load_more" } }); setCursor(next); }}>Load more systems <ChevronDown size={15} /></button>}
     </section>
     {systemId && <SystemDrawer api={api} id={systemId} onClose={() => navigate(`/inventory?${searchParams.toString()}`)} />}
   </div>;
@@ -453,6 +460,10 @@ const environmentCatalog: Array<{ kind: EnvironmentKind; title: string; detail: 
 
 function analyticsConnectionType(kind: EnvironmentKind): "aws" | "azure" | "gcp" | "endpoint" | "github" | "kubernetes" {
 	return ({ aws_account: "aws", azure_subscription: "azure", gcp_project: "gcp", endpoint: "endpoint", github_repository: "github", kubernetes_cluster: "kubernetes" } as const)[kind];
+}
+
+function analyticsControl(key: string): string {
+	return ({ owner_status: "ownership", network_scope: "network", system_type: "system_type", target_type: "target_type" } as Record<string, string>)[key] ?? key;
 }
 
 function ConnectionsPage({ api, revision, onResults, startWizard = false }: { api: API; revision: number; onResults: () => void; startWizard?: boolean }) {
@@ -526,10 +537,11 @@ function EnvironmentsPage({ api, revision, onResults, startWizard = false }: { a
     setBusy(true); setError("");
     const configuration = kind === "azure_subscription" ? { tenant_id: tenantID } : kind === "gcp_project" ? { project_number: projectNumber } : {};
     api.createEnvironmentSetup({ kind, display_name: name, external_id: externalID || undefined, configuration })
-      .then(setSetup).catch((reason) => setError(String(reason))).finally(() => setBusy(false));
+      .then((result) => { setSetup(result); captureAnalytics({ name: "lens_interaction", properties: { surface: "setup", interaction: "setup_generated", connection_type: analyticsConnectionType(kind) } }); }).catch((reason) => setError(String(reason))).finally(() => setBusy(false));
   };
   const verify = () => {
     if (!setup) return;
+    captureAnalytics({ name: "lens_interaction", properties: { surface: "setup", interaction: "verify_requested", connection_type: analyticsConnectionType(setup.kind) } });
     setBusy(true); setError(""); setMessage("");
     api.verifyEnvironment(setup.environment_id).then((result) => {
       setMessage(result.message || "Access verified. Lens started the first scan.");
@@ -540,10 +552,11 @@ function EnvironmentsPage({ api, revision, onResults, startWizard = false }: { a
   const delegate = () => {
     if (!setup) return;
     setBusy(true); setError("");
-    api.createEndpointHandoff(setup.environment_id).then(setHandoff).catch((reason) => setError(String(reason))).finally(() => setBusy(false));
+    api.createEndpointHandoff(setup.environment_id).then((result) => { setHandoff(result); captureAnalytics({ name: "lens_interaction", properties: { surface: "setup", interaction: "handoff_created", connection_type: "endpoint" } }); }).catch((reason) => setError(String(reason))).finally(() => setBusy(false));
   };
   const runScan = (environment: Environment) => {
     setError("");
+    captureAnalytics({ name: "lens_interaction", properties: { surface: "connections", interaction: "scan_requested", connection_type: analyticsConnectionType(environment.kind) } });
     api.scanEnvironment(environment.id).then((result) => {
       setSetup({ id: "manual", environment_id: environment.id, kind: environment.kind, expires_at: "", token_displayed_once: false, setup: { method: "manual" } });
       setScan({ ...result, environment_id: environment.id, trigger: "manual", phase: "queued", progress: {}, created_at: new Date().toISOString() });
@@ -585,7 +598,7 @@ function EnvironmentActivationCard({ api, environment, revision, canManage, onRe
 
 function CopyBlock({ value }: { value: string }) {
   const [copied, setCopied] = useState(false);
-  return <div className="install-command"><code>{value}</code><button onClick={() => navigator.clipboard.writeText(value).then(() => { setCopied(true); window.setTimeout(() => setCopied(false), 1500); })}><Copy size={15} />{copied ? "Copied" : "Copy"}</button></div>;
+  return <div className="install-command"><code>{value}</code><button onClick={() => navigator.clipboard.writeText(value).then(() => { captureAnalytics({ name: "lens_interaction", properties: { surface: "setup", interaction: "command_copied" } }); setCopied(true); window.setTimeout(() => setCopied(false), 1500); })}><Copy size={15} />{copied ? "Copied" : "Copy"}</button></div>;
 }
 
 function CoveragePage({ api, revision }: { api: API; revision: number }) {
@@ -596,7 +609,7 @@ function CoveragePage({ api, revision }: { api: API; revision: number }) {
   if (overview.loading || targets.loading) return <Loading />;
   if (overview.error || targets.error || !overview.data || !targets.data) return <Failure error={overview.error || targets.error} retry={() => { overview.reload(); targets.reload(); }} />;
   return <div className="page-stack">
-    <section className="coverage-cards">{overview.data.coverage.map((item) => <CoverageCard key={item.target_type} item={item} active={targetType === item.target_type} onClick={() => setTargetType((value) => value === item.target_type ? "" : item.target_type)} />)}</section>
+    <section className="coverage-cards">{overview.data.coverage.map((item) => <CoverageCard key={item.target_type} item={item} active={targetType === item.target_type} onClick={() => { captureAnalytics({ name: "lens_interaction", properties: { surface: "connections", interaction: "filter_changed", control: "target_type" } }); setTargetType((value) => value === item.target_type ? "" : item.target_type); }} />)}</section>
     <section className="panel data-panel">
       <PanelHeading title="Unique discovery targets" detail="One row per endpoint installation, repository, or cluster. Collector credentials are nested below the target." count={targets.data.items.length} />
       <div className="target-table table-scroll"><div className="target-row table-head"><span>Target</span><span>Surface</span><span>Freshness</span><span>Last full scan</span><span>Data quality</span><span /></div>
@@ -626,7 +639,7 @@ function ChangesPage({ api, revision }: { api: API; revision: number }) {
 	const viewedChanges = useRef(false);
   useEffect(() => { if (remote.data) setItems((current) => cursor ? [...current, ...remote.data!.items] : remote.data!.items); }, [remote.data, cursor]);
 	useEffect(() => { if (remote.data && !viewedChanges.current) { viewedChanges.current = true; captureAnalytics({ name: "changes_viewed", properties: {} }); } }, [remote.data]);
-  const update = (key: string, value: string) => { const next = new URLSearchParams(search); value && !(key === "window" && value === "7d") ? next.set(key, value) : next.delete(key); setCursor(""); setItems([]); setSearch(next, { replace: true }); };
+  const update = (key: string, value: string) => { captureAnalytics({ name: "lens_interaction", properties: { surface: "changes", interaction: "filter_changed", control: analyticsControl(key) } }); const next = new URLSearchParams(search); value && !(key === "window" && value === "7d") ? next.set(key, value) : next.delete(key); setCursor(""); setItems([]); setSearch(next, { replace: true }); };
   return <div className="page-stack"><FilterBar hideSearch>
     <Select label="Window" value={filters.window} onChange={(value) => update("window", value)} options={{ "24h": "Last 24 hours", "7d": "Last 7 days", "30d": "Last 30 days", "90d": "Last 90 days" }} />
     <Select label="Category" value={filters.category} onChange={(value) => update("category", value)} options={{ "": "All material changes", state: "State", network_scope: "Network scope", attribution: "Attribution", capability: "Capability", confidence: "Confidence", identity: "Identity", freshness: "Freshness" }} />
@@ -634,7 +647,7 @@ function ChangesPage({ api, revision }: { api: API; revision: number }) {
     <Select label="Surface" value={filters.surface} onChange={(value) => update("surface", value)} options={{ "": "All surfaces", endpoint: "Endpoint", repository: "Repository", kubernetes: "Kubernetes", cloud: "Cloud" }} />
   </FilterBar>
     <section className="panel change-log"><PanelHeading title="System change history" detail="Changes to root systems and their connected capabilities; routine re-observation is suppressed" count={items.length} /><ChangeList items={items} expanded />
-      {remote.loading && <InlineLoading />}{remote.error && <InlineError text={remote.error} />}{remote.data?.next_cursor && !remote.loading && <button className="load-more" onClick={() => setCursor(remote.data!.next_cursor!)}>Load more changes <ChevronDown size={15} /></button>}
+      {remote.loading && <InlineLoading />}{remote.error && <InlineError text={remote.error} />}{remote.data?.next_cursor && !remote.loading && <button className="load-more" onClick={() => { captureAnalytics({ name: "lens_interaction", properties: { surface: "changes", interaction: "load_more" } }); setCursor(remote.data!.next_cursor!); }}>Load more changes <ChevronDown size={15} /></button>}
     </section>
   </div>;
 }
@@ -692,7 +705,7 @@ function CoverageBaseline({ api, coverage, onSaved }: { api: API; coverage: Over
   const [status, setStatus] = useState("");
   const save = () => {
     const baselines = ["endpoint", "repository", "kubernetes", "cloud"].map((target_type) => ({ target_type, expected_count: values[target_type] === "" ? null : Number(values[target_type]) }));
-    api.setBaselines(baselines).then(() => { setStatus("Coverage baseline saved"); setEditing(false); onSaved(); }).catch((reason) => setStatus(String(reason)));
+    api.setBaselines(baselines).then(() => { captureAnalytics({ name: "lens_interaction", properties: { surface: "connections", interaction: "baseline_saved" } }); setStatus("Coverage baseline saved"); setEditing(false); onSaved(); }).catch((reason) => setStatus(String(reason)));
   };
   return <section className="panel baseline-panel"><div><p className="eyebrow">EXPECTED POPULATION</p><h2>Coverage denominator</h2><p>Optional manual baselines let Lens compare reporting targets with a known population. Blank values remain explicitly unknown.</p></div>
     {editing ? <div className="baseline-form">{["endpoint", "repository", "kubernetes", "cloud"].map((type) => <label key={type}>{pretty(type)}<input type="number" min="0" placeholder="Unknown" value={values[type] ?? ""} onChange={(event) => setValues((current) => ({ ...current, [type]: event.target.value }))} /></label>)}<button className="button primary" onClick={save}>Save baselines</button><button className="button subtle" onClick={() => setEditing(false)}>Cancel</button></div> : <button className="button subtle" onClick={() => setEditing(true)}><SlidersHorizontal size={15} /> Configure baselines</button>}
@@ -781,7 +794,7 @@ function Drawer({ children, onClose }: { children: ReactNode; onClose: () => voi
 
 function ExportMenu({ api }: { api: API }) {
   const [open, setOpen] = useState(false);
-  return <div className="export"><button className="button subtle" onClick={() => setOpen((value) => !value)}><Download size={15} /> Export <ChevronDown size={13} /></button>{open && <div>{(["lens", "ndjson", "cyclonedx"] as const).map((format) => <button key={format} onClick={() => { setOpen(false); api.downloadExport(format); }}>{format === "lens" ? "Lens JSON" : format === "ndjson" ? "NDJSON" : "CycloneDX 1.7"}</button>)}</div>}</div>;
+  return <div className="export"><button className="button subtle" onClick={() => setOpen((value) => !value)}><Download size={15} /> Export <ChevronDown size={13} /></button>{open && <div>{(["lens", "ndjson", "cyclonedx"] as const).map((format) => <button key={format} onClick={() => { captureAnalytics({ name: "lens_interaction", properties: { surface: "export", interaction: "open", export_format: format === "lens" ? "json" : format } }); setOpen(false); api.downloadExport(format); }}>{format === "lens" ? "Lens JSON" : format === "ndjson" ? "NDJSON" : "CycloneDX 1.7"}</button>)}</div>}</div>;
 }
 
 function AccountSettings({ api, onDeleted, onAnalyticsChanged, analyticsAvailable }: { api: API; onDeleted: () => Promise<void>; onAnalyticsChanged: () => void; analyticsAvailable: boolean }) {
@@ -804,7 +817,7 @@ function AccountSettings({ api, onDeleted, onAnalyticsChanged, analyticsAvailabl
 		setBusy(true); setError("");
 		try { await api.updateAnalytics(enabled); if (!enabled) resetAnalytics(); session.reload(); onAnalyticsChanged(); } catch (reason) { setError(String(reason)); } finally { setBusy(false); }
 	};
-  return <div className="page-stack"><section className="panel settings-panel"><PanelHeading title="Your account" detail={`${session.data.user.id} · ${pretty(session.data.role)}`} /><p>{session.data.can_delete_account ? "You can delete your identity. Workspace evidence and settings remain available to other members." : "You are the workspace's sole owner. Transfer ownership or delete the workspace before deleting your identity."}</p><button className="button subtle" disabled={busy || !session.data.can_delete_account} onClick={removeIdentity}>Delete my identity</button></section>{analyticsAvailable && <section className="panel settings-panel"><PanelHeading title="Product analytics" detail="Help Barrikade improve managed Lens" /><label className="analytics-preference"><input type="checkbox" checked={session.data.analytics.enabled} disabled={busy} onChange={(event) => void updateAnalytics(event.target.checked)} /><span><b>Share privacy-minimized usage events</b><small>Lens sends pseudonymous activation and feature-use events. It never sends names, email addresses, workspace names, inventory, evidence, URLs, commands, or infrastructure identifiers. Browser privacy signals disable capture on this browser.</small></span></label><p className="muted">Turning this off affects future events. Contact Barrikade to request erasure of previously collected pseudonymous analytics.</p></section>}{session.data.role === "owner" && <section className="panel settings-panel danger-zone"><PanelHeading title="Delete workspace" detail="Immediately deletes connections, inventory, findings, evidence, and member access." /><button className="button quiet" disabled={busy} onClick={removeWorkspace}>Delete workspace</button></section>}{error && <InlineError text={error} />}</div>;
+  return <div className="page-stack"><section className="panel settings-panel"><PanelHeading title="Your account" detail={`${session.data.user.id} · ${pretty(session.data.role)}`} /><p>{session.data.can_delete_account ? "You can delete your identity. Workspace evidence and settings remain available to other members." : "You are the workspace's sole owner. Transfer ownership or delete the workspace before deleting your identity."}</p><button className="button subtle" disabled={busy || !session.data.can_delete_account} onClick={removeIdentity}>Delete my identity</button></section>{analyticsAvailable && <section className="panel settings-panel"><PanelHeading title="Product analytics" detail="Help Barrikade improve managed Lens" /><label className="analytics-preference"><input type="checkbox" checked={session.data.analytics.enabled} disabled={busy} onChange={(event) => void updateAnalytics(event.target.checked)} /><span><b>Share privacy-minimized product diagnostics</b><small>Lens sends pseudonymous activation and feature-use events, numeric performance, sanitized error classes, survey ratings, flag exposure, and maximally masked session replay. Replay masks all text, inputs, and attributes and blocks media and network data. Lens never sends names, email addresses, workspace names, inventory, evidence, URLs, commands, or infrastructure identifiers. Browser privacy signals disable capture on this browser.</small></span></label><p className="muted">Turning this off affects future events and immediately stops replay in this browser. Contact Barrikade to request erasure of previously collected pseudonymous analytics.</p></section>}{session.data.role === "owner" && <section className="panel settings-panel danger-zone"><PanelHeading title="Delete workspace" detail="Immediately deletes connections, inventory, findings, evidence, and member access." /><button className="button quiet" disabled={busy} onClick={removeWorkspace}>Delete workspace</button></section>}{error && <InlineError text={error} />}</div>;
 }
 
 function NotificationBell({ api, revision, onOpen }: { api: API; revision: number; onOpen: () => void }) {
@@ -812,7 +825,7 @@ function NotificationBell({ api, revision, onOpen }: { api: API; revision: numbe
   const unread = notifications.data?.items.filter((item) => !item.read_at) ?? [];
   if (!unread.length) return null;
   const latest = unread[0];
-  return <button className="notification-button" title={`${unread.length} unread setup notifications`} onClick={() => { api.readNotification(latest.id).then(notifications.reload); onOpen(); }}><Activity size={15} /><b>{unread.length}</b></button>;
+  return <button className="notification-button" title={`${unread.length} unread setup notifications`} onClick={() => { captureAnalytics({ name: "lens_interaction", properties: { surface: "notification", interaction: "notification_opened" } }); api.readNotification(latest.id).then(notifications.reload); onOpen(); }}><Activity size={15} /><b>{unread.length}</b></button>;
 }
 
 function Loading() { return <div className="loading"><Radar size={25} /><span>Resolving discovery posture…</span></div>; }
