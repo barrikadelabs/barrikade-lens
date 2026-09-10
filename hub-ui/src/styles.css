@@ -725,6 +725,27 @@ button.product-inventory-row:hover { color: white; background: var(--surface-hov
 .analytics-preference input { margin-top:3px; accent-color:var(--orange); }
 .analytics-preference span { display:grid; gap:5px; }
 .analytics-preference small { color:var(--text-3); line-height:1.55; max-width:68ch; }
+.settings-panel a,.auth-legal a,.legal-page a,.sidebar-legal a { color:var(--orange); text-decoration:none; }
+.settings-panel a:hover,.auth-legal a:hover,.legal-page a:hover,.sidebar-legal a:hover { text-decoration:underline; }
+.auth-legal { max-width:34rem; margin:12px auto 0; color:var(--text-4); font-size:9px; line-height:1.55; text-align:center; }
+.sidebar-legal { display:flex; padding:0 8px 8px; gap:12px; font-size:8px; }
+.legal-page { min-height:100vh; padding:32px 20px 48px; background:radial-gradient(circle at 20% 0,rgba(255,107,0,.08),transparent 34rem),#0b0b0b; }
+.legal-header,.legal-document,.legal-footer { width:min(820px,100%); margin:0 auto; }
+.legal-header { display:grid; padding-bottom:28px; gap:48px; }
+.legal-header > a { width:max-content; }
+.legal-header h1 { margin:6px 0 8px; font-size:clamp(32px,5vw,52px); letter-spacing:-.045em; }
+.legal-header > div > p:last-child { margin:0; color:var(--text-3); font-size:11px; }
+.legal-document { display:grid; gap:1px; overflow:hidden; border:1px solid var(--line); border-radius:14px; background:var(--line); }
+.legal-document section { padding:25px 28px; background:var(--surface); }
+.legal-document h2 { margin:0 0 12px; font-size:15px; }
+.legal-document p { margin:0; color:var(--text-3); font-size:11px; line-height:1.75; }
+.legal-document p + p { margin-top:12px; }
+.legal-table { display:grid; margin:14px 0; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+.legal-table > div { display:grid; grid-template-columns:160px 1fr; gap:16px; padding:12px 14px; border-top:1px solid var(--line-soft); }
+.legal-table > div:first-child { border-top:0; }
+.legal-table b { color:var(--text-2); font-size:10px; }
+.legal-table span { color:var(--text-3); font-size:10px; line-height:1.55; }
+.legal-footer { display:flex; padding-top:22px; gap:18px; color:var(--text-4); font-size:9px; }
 .danger-zone { border-color:rgba(255,90,90,.18); }
 .empty-state-actions { display:grid; place-items:center; gap:12px; padding:30px; border:1px solid var(--line); border-radius:9px; background:var(--surface-soft); }
 .connection-status.ready { color:var(--green); background:var(--green-soft); }
@@ -740,6 +761,11 @@ button.product-inventory-row:hover { color: white; background: var(--surface-hov
   .finding-detail dl { grid-template-columns:1fr; }
   .public-install { padding:14px; }
   .public-install-card { padding:21px 16px; }
+  .legal-page { padding:22px 12px 34px; }
+  .legal-header { gap:32px; }
+  .legal-document section { padding:21px 18px; }
+  .legal-table > div { grid-template-columns:1fr; gap:5px; }
+  .legal-footer { flex-wrap:wrap; }
 }
 
 /* Exposure Map */

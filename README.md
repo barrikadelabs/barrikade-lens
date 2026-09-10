@@ -115,7 +115,7 @@ flowchart LR
 
 Lens accepts useful organizational identity—hostnames, OS users, repository/workload names, relative repository paths, and sanitized endpoint hosts—but rejects private content. Absolute paths become organization-salted hashes. URLs lose userinfo, query strings, and fragments. Configuration bodies, prompts, environment values, credentials, secret values, and full command arguments are forbidden by validation and property tests.
 
-Read [privacy and evidence](docs/privacy.md), [data integrity and executive posture](docs/data-integrity.md), [architecture](docs/architecture.md), and the [threat model](docs/threat-model.md) before extending a detector.
+Read [privacy and evidence](docs/privacy.md), [managed analytics](docs/posthog-analytics.md), [privacy operations](docs/privacy-operations.md), [data integrity and executive posture](docs/data-integrity.md), [architecture](docs/architecture.md), and the [threat model](docs/threat-model.md) before extending a detector.
 
 Detector contributors should also read [detector packs and detection-quality rules](docs/detector-packs.md). Lens favors validated open formats and independent evidence over filename or product-name guesses: agent instructions are not agents, framework imports do not manufacture agents, supporting runtimes stay separate, and malformed descriptors are excluded from inventory.
 

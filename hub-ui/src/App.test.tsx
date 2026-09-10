@@ -20,3 +20,22 @@ describe("delegated endpoint setup", () => {
     expect(fetchMock).toHaveBeenCalledWith("/v1/public/endpoint-handoffs/resolve", expect.objectContaining({ method: "POST", body: JSON.stringify({ token: "secret-handoff", platform: "linux" }) }));
   });
 });
+
+describe("public Lens legal pages", () => {
+  afterEach(() => { history.replaceState({}, "", "/"); });
+
+  it("publishes the Lens privacy notice without requiring authentication", async () => {
+    history.replaceState({}, "", "/privacy");
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Privacy notice", level: 1 })).toBeInTheDocument();
+    expect(screen.getByText("PostHog EU Cloud")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Design partner terms" })).toHaveAttribute("href", "/terms");
+  });
+
+  it("publishes design partner terms without requiring authentication", async () => {
+    history.replaceState({}, "", "/terms");
+    render(<App />);
+    expect(await screen.findByRole("heading", { name: "Design partner terms", level: 1 })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Lens privacy notice" })).toHaveAttribute("href", "/privacy");
+  });
+});
