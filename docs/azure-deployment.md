@@ -1,15 +1,17 @@
-# Azure deployment
+# Azure production deployment
 
-The Lens pilot runs as an Azure Container App backed by Azure Database for
-PostgreSQL. GitHub Actions builds and deploys the Hub image after the `ci`
-workflow succeeds on `main`. Its public origin is
+The Lens design-partner production service runs as an Azure Container App
+backed by Azure Database for PostgreSQL. GitHub Actions builds and deploys the
+Hub image after the `ci` workflow succeeds on `main`. Its public origin is
 [`https://lens.barrikade.ai`](https://lens.barrikade.ai); the default Azure
 Container Apps hostname is not a supported browser or enrollment origin.
 
-The pilot is the staging environment. The deploy workflow explicitly enables
+The existing Azure resources retain their `pilot` names, but they serve the
+design-partner production environment. The deploy workflow explicitly enables
 the privacy-minimized PostHog integration, uses the EU ingestion host, and sets
-`LENS_DEPLOYMENT_ENVIRONMENT=staging`. It fails before building if either
-required Container App secret is missing.
+`LENS_DEPLOYMENT_ENVIRONMENT=production`. It fails before building if any
+required Container App secret or the production Clerk publishable-key variable
+is missing.
 
 ## Deployment flow
 
@@ -28,12 +30,20 @@ required Container App secret is missing.
 The verification request uses `/readyz` so a revision is accepted only after
 the database is reachable and startup migrations have completed. It also checks
 `/v1/auth/config` for Clerk self-service mode, confirms that the public URL is
-`https://lens.barrikade.ai`, and confirms that the EU staging analytics
-configuration is exposed with a browser-safe `phc_` project token.
+`https://lens.barrikade.ai`, confirms that a production (`pk_live_`) Clerk key
+is exposed, and confirms that the EU production analytics configuration is
+exposed with a browser-safe `phc_` project token.
 
 The workflow sets both `LENS_PUBLIC_URL` and `LENS_CLERK_AUTHORIZED_PARTY` to
 `https://lens.barrikade.ai`. Keep the same origin in the Clerk application's
 allowed origins and redirect URLs. Do not include a trailing slash.
+
+The production Clerk frontend API is `https://clerk.lens.barrikade.ai`.
+`LENS_CLERK_PUBLISHABLE_KEY` is stored as an `azure-pilot` GitHub environment
+variable. The Clerk secret key and webhook signing secret remain in Key Vault
+and are exposed to the Container App through the `lens-clerk-secret-key` and
+`lens-clerk-webhook-secret` secret references. Never put either secret in
+GitHub or the repository.
 
 Deployments are serialized through the `azure-pilot` concurrency group. A
 failed CI run never starts a deployment. The workflow can also be started
@@ -60,7 +70,7 @@ generated salt of at least 32 bytes. Never put either value in the workflow or
 repository. The deployment workflow references these secret names directly.
 
 The first analytics-enabled revision must be limited to Barrikade's internal
-test workspace and validated against the staging insights in
+test workspace and validated against the production insights in
 `docs/posthog-analytics.md`. Rollback is an explicit Container App environment
 update setting `LENS_POSTHOG_ENABLED=false`, followed by a revision restart;
 Lens functionality does not depend on PostHog delivery.
@@ -72,6 +82,7 @@ The workflow uses an `azure-pilot` GitHub environment with these variables:
 - `AZURE_CLIENT_ID`: client ID of the deployment managed identity
 - `AZURE_TENANT_ID`: Microsoft Entra tenant ID
 - `AZURE_SUBSCRIPTION_ID`: target Azure subscription ID
+- `LENS_CLERK_PUBLISHABLE_KEY`: production Clerk `pk_live_` publishable key
 
 The federated credential must trust this subject:
 
