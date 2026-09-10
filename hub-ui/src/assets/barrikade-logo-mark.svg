@@ -1,0 +1,10 @@
+<svg width="500" height="500" viewBox="0 0 500 500" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="500" height="500" fill="#111111"/>
+  <rect x="65" y="164" width="17.1662" height="171.662" rx="3" fill="#FF6B00"/>
+  <rect x="65" y="164" width="85.8311" height="17.1662" rx="3" fill="#FF6B00"/>
+  <rect x="65" y="318.496" width="85.8311" height="17.1662" rx="3" fill="#FF6B00"/>
+  <rect width="17.1662" height="171.662" rx="3" transform="matrix(-1 0 0 1 434.073 164)" fill="#FF6B00"/>
+  <rect width="85.8311" height="17.1662" rx="3" transform="matrix(-1 0 0 1 434.073 164)" fill="#FF6B00"/>
+  <rect width="85.8311" height="17.1662" rx="3" transform="matrix(-1 0 0 1 434.073 318.496)" fill="#FF6B00"/>
+  <path d="M270.928 172.583L230.225 327.642" stroke="white" stroke-width="8" stroke-linecap="round"/>
+</svg>

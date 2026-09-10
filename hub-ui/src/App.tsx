@@ -5,17 +5,21 @@ import {
   useAuth, useClerk, useOrganization, useOrganizationList,
 } from "@clerk/react";
 import {
-  Activity, AlertCircle, ArrowRight, Bot, Boxes, BrainCircuit, CheckCircle2, ChevronDown,
-  ChevronRight, CircleDot, Cloud, Container, Copy, Database, Download, GitBranch, History,
-  FileSearch, Fingerprint, LayoutDashboard, Link2, LogOut, MapPin, Menu, Monitor, Network, PackageSearch, PlugZap, Radar,
-  Plus, RefreshCw, Search, Server, ShieldCheck, SlidersHorizontal,
-  TerminalSquare, UserRound, Workflow, X, type LucideIcon,
+  Activity, AlertCircle, ArrowRight, Bot, BrainCircuit, CheckCircle2, ChevronDown, ChevronRight,
+  CircleDot, Cloud, Container, Copy, Download, FileSearch, Fingerprint, GitBranch, History,
+  LayoutDashboard, LogOut, MapPin, Menu, Monitor, Network, PackageSearch, Plus, Radar, RefreshCw,
+  ShieldCheck, SlidersHorizontal, TerminalSquare, UserRound, X, type LucideIcon,
 } from "lucide-react";
 import {
-  API, authConfig, exchangeOIDC, type AuthConfig, type Change, type Connection, type Evidence,
+  API, authConfig, exchangeOIDC, type AuthConfig, type Change, type Evidence,
   type Environment, type EnvironmentKind, type EnvironmentScan, type ExposureFinding, type Overview, type ProductItem, type SetupSession, type SystemDetail, type SystemItem,
 } from "./api";
 import { captureAnalytics, configureAnalytics, resetAnalytics, semanticPage } from "./analytics";
+import {
+  Brand, ConfidencePill, ConnectionRow, CopyBlock, Drawer, Empty, Fact, Failure, FilterBar,
+  Freshness, Identity, InlineError, InlineLoading, Loading, PanelHeading, Select, StatePill,
+  TypePill, formatValue, groupConnections, percent, pretty, relative, sum, useRemote,
+} from "./ui";
 const EvidenceGraphPage = lazy(() => import("./EvidenceGraph").then((module) => ({ default: module.EvidenceGraphPage })));
 
 type Page = "Overview" | "Findings" | "Inventory" | "Connections" | "Changes" | "Evidence" | "Settings";
@@ -48,13 +52,6 @@ function pageForPath(path: string): Page {
   if (path.startsWith("/settings")) return "Settings";
   return "Overview";
 }
-
-const kindIcons: Record<string, LucideIcon> = {
-  endpoint: Monitor, repository: GitBranch, cluster: Container, workload: Container, agent: Bot,
-  runtime: TerminalSquare, framework: Boxes, mcp_server: PlugZap, skill: CheckCircle2, model: BrainCircuit,
-  model_server: Server, api_service: Database, api_operation: Link2, workflow: Workflow, user: UserRound,
-  cloud_environment: Cloud, identity: Fingerprint, knowledge_store: Database,
-};
 
 export function App() {
   return <BrowserRouter><Application /></BrowserRouter>;
@@ -667,11 +664,6 @@ function EnvironmentActivationCard({ api, environment, revision, canManage, onRe
   return <article className="environment-card"><span className="environment-icon"><Icon size={20} /></span><div className="environment-card-copy"><span><b>{environment.display_name}</b><small>{catalog?.title ?? pretty(environment.kind)}{environment.external_id ? ` · ${environment.external_id}` : ""}</small></span><p>{message}</p></div><span className={`connection-status ${phase}`}><i />{pretty(phase)}</span><div className="environment-actions">{canManage && environment.kind === "endpoint" && phase === "awaiting_install" && <button className="button subtle" onClick={onResume}>Resume setup</button>}{canManage && environment.connection_status === "connected" && ["aws", "azure", "gcp"].includes(environment.provider || "") && <button className="button subtle" onClick={onScan}><RefreshCw size={14} /> Scan now</button>}{canManage && phase !== "disconnected" && <button className="button quiet" onClick={onDisconnect}>Disconnect</button>}</div></article>;
 }
 
-function CopyBlock({ value }: { value: string }) {
-  const [copied, setCopied] = useState(false);
-  return <div className="install-command"><code>{value}</code><button onClick={() => navigator.clipboard.writeText(value).then(() => { captureAnalytics({ name: "lens_interaction", properties: { surface: "setup", interaction: "command_copied" } }); setCopied(true); window.setTimeout(() => setCopied(false), 1500); })}><Copy size={15} />{copied ? "Copied" : "Copy"}</button></div>;
-}
-
 function CoveragePage({ api, revision }: { api: API; revision: number }) {
   const [targetType, setTargetType] = useState("");
   const overview = useRemote(() => api.overview("7d"), [api, revision]);
@@ -824,45 +816,6 @@ function StateDistribution({ values, total }: { values: Record<string, number>; 
   return <div className="state-distribution"><div className="state-bar">{observed.map((state) => <i key={state} className={state} style={{ width: `${percent(values[state], total)}%` }} title={`${pretty(state)} ${values[state]}`} />)}</div><div className="state-legend">{observed.map((state) => <div key={state}><span><i className={state} />{pretty(state)}</span><b>{values[state]}</b><small>{percent(values[state], total)}%</small></div>)}</div></div>;
 }
 
-function FilterBar({ search, setSearch, hideSearch, children }: { search?: string; setSearch?: (value: string) => void; hideSearch?: boolean; children: ReactNode }) {
-  return <section className={hideSearch ? "filter-bar filters-only" : "filter-bar"}>{!hideSearch && <label className="search"><Search size={16} /><input value={search} onChange={(event) => setSearch?.(event.target.value)} placeholder="Search discovered systems" /></label>}<div className="filters">{children}</div></section>;
-}
-
-function Select({ label, value = "", onChange, options }: { label: string; value?: string; onChange: (value: string) => void; options: Record<string, string> }) {
-  return <label className="select"><span>{label}</span><select value={value} onChange={(event) => onChange(event.target.value)}>{Object.entries(options).map(([key, name]) => <option value={key} key={key}>{name}</option>)}</select><ChevronDown size={13} /></label>;
-}
-
-function Identity({ kind, name, detail }: { kind: string; name: string; detail: string }) {
-  const Icon = kindIcons[kind] ?? PackageSearch;
-  return <span className="identity"><i className={`entity-icon ${kind}`}><Icon size={17} /></i><span><b>{name}</b><small>{detail}</small></span></span>;
-}
-
-function TypePill({ value }: { value: string }) { return <span className={`type-pill ${value}`}>{pretty(value)}</span>; }
-function StatePill({ state }: { state: string }) { return <span className={`state-pill ${state}`}><i />{pretty(state)}</span>; }
-function ConfidencePill({ value }: { value: string }) { return <span className={`confidence-pill ${value}`}><i />{pretty(value)}</span>; }
-function Freshness({ value, partial }: { value: string; partial?: boolean }) { return <span className={`freshness ${value}`}><i />{pretty(value)}{partial && <small>Partial scan</small>}</span>; }
-function Fact({ label, value }: { label: string; value: string }) { return <div><span>{label}</span><b>{value}</b></div>; }
-
-function ConnectionRow({ item }: { item: Connection }) {
-  return <div className="connection-row"><Identity kind={item.entity.kind} name={item.entity.name} detail={item.label === "observed_user" ? "Observed user—not authoritative owner" : pretty(item.relationship_kind)} /><ConfidencePill value={item.confidence} /></div>;
-}
-
-function PanelHeading({ title, detail, count, action }: { title: string; detail: string; count?: number; action?: ReactNode }) {
-  return <header className="panel-heading"><div><h2>{title}</h2><p>{detail}</p></div>{action ?? (count !== undefined && <span className="panel-count">{count}</span>)}</header>;
-}
-
-function Drawer({ children, onClose }: { children: ReactNode; onClose: () => void }) {
-  const ref = useRef<HTMLElement>(null);
-  const restore = useRef(document.activeElement as HTMLElement | null);
-  useEffect(() => {
-    ref.current?.focus();
-    const key = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); if (event.key === "Tab" && ref.current) { const focusable = [...ref.current.querySelectorAll<HTMLElement>('button,a,input,select,textarea,[tabindex]:not([tabindex="-1"])')]; if (!focusable.length) return; const first = focusable[0], last = focusable[focusable.length - 1]; if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last.focus(); } else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first.focus(); } } };
-    document.addEventListener("keydown", key);
-    return () => { document.removeEventListener("keydown", key); restore.current?.focus(); };
-  }, [onClose]);
-  return <div className="drawer-overlay" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><aside className="drawer" role="dialog" aria-modal="true" aria-label="System details" tabIndex={-1} ref={ref}><button className="drawer-close" aria-label="Close system details" onClick={onClose}><X size={18} /></button><div className="drawer-body">{children}</div></aside></div>;
-}
-
 function ExportMenu({ api }: { api: API }) {
   const [open, setOpen] = useState(false);
   return <div className="export"><button className="button subtle" onClick={() => setOpen((value) => !value)}><Download size={15} /> Export <ChevronDown size={13} /></button>{open && <div>{(["lens", "ndjson", "cyclonedx"] as const).map((format) => <button key={format} onClick={() => { captureAnalytics({ name: "lens_interaction", properties: { surface: "export", interaction: "open", export_format: format === "lens" ? "json" : format } }); setOpen(false); api.downloadExport(format); }}>{format === "lens" ? "Lens JSON" : format === "ndjson" ? "NDJSON" : "CycloneDX 1.7"}</button>)}</div>}</div>;
@@ -899,42 +852,5 @@ function NotificationBell({ api, revision, onOpen }: { api: API; revision: numbe
   return <button className="notification-button" title={`${unread.length} unread setup notifications`} onClick={() => { captureAnalytics({ name: "lens_interaction", properties: { surface: "notification", interaction: "notification_opened" } }); api.readNotification(latest.id).then(notifications.reload); onOpen(); }}><Activity size={15} /><b>{unread.length}</b></button>;
 }
 
-function Loading() { return <div className="loading"><Radar size={25} /><span>Resolving discovery posture…</span></div>; }
-function InlineLoading() { return <div className="inline-loading"><RefreshCw size={14} /> Loading…</div>; }
-function InlineError({ text }: { text: string }) { return <div className="inline-error"><AlertCircle size={15} />{text}</div>; }
-function Failure({ error, retry }: { error: string; retry: () => void }) { return <div className="failure"><AlertCircle size={24} /><h2>Lens could not load this view</h2><p>{error}</p><button className="button subtle" onClick={retry}>Try again</button></div>; }
-function Empty({ icon: Icon, title, detail }: { icon: LucideIcon; title: string; detail: string }) { return <div className="empty"><Icon size={23} /><b>{title}</b><p>{detail}</p></div>; }
-
-function Brand() { return <div className="brand"><span className="logo"><i /><i /><i /></span><span><b>BARRIKADE</b><small>LENS</small></span></div>; }
-
-function useRemote<T>(factory: () => Promise<T>, dependencies: unknown[]) {
-  const [data, setData] = useState<T>();
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-  const [revision, setRevision] = useState(0);
-  useEffect(() => {
-    let active = true;
-    setLoading(true); setError("");
-    factory().then((value) => { if (active) setData(value); }).catch((reason) => { if (active) setError(String(reason)); }).finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
-    // The caller owns a stable API instance or explicitly lists its dependencies.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [...dependencies, revision]);
-  return { data, loading, error, reload: () => setRevision((value) => value + 1) };
-}
-
-function groupConnections(items: Connection[]) {
-  return items.reduce<Record<string, Connection[]>>((groups, item) => {
-    const key = item.label === "observed_user" ? "observed_users" : item.entity.kind;
-    (groups[key] ??= []).push(item);
-    return groups;
-  }, {});
-}
-
-function pretty(value: string) { return value.replace(/[._-]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase()); }
-function sum(values: number[]) { return values.reduce((total, value) => total + value, 0); }
-function percent(value: number, total: number) { return total ? Math.round((value / total) * 100) : 0; }
-function formatValue(value: unknown) { if (value === undefined || value === null || value === "") return "Not observed"; if (typeof value === "boolean") return value ? "Yes" : "No"; if (Array.isArray(value)) return value.join(", "); if (typeof value === "object") return "Structured value"; return String(value); }
-function relative(value: string) { const time = new Date(value).getTime(); if (!Number.isFinite(time)) return "Unknown"; const seconds = Math.max(0, Math.floor((Date.now() - time) / 1000)); if (seconds < 60) return "Just now"; if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`; if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`; return `${Math.floor(seconds / 86400)}d ago`; }
 function randomURLSafe(length: number) { const bytes = crypto.getRandomValues(new Uint8Array(length)); return base64URL(bytes).slice(0, length); }
 function base64URL(bytes: Uint8Array) { let value = ""; bytes.forEach((byte) => { value += String.fromCharCode(byte); }); return btoa(value).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); }
