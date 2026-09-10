@@ -33,10 +33,12 @@ jobs:
       AZURE_CONTAINER_REGISTRY: acrlenspilotnef635
       IMAGE_REPOSITORY: lens-hub
       LENS_PUBLIC_URL: https://lens.barrikade.ai
+      LENS_CLERK_ISSUER: https://clerk.lens.barrikade.ai
+      LENS_CLERK_PUBLISHABLE_KEY: ${{ vars.LENS_CLERK_PUBLISHABLE_KEY }}
       LENS_CLERK_AUTHORIZED_PARTY: https://lens.barrikade.ai
       LENS_POSTHOG_ENABLED: "true"
       LENS_POSTHOG_HOST: https://eu.i.posthog.com
-      LENS_DEPLOYMENT_ENVIRONMENT: staging
+      LENS_DEPLOYMENT_ENVIRONMENT: production
     steps:
       - name: Resolve source revision
         id: source
@@ -63,16 +65,24 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
-      - name: Verify analytics secrets
+      - name: Verify production runtime configuration
         shell: bash
         run: |
           set -euo pipefail
+          [[ "$LENS_CLERK_PUBLISHABLE_KEY" == pk_live_* ]] || {
+            echo "The azure-pilot environment must define a production LENS_CLERK_PUBLISHABLE_KEY variable." >&2
+            exit 1
+          }
           secret_names="$(az containerapp secret list \
             --resource-group "$AZURE_RESOURCE_GROUP" \
             --name "$AZURE_CONTAINER_APP" \
             --query '[].name' \
             --output tsv)"
-          for required in posthog-project-token posthog-id-salt; do
+          for required in \
+            posthog-project-token \
+            posthog-id-salt \
+            lens-clerk-secret-key \
+            lens-clerk-webhook-secret; do
             grep -Fxq "$required" <<<"$secret_names" || {
               echo "Required Container App secret is missing: $required" >&2
               exit 1
@@ -117,6 +127,8 @@ jobs:
               "LENS_POSTHOG_HOST=$LENS_POSTHOG_HOST" \
               "LENS_DEPLOYMENT_ENVIRONMENT=$LENS_DEPLOYMENT_ENVIRONMENT" \
               "LENS_PUBLIC_URL=$LENS_PUBLIC_URL" \
+              "LENS_CLERK_ISSUER=$LENS_CLERK_ISSUER" \
+              "LENS_CLERK_PUBLISHABLE_KEY=$LENS_CLERK_PUBLISHABLE_KEY" \
               "LENS_CLERK_AUTHORIZED_PARTY=$LENS_CLERK_AUTHORIZED_PARTY" \
               "LENS_POSTHOG_PROJECT_TOKEN=secretref:posthog-project-token" \
               "LENS_POSTHOG_ID_SALT=secretref:posthog-id-salt" \
@@ -175,8 +187,9 @@ jobs:
             .mode == "clerk" and
             .self_serve_enabled == true and
             .public_url == "https://lens.barrikade.ai" and
+            (.clerk_publishable_key | startswith("pk_live_")) and
             .analytics.enabled == true and
             .analytics.host == "https://eu.i.posthog.com" and
-            .analytics.deployment_environment == "staging" and
+            .analytics.deployment_environment == "production" and
             (.analytics.project_token | startswith("phc_"))
           ' <<<"$auth_config" >/dev/null
