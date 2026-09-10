@@ -15,6 +15,7 @@ import {
   type Environment, type EnvironmentKind, type EnvironmentScan, type ExposureFinding, type Overview, type ProductItem, type SetupSession, type SystemDetail, type SystemItem,
 } from "./api";
 import { captureAnalytics, configureAnalytics, resetAnalytics, semanticPage } from "./analytics";
+import { DesignPartnerTerms, PrivacyNotice } from "./Legal";
 import {
   Brand, ConfidencePill, ConnectionRow, CopyBlock, Drawer, Empty, Fact, Failure, FilterBar,
   Freshness, Identity, InlineError, InlineLoading, Loading, PanelHeading, Select, StatePill,
@@ -59,6 +60,8 @@ export function App() {
 
 function Application() {
   if (location.pathname === "/install") return <PublicEndpointInstall />;
+  if (location.pathname === "/privacy") return <PrivacyNotice />;
+  if (location.pathname === "/terms") return <DesignPartnerTerms />;
   const [config, setConfig] = useState<AuthConfig>();
   const [configurationError, setConfigurationError] = useState("");
   useEffect(() => { authConfig().then(setConfig).catch((reason) => setConfigurationError(String(reason))); }, []);
@@ -149,7 +152,7 @@ function ManagedSignIn() {
   const appearance = { variables: { colorPrimary: "#ff6b00", colorBackground: "#131313", colorText: "#ffffff", colorInputBackground: "#0c0c0c", colorInputText: "#ffffff" } };
   return <main className="signin managed-signin">
     <section className="signin-story"><Brand /><div className="signin-copy"><span className="product-kicker"><Radar size={14} /> Autonomous agent discovery</span><h1>Bring the agent footprint into focus.</h1><p>Start free, connect the environments you choose, and see evidence-backed results without a score or write access.</p></div></section>
-    <section className="signin-access"><div className="managed-auth"><div className="managed-auth-tabs"><button className={!signUp ? "active" : ""} onClick={() => { location.hash = "sign-in"; setSignUp(false); }}>Sign in</button><button className={signUp ? "active" : ""} onClick={() => { location.hash = "sign-up"; setSignUp(true); }}>Create account</button></div>{signUp ? <ClerkSignUp routing="hash" signInUrl="#sign-in" appearance={appearance} /> : <ClerkSignIn routing="hash" signUpUrl="#sign-up" appearance={appearance} />}</div></section>
+    <section className="signin-access"><div className="managed-auth"><div className="managed-auth-tabs"><button className={!signUp ? "active" : ""} onClick={() => { location.hash = "sign-in"; setSignUp(false); }}>Sign in</button><button className={signUp ? "active" : ""} onClick={() => { location.hash = "sign-up"; setSignUp(true); }}>Create account</button></div>{signUp ? <ClerkSignUp routing="hash" signInUrl="#sign-in" appearance={appearance} /> : <ClerkSignIn routing="hash" signUpUrl="#sign-up" appearance={appearance} />}<p className="auth-legal">{signUp ? <>By creating an account, you agree to the <a href="/terms">design partner terms</a> and acknowledge the <a href="/privacy">Lens privacy notice</a>.</> : <>Managed Lens is governed by the <a href="/terms">design partner terms</a> and <a href="/privacy">privacy notice</a>.</>}</p></div></section>
   </main>;
 }
 
@@ -236,6 +239,7 @@ function Shell({ api, signOut, organizationControl, userControl, selfServe = tru
         </button>)}
       </nav>
       <div className="sidebar-footer">
+        <div className="sidebar-legal"><a href="/privacy">Privacy</a><a href="/terms">Terms</a></div>
         {organizationControl && <div className="sidebar-organization">{organizationControl}</div>}
         <div className="sidebar-footer-actions">
           {userControl && <div className="sidebar-user">{userControl}</div>}
@@ -841,7 +845,7 @@ function AccountSettings({ api, onDeleted, onAnalyticsChanged, analyticsAvailabl
 		setBusy(true); setError("");
 		try { await api.updateAnalytics(enabled); if (!enabled) resetAnalytics(); session.reload(); onAnalyticsChanged(); } catch (reason) { setError(String(reason)); } finally { setBusy(false); }
 	};
-  return <div className="page-stack"><section className="panel settings-panel"><PanelHeading title="Your account" detail={`${session.data.user.id} · ${pretty(session.data.role)}`} /><p>{session.data.can_delete_account ? "You can delete your identity. Workspace evidence and settings remain available to other members." : "You are the workspace's sole owner. Transfer ownership or delete the workspace before deleting your identity."}</p><button className="button subtle" disabled={busy || !session.data.can_delete_account} onClick={removeIdentity}>Delete my identity</button></section>{analyticsAvailable && <section className="panel settings-panel"><PanelHeading title="Product analytics" detail="Help Barrikade improve managed Lens" /><label className="analytics-preference"><input type="checkbox" checked={session.data.analytics.enabled} disabled={busy} onChange={(event) => void updateAnalytics(event.target.checked)} /><span><b>Share privacy-minimized product diagnostics</b><small>Lens sends pseudonymous activation and feature-use events, numeric performance, sanitized error classes, survey ratings, flag exposure, and maximally masked session replay. Replay masks all text, inputs, and attributes and blocks media and network data. Lens never sends names, email addresses, workspace names, inventory, evidence, URLs, commands, or infrastructure identifiers. Browser privacy signals disable capture on this browser.</small></span></label><p className="muted">Turning this off affects future events and immediately stops replay in this browser. Contact Barrikade to request erasure of previously collected pseudonymous analytics.</p></section>}{session.data.role === "owner" && <section className="panel settings-panel danger-zone"><PanelHeading title="Delete workspace" detail="Immediately deletes connections, inventory, findings, evidence, and member access." /><button className="button quiet" disabled={busy} onClick={removeWorkspace}>Delete workspace</button></section>}{error && <InlineError text={error} />}</div>;
+  return <div className="page-stack"><section className="panel settings-panel"><PanelHeading title="Your account" detail={`${session.data.user.id} · ${pretty(session.data.role)}`} /><p>{session.data.can_delete_account ? "You can delete your identity. Workspace evidence and settings remain available to other members." : "You are the workspace's sole owner. Transfer ownership or delete the workspace before deleting your identity."}</p><button className="button subtle" disabled={busy || !session.data.can_delete_account} onClick={removeIdentity}>Delete my identity</button></section>{analyticsAvailable && <section className="panel settings-panel"><PanelHeading title="Product analytics" detail="Help Barrikade improve managed Lens" /><label className="analytics-preference"><input type="checkbox" checked={session.data.analytics.enabled} disabled={busy} onChange={(event) => void updateAnalytics(event.target.checked)} /><span><b>Share privacy-minimized product diagnostics</b><small>Lens sends pseudonymous activation and feature-use events, numeric performance, sanitized error classes, survey ratings, flag exposure, and total-privacy session replay. Replay masks all text, inputs, and attributes and blocks media and network data. Lens never sends names, email addresses, workspace names, inventory, evidence, URLs, commands, or infrastructure identifiers. Browser privacy signals disable capture on this browser.</small></span></label><p className="muted">Turning this off affects future events and immediately stops replay in this browser. Actorless workspace-processing milestones can continue. See the <a href="/privacy">privacy notice</a> or contact Barrikade to request erasure of previously collected pseudonymous analytics.</p></section>}{session.data.role === "owner" && <section className="panel settings-panel danger-zone"><PanelHeading title="Delete workspace" detail="Immediately deletes connections, inventory, findings, evidence, and member access." /><button className="button quiet" disabled={busy} onClick={removeWorkspace}>Delete workspace</button></section>}{error && <InlineError text={error} />}</div>;
 }
 
 function NotificationBell({ api, revision, onOpen }: { api: API; revision: number; onOpen: () => void }) {

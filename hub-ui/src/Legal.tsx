@@ -1,0 +1,54 @@
+import { Brand } from "./ui";
+
+const supportEmail = "ishaan@barrikade.ai";
+
+function LegalHeader({ title, detail }: { title: string; detail: string }) {
+  return <header className="legal-header">
+    <a href="/" aria-label="Back to Lens"><Brand /></a>
+    <div><p className="eyebrow">BARRIKADE LENS</p><h1>{title}</h1><p>{detail}</p></div>
+  </header>;
+}
+
+function LegalFooter() {
+  return <footer className="legal-footer"><a href="/privacy">Privacy notice</a><a href="/terms">Design partner terms</a><a href={`mailto:${supportEmail}`}>Contact Barrikade</a></footer>;
+}
+
+export function PrivacyNotice() {
+  return <main className="legal-page">
+    <LegalHeader title="Privacy notice" detail="Managed Lens design-partner service · Last updated 10 September 2026" />
+    <article className="legal-document">
+      <section><h2>Who this notice covers</h2><p>This notice applies to the managed Barrikade Lens service at lens.barrikade.ai. Barrikade operates the service for approved design partners. For privacy requests, including access, correction, objection, restriction, portability, or erasure, email <a href={`mailto:${supportEmail}`}>{supportEmail}</a>.</p></section>
+      <section><h2>Information Lens processes</h2><p>Lens processes the account and workspace information needed to authenticate users, maintain memberships, operate connected discovery, provide findings, and support the service. Authentication information can include your name, work email address, account identifier, authentication method, and workspace membership.</p><p>Discovery data is deliberately bounded. Lens can retain factual posture such as installed or running state, enabled state, sanitized network hosts, package or image identifiers, environment-key names, repository-relative locations, and evidence hashes. It does not collect configuration bodies, source bodies, prompts, model inputs or outputs, environment values, credential values, URL credentials or query strings, shell history, or full command arguments.</p></section>
+      <section><h2>Product analytics and session replay</h2><p>Design-partner analytics are enabled by default to understand activation, feature use, reliability, performance, and feedback. Lens sends PostHog EU independently keyed pseudonyms for the user and workspace; allowlisted product milestones and semantic interactions; bounded browser and device facts; numeric Core Web Vitals; sanitized JavaScript error classes and code coordinates; rating-only survey answers; and bounded feature-flag exposure.</p><p>Session replay uses total-privacy masking. All text, inputs, and element attributes are masked, while images, video, audio, iframes, canvas, and SVG content are blocked. Lens does not send page or network URLs, headers, request or response bodies, console logs, names, email addresses, workspace names, inventory, evidence, commands, or infrastructure identifiers to PostHog. PostHog project settings discard client IP addresses and Lens disables GeoIP enrichment on every event. Autocapture, heatmaps, rage or dead clicks, automatic page views, and person profiles are disabled.</p><p>You can turn off future user-attributed analytics in Account Settings. Global Privacy Control and Do Not Track stop browser analytics on that browser. Logout and workspace switching stop recording and reset the analytics identity. Actorless workspace-processing milestones may continue because they describe service operation rather than an individual user. To erase earlier analytics, contact Barrikade; verified requests are located using the production pseudonym salt and deleted from the matching PostHog project.</p></section>
+      <section><h2>Why the information is used</h2><p>Account, workspace, and discovery information is processed to provide and secure the service and administer the design-partner relationship. Product telemetry is processed for Barrikade's legitimate interests in improving product usability, activation, reliability, performance, and security, within the strict collection boundary above and the design-partner authorization reflected in the applicable terms. Where law requires a different basis, Barrikade will seek it before that processing.</p></section>
+      <section><h2>Service providers and international transfers</h2><div className="legal-table" role="table" aria-label="Lens subprocessors">
+        <div role="row"><b role="cell">Microsoft Azure</b><span role="cell">Application hosting, database, secrets, backups, and operational infrastructure in the North Europe Azure region.</span></div>
+        <div role="row"><b role="cell">Clerk</b><span role="cell">Authentication, accounts, sessions, and workspace identity. Clerk hosts data in the United States and documents the EU–US Data Privacy Framework and contractual transfer safeguards.</span></div>
+        <div role="row"><b role="cell">PostHog EU Cloud</b><span role="cell">Pseudonymous product analytics and total-privacy session replay stored in PostHog's EU region.</span></div>
+        <div role="row"><b role="cell">Zoho Mail</b><span role="cell">Support and privacy correspondence you choose to send to Barrikade. Do not include secrets or raw discovery evidence in support email.</span></div>
+        <div role="row"><b role="cell">GitHub</b><span role="cell">Software delivery and restricted incident tracking. Barrikade does not put raw Lens event payloads or partner discovery data into GitHub issues.</span></div>
+      </div><p>Barrikade does not sell partner information or use it for advertising. Information may also be disclosed when required by law or necessary to protect the service and its users.</p></section>
+      <section><h2>Retention and access</h2><p>PostHog session recordings are retained for 30 days. Pseudonymous product events are retained for no longer than 12 months. Operational application data is kept for the design-partner relationship and then deleted or de-identified when no longer needed, subject to security, backup, dispute, and legal obligations. Support correspondence is kept only while needed to resolve the request and meet operational or legal obligations.</p><p>Production access is limited to Barrikade personnel who need it to operate, secure, support, or improve Lens. PostHog deletion rights and the production pseudonym salt are restricted to the privacy administrator. Partner workspace access is controlled by workspace membership and role.</p></section>
+      <section><h2>Your choices and complaints</h2><p>You may contact Barrikade to exercise applicable data-protection rights. Barrikade may need to verify your identity and authority over the requested workspace. If you are in the EEA, you may also complain to your local supervisory authority or Ireland's Data Protection Commission.</p></section>
+      <section><h2>Changes</h2><p>Barrikade may update this notice as Lens and the design-partner program develop. Material changes will be communicated through the service or the partner relationship, and the date above will be updated.</p></section>
+    </article>
+    <LegalFooter />
+  </main>;
+}
+
+export function DesignPartnerTerms() {
+  return <main className="legal-page">
+    <LegalHeader title="Design partner terms" detail="Barrikade Lens · Effective 10 September 2026" />
+    <article className="legal-document">
+      <section><h2>Agreement</h2><p>These terms apply to approved organizations and their authorized users participating in the Barrikade Lens design-partner program. By creating an account or using managed Lens, you agree to these terms on behalf of yourself and, where applicable, your organization.</p></section>
+      <section><h2>The service</h2><p>Lens is an early-stage discovery service intended to help security and platform teams understand their AI-system footprint. Features, availability, and outputs can change during the program. Lens provides evidence-backed observations, not a guarantee that every system, risk, or change has been found and not legal, compliance, or professional advice.</p></section>
+      <section><h2>Your responsibilities</h2><p>You must have authority to connect each account, endpoint, repository, cluster, or other environment and to invite users to your workspace. Use Lens only for lawful internal evaluation, protect setup credentials and access links, maintain appropriate workspace membership, and do not intentionally submit secrets, prompts, source bodies, regulated special-category data, or content outside the documented collection boundary.</p></section>
+      <section><h2>Design-partner telemetry</h2><p>You authorize Barrikade to collect and use the bounded production telemetry described in the <a href="/privacy">Lens privacy notice</a> to operate, secure, evaluate, and improve the service. This includes pseudonymous product events, total-privacy session replay, numeric performance metrics, sanitized error classes, feature-flag exposure, and rating-only survey responses. Individual users can stop future user-attributed analytics in Account Settings; browser privacy signals are also respected. Actorless workspace-processing milestones can continue so Barrikade can monitor service operation.</p></section>
+      <section><h2>Feedback and confidentiality</h2><p>You may provide feedback voluntarily. Barrikade may use that feedback to improve its products without restriction, but will not publicly identify you or your organization without permission. Each party will protect non-public information received through the program and use it only for the program, service delivery, security, support, and product improvement.</p></section>
+      <section><h2>Access, suspension, and ending participation</h2><p>Barrikade may limit or suspend access where necessary to protect the service, partners, or third parties, or where these terms are materially breached. Either party may end participation by written notice. Workspace owners can delete a workspace in Account Settings, and users can request verified deletion or export assistance by emailing <a href={`mailto:${supportEmail}`}>{supportEmail}</a>.</p></section>
+      <section><h2>Availability and liability</h2><p>The design-partner service is provided on an evaluation basis and may be interrupted or changed. To the maximum extent permitted by law, Barrikade disclaims implied warranties and is not liable for indirect, special, incidental, or consequential loss arising from use of the service. Nothing in these terms excludes liability that cannot legally be excluded.</p></section>
+      <section><h2>Governing law and contact</h2><p>These terms are governed by the laws of Ireland, and the Irish courts have jurisdiction, subject to any mandatory rights that apply where you are established. Questions can be sent to <a href={`mailto:${supportEmail}`}>{supportEmail}</a>.</p></section>
+    </article>
+    <LegalFooter />
+  </main>;
+}

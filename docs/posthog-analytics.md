@@ -1,10 +1,14 @@
 # Managed Lens product analytics
 
-Lens can send a privacy-minimized product intelligence dataset to PostHog EU Cloud. It covers activation, engagement, reliability, performance, surveys, feature-flag exposure, and maximally masked session replay. It is available only when Clerk authentication and self-service onboarding are both enabled. It is off by default.
+Lens can send a privacy-minimized product intelligence dataset to PostHog EU Cloud. It covers activation, engagement, reliability, performance, surveys, feature-flag exposure, and total-privacy session replay. It is available only when Clerk authentication and self-service onboarding are both enabled. It is off by default outside the managed production deployment.
 
 ## Production gate
 
-Do not enable capture until the privacy notice and legal basis have been approved. PostHog's free plan permits one project, so the pilot and initial production rollout may share the existing EU project and must be separated with `deployment_environment`; use a different pseudonym salt in each deployment. If the account later supports multiple projects, split staging and production and use different tokens too. Disable IP retention and autocapture in the project. Enable session replay, surveys, feature flags, error tracking, and web performance; the Lens SDK applies stricter local privacy controls than the project defaults.
+Barrikade's privacy owner approved the documented design-partner collection boundary and default-on production analytics on 10 September 2026. The public notice is served at `/privacy`, the design-partner terms at `/terms`, and both are linked at signup and inside the application. Any material expansion of events, properties, replay content, purposes, subprocessors, or retention requires a new approval and notice update before deployment.
+
+PostHog's free plan permits one project, so the pilot and initial production rollout share EU project `269284` and are separated with `deployment_environment`; every deployment must use a different pseudonym salt. If the account later supports multiple projects, split staging and production and use different tokens too. Production uses the Container App secrets `posthog-project-token` and `posthog-id-salt`; do not reuse either value for staging.
+
+The production project was reviewed on 10 September 2026: EU Cloud residency and client-IP discard are enabled; generic autocapture, dead-click capture, heatmaps, replay console capture, replay network capture, headers, bodies, and canvas capture are disabled; replay is enabled with **Total privacy** masking and 30-day retention. Web Vitals remain enabled and pass through the Lens numeric-only guard. The application additionally disables GeoIP on every browser and backend event and rejects uncontrolled event names and properties.
 
 Configure the Hub with:
 
@@ -110,7 +114,7 @@ Use `dateDiff('second', workspace_created_at, credible_at)` from that dataset fo
 
 Account Settings controls `PATCH /v1/session/analytics`. Opt-out prevents future browser capture and future actor-attributed backend delivery; actorless workspace processing milestones may continue. Global Privacy Control or Do Not Track disables browser capture for that browser without changing the account preference.
 
-Opt-out is prospective. For an erasure request:
+Opt-out is prospective. For an erasure request, follow [`privacy-operations.md`](privacy-operations.md):
 
 1. Obtain the authenticated Lens subject and current workspace ID through the normal support identity-verification process. Never place raw identifiers in a ticket sent to PostHog.
 2. Run the Hub pseudonym derivation with the correct environment salt to obtain the `phu_` user ID and relevant `phw_` workspace IDs.
@@ -119,3 +123,5 @@ Opt-out is prospective. For an erasure request:
 5. Do not rotate the global salt as an erasure mechanism; that would only make retained events harder to locate.
 
 Only designated privacy administrators should have access to salts or PostHog deletion permissions.
+
+Pseudonymous product events are retained for no longer than 12 months and session recordings for 30 days. Product collaborators receive only the minimum read access required for approved aggregate analysis. Production database, PostHog deletion, and pseudonym-salt access are restricted to service or privacy administration. The public notice lists Microsoft Azure, Clerk, PostHog EU Cloud, Zoho Mail, and GitHub, including their bounded service, support, and incident-handling purposes.
