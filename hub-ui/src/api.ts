@@ -158,18 +158,6 @@ export type ProductItem = {
   instances: ProductInstallation[];
 };
 
-export type EntityContext = {
-  owner_name?: string;
-  owner_type?: "person" | "team";
-  environment?: "development" | "test" | "staging" | "production";
-  criticality?: "low" | "medium" | "high" | "critical";
-  sensitivity?: "public" | "internal" | "confidential" | "restricted";
-  data_categories: Array<"personal" | "health" | "payment" | "financial" | "credentials" | "source_code" | "customer">;
-  trust_boundary?: "internal" | "partner" | "third_party";
-  updated_by?: string;
-  updated_at?: string;
-};
-
 export type ExposureFinding = {
   id: string;
   root_entity_id: string;
@@ -190,31 +178,6 @@ export type ExposureFinding = {
   evidence_freshness?: "fresh" | "stale";
   effective_ownership?: { owned: boolean; owner_name?: string; owner_type?: string };
 };
-
-export type CatalogOperation = {
-  operation_id: string; method: string; path: string; summary?: string;
-  class: "read" | "state_changing_potential" | "destructive_potential";
-  tags: string[]; auth_scheme_types: string[]; auth_scopes: string[];
-};
-
-export type ExposureDestination = {
-  id: string; kind: string; name: string; host?: string; public_network: boolean;
-  credential_present: boolean; enabled: boolean; basis: "observed"; attributes: Record<string, unknown>; context: EntityContext;
-  catalog: { status: "unmapped"; basis: "catalog_potential"; message: string } | {
-    status: "linked"; basis: "catalog_potential"; api_id: string; name: string; version?: string;
-    match_basis: string; operation_counts: Record<string, number>; representative_operations: CatalogOperation[];
-  };
-};
-
-export type ExposureMap = {
-  system: { id: string; name: string; state: string; attributes: Record<string, unknown> };
-  context: EntityContext;
-  destinations: ExposureDestination[];
-  findings: ExposureFinding[];
-  product_boundary: string;
-};
-
-export type CatalogSuggestion = { source_id: string; entry_id: string; provider: string; api_family?: string; version?: string; name: string; status: "suggestion" };
 
 export type Collector = {
   source_id: string;
@@ -245,47 +208,6 @@ export type Target = {
   partial?: boolean;
   possible_duplicate?: boolean;
   collectors: Collector[];
-};
-
-export type Entity = {
-  id: string;
-  kind: string;
-  canonical_key?: string;
-  name: string;
-  confidence: Confidence;
-  attributes: Record<string, unknown>;
-  provenance?: string[];
-  current: boolean;
-  stale: boolean;
-  first_seen_at: string;
-  last_seen_at: string;
-  posture?: {
-    target_id?: string;
-    target_name?: string;
-    target_freshness?: "fresh" | "stale" | "never" | "unknown";
-    surface?: string;
-    system_role?: string;
-    system_type?: string;
-    state?: string;
-    network_scope?: string;
-    attributed?: boolean;
-    product_id?: string;
-    product_category?: string;
-  };
-};
-
-export type EntityDetail = Entity & { evidence?: Evidence[] };
-
-export type Relationship = {
-  id: string;
-  kind: string;
-  from: string;
-  to: string;
-  from_name: string;
-  to_name: string;
-  attributes?: Record<string, unknown>;
-  confidence: Confidence;
-  last_seen_at: string;
 };
 
 export type PageResult<T> = { items: T[]; limit: number; next_cursor?: string };
@@ -467,10 +389,6 @@ export class API {
     return this.request<EnvironmentScan>(`/v1/environments/${encodeURIComponent(environmentID)}/scans/${encodeURIComponent(scanID)}`);
   }
 
-  updateEnvironment(id: string, input: { display_name?: string; daily_schedule_enabled?: boolean }) {
-    return this.request<Environment>(`/v1/environments/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(input) });
-  }
-
   disconnectEnvironment(id: string) {
     return this.request<{ id: string; connection_status: "disconnected"; purge_after_days: number; teardown: string[] }>(`/v1/environments/${encodeURIComponent(id)}`, { method: "DELETE" });
   }
@@ -481,10 +399,6 @@ export class API {
 
   createEndpointHandoff(id: string) {
     return this.request<{ id: string; environment_id: string; url: string; expires_at: string; token_displayed_once: true }>(`/v1/environments/${encodeURIComponent(id)}/handoffs`, { method: "POST" });
-  }
-
-  revokeEndpointHandoff(environmentID: string, handoffID: string) {
-    return this.request<void>(`/v1/environments/${encodeURIComponent(environmentID)}/handoffs/${encodeURIComponent(handoffID)}`, { method: "DELETE" });
   }
 
   exposures(filters: Record<string, string | number | undefined> = {}) {
@@ -517,63 +431,16 @@ export class API {
     return this.request<SystemDetail>(`/v1/systems/${encodeURIComponent(id)}`);
   }
 
-  exposureMap(id: string) {
-    return this.request<ExposureMap>(`/v1/systems/${encodeURIComponent(id)}/exposure-map`);
-  }
-
-  entityContext(id: string) {
-    return this.request<EntityContext>(`/v1/entities/${encodeURIComponent(id)}/context`);
-  }
-
-  saveEntityContext(id: string, context: EntityContext) {
-    return this.request<EntityContext>(`/v1/entities/${encodeURIComponent(id)}/context`, { method: "PUT", body: JSON.stringify(context) });
-  }
-
-  catalogSearch(query: string) {
-    return this.request<{ items: CatalogSuggestion[] }>(queryPath("/v1/catalog/search", { q: query }));
-  }
-
-  linkCatalog(id: string, source_id: string, entry_id: string) {
-    return this.request<{ status: string }>(`/v1/entities/${encodeURIComponent(id)}/catalog-link`, { method: "PUT", body: JSON.stringify({ source_id, entry_id }) });
-  }
-
   targets(filters: Record<string, string | number | undefined> = {}) {
     return this.request<PageResult<Target>>(queryPath("/v1/targets", { limit: 50, ...filters }));
-  }
-
-  target(id: string) {
-    return this.request<Target>(`/v1/targets/${encodeURIComponent(id)}`);
-  }
-
-  entities(filters: Record<string, string | number | boolean | undefined> = {}) {
-    return this.request<PageResult<Entity>>(queryPath("/v1/entities", { limit: 50, ...filters }));
-  }
-
-  entity(id: string) {
-    return this.request<EntityDetail>(`/v1/entities/${encodeURIComponent(id)}`);
-  }
-
-  relationships(filters: Record<string, string | number | undefined> = {}) {
-    return this.request<PageResult<Relationship>>(queryPath("/v1/relationships", { limit: 75, ...filters }));
   }
 
   changes(filters: Record<string, string | number | undefined> = {}) {
     return this.request<PageResult<Change>>(queryPath("/v1/changes", { limit: 50, window: "7d", ...filters }));
   }
 
-  coverage() {
-    return this.request<{ target_types: CoverageSummary[]; collectors: { active: number } }>("/v1/coverage");
-  }
-
   setBaselines(baselines: Array<{ target_type: string; expected_count: number | null }>) {
     return this.request("/v1/admin/coverage/baselines", { method: "PUT", body: JSON.stringify({ baselines }) });
-  }
-
-  enrollment(uses = 1, expires = 600, source_type = "endpoint") {
-    return this.request<{ code: string; expires_at: string; hub_url?: string; collector_version?: string }>("/v1/admin/enrollment-codes", {
-      method: "POST",
-      body: JSON.stringify({ uses, expires_in_seconds: expires, source_type }),
-    });
   }
 
   async downloadExport(format: "lens" | "ndjson" | "cyclonedx") {
