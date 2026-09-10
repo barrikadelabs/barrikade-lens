@@ -87,12 +87,7 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .brand > span:last-child { display: grid; gap: 2px; }
 .brand b { font-size: 12px; letter-spacing: .15em; }
 .brand small { color: var(--text-3); font: 700 9px var(--mono); letter-spacing: .12em; }
-.logo { position: relative; width: 33px; height: 28px; }
-.logo i { position: absolute; display: block; }
-.logo i:first-child, .logo i:nth-child(2) { top: 4px; width: 10px; height: 21px; border-top: 3px solid var(--orange); border-bottom: 3px solid var(--orange); }
-.logo i:first-child { left: 0; border-left: 3px solid var(--orange); }
-.logo i:nth-child(2) { right: 0; border-right: 3px solid var(--orange); }
-.logo i:last-child { top: 2px; left: 16px; width: 3px; height: 25px; border-radius: 2px; background: white; transform: rotate(14deg); }
+.logo { display: block; width: 38px; height: 38px; flex: 0 0 38px; border-radius: 4px; object-fit: contain; }
 .main-nav { display: grid; gap: 3px; }
 .nav-heading { margin: 0 10px 8px; color: var(--text-4); font: 700 8px var(--mono); letter-spacing: .14em; }
 .main-nav button { display: grid; width: 100%; padding: 9px 10px; grid-template-columns: 20px 1fr auto; gap: 9px; align-items: center; border: 1px solid transparent; border-radius: 7px; color: var(--text-3); text-align: left; background: none; }

@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import type { Connection } from "./api";
 import { captureAnalytics } from "./analytics";
+import barrikadeLogoMark from "./assets/barrikade-logo-mark.svg";
 
 const kindIcons: Record<string, LucideIcon> = {
   endpoint: Monitor, repository: GitBranch, cluster: Container, workload: Container, agent: Bot,
@@ -63,7 +64,7 @@ export function InlineLoading() { return <div className="inline-loading"><Refres
 export function InlineError({ text }: { text: string }) { return <div className="inline-error"><AlertCircle size={15} />{text}</div>; }
 export function Failure({ error, retry }: { error: string; retry: () => void }) { return <div className="failure"><AlertCircle size={24} /><h2>Lens could not load this view</h2><p>{error}</p><button className="button subtle" onClick={retry}>Try again</button></div>; }
 export function Empty({ icon: Icon, title, detail }: { icon: LucideIcon; title: string; detail: string }) { return <div className="empty"><Icon size={23} /><b>{title}</b><p>{detail}</p></div>; }
-export function Brand() { return <div className="brand"><span className="logo"><i /><i /><i /></span><span><b>BARRIKADE</b><small>LENS</small></span></div>; }
+export function Brand() { return <div className="brand"><img className="logo" src={barrikadeLogoMark} alt="" aria-hidden="true" /><span><b>BARRIKADE</b><small>LENS</small></span></div>; }
 
 export function useRemote<T>(factory: () => Promise<T>, dependencies: unknown[]) {
   const [data, setData] = useState<T>();
