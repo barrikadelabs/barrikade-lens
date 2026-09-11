@@ -97,19 +97,18 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px s
 .main-nav button:hover { color: white; background: var(--surface-soft); }
 .main-nav button.active { border-color: rgba(255,107,0,.23); color: var(--orange); background: var(--orange-soft); box-shadow: inset 2px 0 var(--orange); }
 .main-nav button.active b { color: white; }
-.discover-boundary { display: flex; margin-top: auto; padding: 12px; align-items: center; gap: 9px; border: 1px solid rgba(255,107,0,.18); border-radius: 9px; color: var(--orange); background: rgba(255,107,0,.065); }
-.discover-boundary span { display: grid; gap: 2px; }
-.discover-boundary b { color: white; font-size: 10px; }
-.discover-boundary small { color: var(--text-3); font: 8px var(--mono); }
-.sidebar-footer { display: grid; margin-top: auto; padding: 12px 7px 0; gap: 10px; border-top: 1px solid var(--line-soft); }
-.sidebar-organization { width: 100%; min-width: 0; overflow: hidden; }
+.sidebar-footer { display: grid; margin-top: auto; padding: 14px 7px 0; gap: 9px; border-top: 1px solid var(--line-soft); }
+.sidebar-account { overflow: hidden; border: 1px solid var(--line-soft); border-radius: 8px; background: rgba(255,255,255,.018); }
+.sidebar-account-primary { display: flex; min-width: 0; padding: 7px 8px; align-items: center; gap: 8px; }
+.sidebar-organization { min-width: 0; flex: 1; overflow: hidden; }
 .sidebar-organization > div { width: 100%; min-width: 0; }
 .sidebar-organization button { width: 100%; min-width: 0; max-width: 100%; }
-.sidebar-footer-actions { display: flex; width: 100%; align-items: center; gap: 6px; }
-.sidebar-footer button { display: inline-flex; padding: 4px; align-items: center; gap: 6px; border: 0; color: var(--text-4); background: none; font-size: 9px; }
-.sidebar-footer button:hover { color: white; }
+.sidebar-footer-actions { display: flex; width: 100%; padding: 4px; align-items: center; gap: 2px; }
+.sidebar-account-primary + .sidebar-footer-actions { border-top: 1px solid var(--line-soft); }
+.sidebar-footer button { display: inline-flex; padding: 4px 7px; align-items: center; gap: 7px; border: 0; border-radius: 5px; color: var(--text-3); background: none; font-size: 12px; text-align: left; }
+.sidebar-footer button:hover { color: white; background: rgba(255,255,255,.045); }
 .sidebar-footer-actions > button:not(.logout) { flex: 1; }
-.sidebar-user { display: grid; width: 32px; height: 36px; flex: 0 0 32px; place-items: center; }
+.sidebar-user { display: grid; width: 32px; height: 32px; flex: 0 0 32px; place-items: center; }
 .sidebar-footer-actions .logout { width: 36px; flex: 0 0 36px; justify-content: center; }
 .main-area { min-width: 0; grid-column: 2; }
 .topbar { position: sticky; z-index: 50; top: 0; display: flex; height: 57px; padding: 0 clamp(20px,3vw,40px); align-items: center; justify-content: space-between; border-bottom: 1px solid var(--line-soft); background: rgba(12,12,12,.86); backdrop-filter: blur(17px); }
@@ -728,7 +727,9 @@ button.product-inventory-row:hover { color: white; background: var(--surface-hov
 .settings-panel a,.auth-legal a,.legal-page a,.sidebar-legal a { color:var(--orange); text-decoration:none; }
 .settings-panel a:hover,.auth-legal a:hover,.legal-page a:hover,.sidebar-legal a:hover { text-decoration:underline; }
 .auth-legal { max-width:34rem; margin:12px auto 0; color:var(--text-4); font-size:9px; line-height:1.55; text-align:center; }
-.sidebar-legal { display:flex; padding:0 8px 8px; gap:12px; font-size:8px; }
+.sidebar-legal { display:flex; padding:0 5px 1px; gap:13px; font-size:.75rem; }
+.sidebar-legal a { color:var(--text-4); }
+.sidebar-legal a:hover { color:var(--text-2); }
 .legal-page { min-height:100vh; padding:32px 20px 48px; background:radial-gradient(circle at 20% 0,rgba(255,107,0,.08),transparent 34rem),#0b0b0b; }
 .legal-header,.legal-document,.legal-footer { width:min(820px,100%); margin:0 auto; }
 .legal-header { display:grid; padding-bottom:28px; gap:48px; }
@@ -866,7 +867,7 @@ body { background: #0b0b0b; }
 .main-nav button b { font-size: 12px; font-weight: 650; }
 .main-nav button small, .nav-heading { display: none; }
 .main-nav button.active { color: var(--orange); background: rgba(255,107,0,.09); box-shadow: inset 2px 0 var(--orange); }
-.sidebar-footer { padding: 13px 8px 0; }
+.sidebar-footer { padding: 14px 8px 0; }
 .sidebar-footer button { font-size: 11px; }
 
 .icon-button { width: 36px; height: 36px; }

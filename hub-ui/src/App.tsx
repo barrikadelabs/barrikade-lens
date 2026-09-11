@@ -239,13 +239,17 @@ function Shell({ api, signOut, organizationControl, userControl, selfServe = tru
         </button>)}
       </nav>
       <div className="sidebar-footer">
-        <div className="sidebar-legal"><a href="/privacy">Privacy</a><a href="/terms">Terms</a></div>
-        {organizationControl && <div className="sidebar-organization">{organizationControl}</div>}
-        <div className="sidebar-footer-actions">
-          {userControl && <div className="sidebar-user">{userControl}</div>}
-          <button onClick={() => navigate("/settings")}><UserRound size={15} /> Account settings</button>
-          <button className="logout" onClick={signOut} aria-label="Sign out" title="Sign out"><LogOut size={16} /></button>
+        <div className="sidebar-account">
+          {(organizationControl || userControl) && <div className="sidebar-account-primary">
+            {organizationControl && <div className="sidebar-organization">{organizationControl}</div>}
+            {userControl && <div className="sidebar-user">{userControl}</div>}
+          </div>}
+          <div className="sidebar-footer-actions">
+            <button onClick={() => navigate("/settings")}><UserRound size={15} /> Account settings</button>
+            <button className="logout" onClick={signOut} aria-label="Sign out" title="Sign out"><LogOut size={16} /></button>
+          </div>
         </div>
+        <div className="sidebar-legal"><a href="/privacy">Privacy</a><a href="/terms">Terms</a></div>
       </div>
     </aside>
     <main className="main-area">
