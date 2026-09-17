@@ -203,6 +203,13 @@ func (s *Server) routes() {
 	authenticated.HandleFunc("GET /v1/environments/{id}/scans/{scanId}", s.getEnvironmentScan)
 	authenticated.HandleFunc("DELETE /v1/environments/{id}", s.disconnectEnvironment)
 	authenticated.HandleFunc("POST /v1/admin/enrollment-codes", s.createEnrollmentCode)
+	authenticated.HandleFunc("GET /v1/deployment-policies", s.listDeploymentPolicies)
+	authenticated.HandleFunc("POST /v1/deployment-policies", s.createDeploymentPolicy)
+	authenticated.HandleFunc("GET /v1/deployment-policies/{id}", s.getDeploymentPolicy)
+	authenticated.HandleFunc("PATCH /v1/deployment-policies/{id}", s.updateDeploymentPolicy)
+	authenticated.HandleFunc("DELETE /v1/deployment-policies/{id}", s.revokeDeploymentPolicy)
+	authenticated.HandleFunc("POST /v1/deployment-policies/{id}/enrollment-credentials", s.rotateDeploymentPolicyCredential)
+	authenticated.HandleFunc("DELETE /v1/deployment-policies/{id}/enrollment-credentials/{credentialId}", s.revokeDeploymentPolicyCredential)
 	authenticated.HandleFunc("POST /v1/admin/service-accounts", s.createServiceAccount)
 	authenticated.HandleFunc("DELETE /v1/admin/service-accounts/{id}", s.revokeServiceAccount)
 	authenticated.HandleFunc("DELETE /v1/admin/sources/{id}", s.revokeSource)
@@ -356,7 +363,7 @@ func (s *Server) createEnrollmentCode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	expires := time.Now().UTC().Add(time.Duration(request.ExpiresInSeconds) * time.Second)
-	if _, err := s.db(r.Context()).Exec(r.Context(), `INSERT INTO enrollment_codes(code_hash,organization_id,expires_at,uses_remaining,source_type) VALUES($1,$2,$3,$4,$5)`, tokenHash(normalizeCode(code)), principal.OrganizationID, expires, request.Uses, request.SourceType); err != nil {
+	if _, err := s.db(r.Context()).Exec(r.Context(), `INSERT INTO enrollment_codes(code_hash,organization_id,expires_at,uses_remaining,max_uses,source_type,created_by) VALUES($1,$2,$3,$4,$4,$5,$6)`, tokenHash(normalizeCode(code)), principal.OrganizationID, expires, request.Uses, request.SourceType, principal.Subject); err != nil {
 		writeError(w, 500, "database_error", "Could not save enrollment code")
 		return
 	}
@@ -379,8 +386,8 @@ func (s *Server) exchangeEnrollment(w http.ResponseWriter, r *http.Request) {
 	if err := decodeJSON(w, r, &request, 64<<10); err != nil {
 		return
 	}
-	if request.Code == "" || request.IdentityPublicKey == "" || request.IdentityProof == "" {
-		writeError(w, 400, "invalid_enrollment", "Code and persistent collector identity proof are required; upgrade the Lens collector if identity fields are unavailable")
+	if request.Code == "" {
+		writeError(w, 400, "invalid_enrollment", "An enrollment code is required")
 		return
 	}
 	tx, err := s.begin(r.Context())
@@ -390,11 +397,17 @@ func (s *Server) exchangeEnrollment(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(r.Context())
 	var orgID, sourceType string
+	var enrollmentCredentialID uuid.UUID
+	var deploymentPolicyID *uuid.UUID
 	var enrollmentEnvironmentID *uuid.UUID
+	var credentialRevokedAt, policyRevokedAt *time.Time
 	var expires time.Time
 	var uses int
-	err = tx.QueryRow(r.Context(), `SELECT organization_id,expires_at,uses_remaining,source_type,environment_id FROM enrollment_codes WHERE code_hash=$1 AND revoked_at IS NULL FOR UPDATE`, tokenHash(normalizeCode(request.Code))).Scan(&orgID, &expires, &uses, &sourceType, &enrollmentEnvironmentID)
-	if errors.Is(err, pgx.ErrNoRows) || err == nil && time.Now().After(expires) {
+	err = tx.QueryRow(r.Context(), `SELECT c.organization_id,c.id,c.policy_id,c.expires_at,c.uses_remaining,c.source_type,c.environment_id,c.revoked_at,p.revoked_at
+		FROM enrollment_codes c
+		LEFT JOIN deployment_policies p ON p.organization_id=c.organization_id AND p.id=c.policy_id
+		WHERE c.code_hash=$1 FOR UPDATE OF c`, tokenHash(normalizeCode(request.Code))).Scan(&orgID, &enrollmentCredentialID, &deploymentPolicyID, &expires, &uses, &sourceType, &enrollmentEnvironmentID, &credentialRevokedAt, &policyRevokedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, 401, "invalid_enrollment_code", "The enrollment code is invalid or expired")
 		return
 	}
@@ -402,15 +415,45 @@ func (s *Server) exchangeEnrollment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "database_error", "Could not validate enrollment code")
 		return
 	}
+	rejectEnrollment := func(status int, code, message, reason string) {
+		if deploymentPolicyID != nil {
+			_, auditErr := tx.Exec(r.Context(), `INSERT INTO workspace_audit_events(id,organization_id,actor_id,event_type,target_type,target_id,metadata) VALUES($1,$2,'collector:enrollment','deployment_policy.enrollment_rejected','deployment_policy',$3,$4)`, uuid.New(), orgID, deploymentPolicyID.String(), jsonBytes(map[string]any{"credential_id": enrollmentCredentialID.String(), "reason": reason, "requested_source_type": request.SourceType}))
+			if auditErr != nil || tx.Commit(r.Context()) != nil {
+				writeError(w, http.StatusInternalServerError, "database_error", "Could not record rejected enrollment")
+				return
+			}
+		}
+		writeError(w, status, code, message)
+	}
+	if credentialRevokedAt != nil {
+		rejectEnrollment(http.StatusUnauthorized, "invalid_enrollment_code", "The enrollment code is invalid or expired", "credential_revoked")
+		return
+	}
+	if !expires.After(time.Now()) {
+		rejectEnrollment(http.StatusUnauthorized, "invalid_enrollment_code", "The enrollment code is invalid or expired", "credential_expired")
+		return
+	}
+	if uses <= 0 {
+		rejectEnrollment(http.StatusUnauthorized, "invalid_enrollment_code", "The enrollment code is invalid or expired", "credential_exhausted")
+		return
+	}
+	if deploymentPolicyID != nil && policyRevokedAt != nil {
+		rejectEnrollment(http.StatusUnauthorized, "invalid_enrollment_code", "The deployment policy is revoked", "policy_revoked")
+		return
+	}
+	if request.IdentityPublicKey == "" || request.IdentityProof == "" {
+		rejectEnrollment(http.StatusBadRequest, "invalid_enrollment", "Persistent collector identity proof is required; upgrade the Lens collector if identity fields are unavailable", "missing_identity_proof")
+		return
+	}
 	if enrollmentEnvironmentID != nil {
 		var active bool
 		if err = tx.QueryRow(r.Context(), `SELECT connection_status='setup_pending' FROM environment_connections WHERE organization_id=$1 AND id=$2`, orgID, *enrollmentEnvironmentID).Scan(&active); err != nil || !active {
-			writeError(w, 401, "invalid_enrollment_code", "The enrollment setup is no longer active")
+			rejectEnrollment(http.StatusUnauthorized, "invalid_enrollment_code", "The enrollment setup is no longer active", "setup_inactive")
 			return
 		}
 	}
 	if request.SourceType != "" && request.SourceType != sourceType {
-		writeError(w, 401, "source_type_mismatch", "The enrollment code was issued for a different collector type")
+		rejectEnrollment(http.StatusUnauthorized, "source_type_mismatch", "The enrollment code was issued for a different collector type", "source_type_mismatch")
 		return
 	}
 	targetIdentity, displayName := strings.TrimSpace(request.TargetIdentity), strings.TrimSpace(request.DisplayName)
@@ -419,7 +462,7 @@ func (s *Server) exchangeEnrollment(w http.ResponseWriter, r *http.Request) {
 	switch sourceType {
 	case "endpoint":
 		if request.Hostname == "" {
-			writeError(w, 400, "invalid_enrollment", "Endpoint hostname is required")
+			rejectEnrollment(http.StatusBadRequest, "invalid_enrollment", "Endpoint hostname is required", "missing_endpoint_hostname")
 			return
 		}
 		targetIdentity, displayName = request.Hostname, request.Hostname
@@ -427,7 +470,7 @@ func (s *Server) exchangeEnrollment(w http.ResponseWriter, r *http.Request) {
 		targetKind = discovery.KindCluster
 		identityLabel = targetIdentity
 		if targetIdentity == "" {
-			writeError(w, 400, "invalid_enrollment", "A persistent Kubernetes cluster identity is required")
+			rejectEnrollment(http.StatusBadRequest, "invalid_enrollment", "A persistent Kubernetes cluster identity is required", "missing_target_identity")
 			return
 		}
 		if displayName == "" {
@@ -438,23 +481,23 @@ func (s *Server) exchangeEnrollment(w http.ResponseWriter, r *http.Request) {
 		targetIdentity = strings.ToLower(targetIdentity)
 		identityLabel = targetIdentity
 		if !repositoryPattern.MatchString(targetIdentity) {
-			writeError(w, 400, "invalid_enrollment", "Repository identity must be owner/name")
+			rejectEnrollment(http.StatusBadRequest, "invalid_enrollment", "Repository identity must be owner/name", "invalid_target_identity")
 			return
 		}
 		if displayName == "" {
 			displayName = targetIdentity
 		}
 	default:
-		writeError(w, 400, "invalid_source_type", "Enrollment code has an unsupported collector type")
+		rejectEnrollment(http.StatusBadRequest, "invalid_source_type", "Enrollment code has an unsupported collector type", "unsupported_source_type")
 		return
 	}
 	if err := identity.Verify(request.IdentityPublicKey, request.IdentityProof, request.Code, identityLabel, request.Platform, request.Architecture, request.CollectorVersion); err != nil {
-		writeError(w, 401, "invalid_collector_identity", "The collector identity proof is invalid")
+		rejectEnrollment(http.StatusUnauthorized, "invalid_collector_identity", "The collector identity proof is invalid", "invalid_identity_proof")
 		return
 	}
 	fingerprint, err := identity.Fingerprint(request.IdentityPublicKey)
 	if err != nil {
-		writeError(w, 400, "invalid_collector_identity", "The collector identity is invalid")
+		rejectEnrollment(http.StatusBadRequest, "invalid_collector_identity", "The collector identity is invalid", "invalid_identity")
 		return
 	}
 	targetKey := sourceType + ":" + targetIdentity
@@ -474,6 +517,7 @@ func (s *Server) exchangeEnrollment(w http.ResponseWriter, r *http.Request) {
 	}
 	var sourceID string
 	var lastSequence uint64
+	reenrollment := false
 	err = tx.QueryRow(r.Context(), `SELECT id,last_sequence FROM sources WHERE organization_id=$1 AND target_id=$2 AND source_type=$3 AND revoked_at IS NULL FOR UPDATE`, orgID, targetID, sourceType).Scan(&sourceID, &lastSequence)
 	if errors.Is(err, pgx.ErrNoRows) {
 		sourceUUID, idErr := uuid.NewV7()
@@ -483,6 +527,7 @@ func (s *Server) exchangeEnrollment(w http.ResponseWriter, r *http.Request) {
 		sourceID = "source:" + sourceUUID.String()
 		_, err = tx.Exec(r.Context(), `INSERT INTO sources(organization_id,id,target_id,source_type,name,platform,architecture,collector_version) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, orgID, sourceID, targetID, sourceType, displayName, request.Platform, request.Architecture, request.CollectorVersion)
 	} else if err == nil {
+		reenrollment = true
 		_, err = tx.Exec(r.Context(), `UPDATE sources SET name=$4,platform=$5,architecture=$6,collector_version=$7 WHERE organization_id=$1 AND id=$2 AND target_id=$3`, orgID, sourceID, targetID, displayName, request.Platform, request.Architecture, request.CollectorVersion)
 		if err == nil {
 			_, err = tx.Exec(r.Context(), `DELETE FROM collector_refresh_tokens WHERE organization_id=$1 AND source_id=$2`, orgID, sourceID)
@@ -525,7 +570,24 @@ func (s *Server) exchangeEnrollment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "database_error", "Could not activate the environment")
 		return
 	}
-	if uses <= 1 {
+	if deploymentPolicyID != nil {
+		enrollmentEventID := uuid.New()
+		_, err = tx.Exec(r.Context(), `INSERT INTO deployment_policy_enrollments(id,organization_id,policy_id,credential_id,target_id,source_id,source_type,identity_fingerprint) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, enrollmentEventID, orgID, *deploymentPolicyID, enrollmentCredentialID, targetID, sourceID, sourceType, fingerprint)
+		if err == nil {
+			_, err = tx.Exec(r.Context(), `UPDATE discovery_targets SET deployment_policy_id=COALESCE(deployment_policy_id,$3),deployment_enrollment_id=COALESCE(deployment_enrollment_id,$4) WHERE organization_id=$1 AND id=$2`, orgID, targetID, *deploymentPolicyID, enrollmentEventID)
+		}
+		if err == nil {
+			_, err = tx.Exec(r.Context(), `UPDATE sources SET deployment_policy_id=COALESCE(deployment_policy_id,$3),deployment_enrollment_id=COALESCE(deployment_enrollment_id,$4) WHERE organization_id=$1 AND id=$2`, orgID, sourceID, *deploymentPolicyID, enrollmentEventID)
+		}
+		if err == nil {
+			_, err = tx.Exec(r.Context(), `INSERT INTO workspace_audit_events(id,organization_id,actor_id,event_type,target_type,target_id,metadata) VALUES($1,$2,'collector:enrollment','deployment_policy.enrollment_succeeded','deployment_policy',$3,$4)`, uuid.New(), orgID, deploymentPolicyID.String(), jsonBytes(map[string]any{"credential_id": enrollmentCredentialID.String(), "enrollment_id": enrollmentEventID.String(), "source_id": sourceID, "target_id": targetID, "source_type": sourceType, "reenrollment": reenrollment}))
+		}
+		if err != nil {
+			writeError(w, 500, "database_error", "Could not record deployment policy enrollment")
+			return
+		}
+		_, err = tx.Exec(r.Context(), `UPDATE enrollment_codes SET uses_remaining=uses_remaining-1 WHERE organization_id=$1 AND id=$2 AND uses_remaining>0`, orgID, enrollmentCredentialID)
+	} else if uses <= 1 {
 		_, err = tx.Exec(r.Context(), `DELETE FROM enrollment_codes WHERE code_hash=$1`, tokenHash(normalizeCode(request.Code)))
 	} else {
 		_, err = tx.Exec(r.Context(), `UPDATE enrollment_codes SET uses_remaining=uses_remaining-1 WHERE code_hash=$1`, tokenHash(normalizeCode(request.Code)))

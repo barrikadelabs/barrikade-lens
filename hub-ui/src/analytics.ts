@@ -3,6 +3,8 @@ import type { CaptureResult, PostHog, PostHogConfig } from "posthog-js/dist/modu
 export type LensPage = "overview" | "findings" | "inventory" | "connections" | "changes" | "evidence" | "settings";
 type ConnectionType = "aws" | "azure" | "gcp" | "endpoint" | "github" | "kubernetes";
 type Platform = "macos" | "windows" | "linux";
+type SourceCategory = "code_ci" | "employee_devices" | "cloud_infrastructure" | "saas_identity";
+type DeploymentMethod = "this_computer" | "company" | "command_line" | "mdm";
 type Surface = LensPage | "navigation" | "export" | "setup" | "notification";
 type Interaction =
   | "filter_changed" | "search_used" | "load_more" | "refresh" | "open"
@@ -12,7 +14,12 @@ type Interaction =
 export type BrowserAnalyticsEvent =
   | { name: "lens_page_viewed"; properties: { lens_page: LensPage } }
   | { name: "connection_type_selected"; properties: { connection_type: ConnectionType } }
+  | { name: "source_category_selected"; properties: { source_category: SourceCategory } }
+  | { name: "deployment_method_selected"; properties: { deployment_method: DeploymentMethod } }
   | { name: "install_platform_selected"; properties: { platform: Platform } }
+  | { name: "scan_started"; properties: { connection_type: ConnectionType; deployment_method?: DeploymentMethod } }
+  | { name: "first_collector_connected"; properties: { connection_type: ConnectionType } }
+  | { name: "first_results_viewed"; properties: { connection_type?: ConnectionType } }
   | { name: "inventory_viewed"; properties: { system_kind?: string; confidence?: "confirmed" | "likely" | "possible"; freshness?: "fresh" | "stale"; owner_state?: "owned" | "unowned" } }
   | { name: "system_opened"; properties: { system_kind?: string; confidence?: "confirmed" | "likely" | "possible"; freshness?: "fresh" | "stale"; owner_state?: "owned" | "unowned" } }
   | { name: "finding_opened"; properties: { severity?: "critical" | "high" | "medium" | "low"; freshness?: "fresh" | "stale"; owner_state?: "owned" | "unowned" } }
@@ -27,7 +34,12 @@ const schemaVersion = 2;
 const allowedProperties: Record<BrowserAnalyticsEvent["name"], ReadonlySet<string>> = {
   lens_page_viewed: new Set(["lens_page"]),
   connection_type_selected: new Set(["connection_type"]),
+  source_category_selected: new Set(["source_category"]),
+  deployment_method_selected: new Set(["deployment_method"]),
   install_platform_selected: new Set(["platform"]),
+  scan_started: new Set(["connection_type", "deployment_method"]),
+  first_collector_connected: new Set(["connection_type"]),
+  first_results_viewed: new Set(["connection_type"]),
   inventory_viewed: new Set(["system_kind", "confidence", "freshness", "owner_state"]),
   system_opened: new Set(["system_kind", "confidence", "freshness", "owner_state"]),
   finding_opened: new Set(["severity", "freshness", "owner_state"]),
@@ -43,6 +55,8 @@ const allowedValues: Record<string, ReadonlySet<string>> = {
   control: new Set(["window", "severity", "confidence", "ownership", "freshness", "state", "system_type", "network", "category", "surface", "target_type", "system", "evidence", "navigation"]),
   connection_type: new Set(["aws", "azure", "gcp", "endpoint", "github", "kubernetes"]),
   platform: new Set(["macos", "windows", "linux"]),
+  source_category: new Set(["code_ci", "employee_devices", "cloud_infrastructure", "saas_identity"]),
+  deployment_method: new Set(["this_computer", "company", "command_line", "mdm"]),
   export_format: new Set(["json", "ndjson", "cyclonedx"]),
   system_kind: new Set(["autonomous_agent", "agent_tool", "model_runtime"]),
   confidence: new Set(["confirmed", "likely", "possible"]),

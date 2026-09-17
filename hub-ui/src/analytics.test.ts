@@ -34,6 +34,14 @@ describe("privacy-minimized analytics", () => {
     expect(sanitizeBrowserEvent({ uuid: "id", event: "$pageview", properties: { $current_url: "https://sensitive.example" } } as never)).toBeNull();
   });
 
+  it("retains only bounded environment-onboarding dimensions", () => {
+    const method = sanitizeBrowserEvent({ uuid: "id", event: "deployment_method_selected", properties: { deployment_method: "mdm", device_name: "private-laptop" } } as never);
+    const scan = sanitizeBrowserEvent({ uuid: "id", event: "scan_started", properties: { connection_type: "endpoint", deployment_method: "this_computer", environment_id: "customer-environment" } } as never);
+    expect(method?.properties).toMatchObject({ deployment_method: "mdm" });
+    expect(scan?.properties).toMatchObject({ connection_type: "endpoint", deployment_method: "this_computer" });
+    expect(JSON.stringify([method, scan])).not.toMatch(/private-laptop|customer-environment|device_name|environment_id/);
+  });
+
   it("redacts exception messages and stack traces while retaining a safe error type", () => {
     const result = sanitizeBrowserEvent({
       uuid: "id",
