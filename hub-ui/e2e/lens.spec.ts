@@ -94,6 +94,10 @@ test("environment-first onboarding is gated, keyboard accessible, responsive, an
   const employeeDevices = dialog.getByRole("button", { name: /Employee devices.*Available/ });
   await employeeDevices.focus();
   await page.keyboard.press("Enter");
+  const continuousMonitoring = dialog.getByRole("button", { name: /Continuous monitoring/ });
+  await expect(continuousMonitoring).toBeVisible();
+  await continuousMonitoring.focus();
+  await page.keyboard.press("Enter");
   await expect(dialog.getByRole("radio", { name: /Install on this computer/ })).toBeVisible();
   await expect(dialog.getByLabel("Installation platform")).toHaveCount(0);
   await expect(dialog.getByLabel("Display name")).toHaveCount(0);
@@ -107,7 +111,7 @@ test("environment-first onboarding is gated, keyboard accessible, responsive, an
   await dialog.getByRole("button", { name: "Start scan" }).click();
   await expect(dialog.getByText("install lens macos")).toBeVisible();
   expect(requests).toHaveLength(2);
-  expect(requests[1]).toMatchObject({ kind: "endpoint", display_name: "Employee device", configuration: { deployment_method: "this_computer", platform: "macos" } });
+  expect(requests[1]).toMatchObject({ kind: "endpoint", display_name: "Employee device", configuration: { monitoring_mode: "continuous", deployment_method: "this_computer", platform: "macos" } });
   expect(requests[1]).not.toHaveProperty("external_id");
 });
 
@@ -116,7 +120,7 @@ test("a resumable setup closes into live device status after enrollment", async 
   let connected = false;
   const environment = () => ({
     id: "environment-1", kind: "endpoint", provider: "endpoint", display_name: "Recovered device",
-    connection_status: connected ? "connected" : "setup_pending", configuration: {}, schedule_enabled: true,
+    connection_status: connected ? "connected" : "setup_pending", monitoring_mode: "continuous", configuration: {}, schedule_enabled: true,
     source_id: connected ? "source-1" : undefined, created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
   });
   await page.route("**/v1/environments", async (route) => route.fulfill({ json: { items: [environment()] } }));
