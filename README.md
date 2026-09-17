@@ -57,7 +57,15 @@ The Barrikade Azure pilot is available at [lens.barrikade.ai](https://lens.barri
 
 For the Barrikade pilot, the compose stack opens the `org_local` tenant used by the managed collector. The [live-device customer-story demo](docs/demo-live-device.md) shows how to present one real finding and its evidence without loading sample inventory or implying that Lens makes approval decisions.
 
-From **Connections**, choose **Connect endpoint**, select macOS, Windows, or Linux, and run the generated command. The Hub pins the collector release and expires each command after 15 minutes:
+From **Connections**, choose **Employee devices**, then choose a one-shot Quick Scan or Continuous Monitoring. Quick Scan uploads once and exits without administrator access or a background service:
+
+```bash
+npx --yes barrikade-lens scan --enroll ABCDE-FGHIJ
+```
+
+The public Hub is the safe default; self-hosted deployments add `--hub https://lens.example`. Lens retains only the protected installation identity so a later upgrade reuses the same target and inventory. The short-lived Quick Scan access token and bootstrap code are never written to collector configuration.
+
+Continuous Monitoring performs the initial scan and installs the managed collector. The Hub pins the collector release and expires each setup command after 15 minutes:
 
 ```sh
 npx --yes barrikade-lens@2.0.6 enroll ABCDE-FGHIJ --hub https://lens.barrikade.ai --install

@@ -30,13 +30,13 @@ func (s *Server) getEnvironmentActivation(w http.ResponseWriter, r *http.Request
 		writeError(w, 400, "invalid_id", "Environment ID is invalid")
 		return
 	}
-	var connection string
+	var connection, monitoringMode string
 	var sourceID, errorCode, errorMessage, resultStatus *string
-	var firstResult, lastResult, sourceSeen *time.Time
+	var firstResult, lastResult, sourceSeen, evidenceExpiresAt *time.Time
 	var sourcePartial *bool
-	err = s.db(r.Context()).QueryRow(r.Context(), `SELECT e.connection_status,e.source_id,e.first_result_at,e.last_result_at,e.last_result_status,e.last_error_code,e.last_error_message,s.last_seen_at,s.latest_partial
+	err = s.db(r.Context()).QueryRow(r.Context(), `SELECT e.connection_status,e.source_id,e.first_result_at,e.last_result_at,e.last_result_status,e.last_error_code,e.last_error_message,s.last_seen_at,s.latest_partial,e.monitoring_mode,s.evidence_expires_at
 		FROM environment_connections e LEFT JOIN sources s ON s.organization_id=e.organization_id AND s.id=e.source_id
-		WHERE e.organization_id=$1 AND e.id=$2`, principal.OrganizationID, id).Scan(&connection, &sourceID, &firstResult, &lastResult, &resultStatus, &errorCode, &errorMessage, &sourceSeen, &sourcePartial)
+		WHERE e.organization_id=$1 AND e.id=$2`, principal.OrganizationID, id).Scan(&connection, &sourceID, &firstResult, &lastResult, &resultStatus, &errorCode, &errorMessage, &sourceSeen, &sourcePartial, &monitoringMode, &evidenceExpiresAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, 404, "not_found", "Environment not found")
 		return
@@ -61,19 +61,89 @@ func (s *Server) getEnvironmentActivation(w http.ResponseWriter, r *http.Request
 		} else {
 			phase = "connected"
 		}
-	case sourceSeen != nil && time.Since(*sourceSeen) > time.Hour:
+	case monitoringMode == "quick_scan" && evidenceExpiresAt != nil && time.Now().After(*evidenceExpiresAt):
+		phase = "stale"
+	case monitoringMode != "quick_scan" && sourceSeen != nil && time.Since(*sourceSeen) > time.Hour:
 		phase = "stale"
 	case resultStatus != nil && *resultStatus == "partial" || sourcePartial != nil && *sourcePartial:
 		phase = "partial"
 	default:
 		phase = "ready"
 	}
+	assetsFound, systemsFound := 0, 0
+	if sourceID != nil && lastResult != nil {
+		_ = s.db(r.Context()).QueryRow(r.Context(), `SELECT count(*),count(*) FILTER (WHERE p.system_role='system')
+			FROM source_entities se
+			LEFT JOIN entity_posture p ON p.organization_id=se.organization_id AND p.entity_id=se.entity_id
+			WHERE se.organization_id=$1 AND se.source_id=$2 AND se.current=true`, principal.OrganizationID, *sourceID).Scan(&assetsFound, &systemsFound)
+	}
 	writeJSON(w, 200, map[string]any{
 		"environment_id": id, "phase": phase, "connection_status": connection,
 		"first_result_at": firstResult, "last_result_at": lastResult,
 		"last_result_status": resultStatus, "last_seen_at": sourceSeen,
-		"safe_error": map[string]any{"code": errorCode, "message": errorMessage},
+		"safe_error":      map[string]any{"code": errorCode, "message": errorMessage},
+		"monitoring_mode": monitoringMode, "evidence_expires_at": evidenceExpiresAt,
+		"summary":                          map[string]int{"assets_found": assetsFound, "systems_found": systemsFound},
+		"can_enable_continuous_monitoring": monitoringMode == "quick_scan" && sourceID != nil && lastResult != nil && resultStatus != nil && (*resultStatus == "complete" || *resultStatus == "partial"),
 	})
+}
+
+func (s *Server) enableContinuousMonitoring(w http.ResponseWriter, r *http.Request) {
+	principal, err := requireScope(r, "environment:manage")
+	if err != nil {
+		writeError(w, http.StatusForbidden, "forbidden", err.Error())
+		return
+	}
+	environmentID, err := uuid.Parse(r.PathValue("id"))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_id", "Environment ID is invalid")
+		return
+	}
+	tx, err := s.begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "database_error", "Could not prepare the monitoring upgrade")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	var kind, status, mode string
+	var sourceID *string
+	var resultStatus *string
+	if err = tx.QueryRow(r.Context(), `SELECT kind,connection_status,monitoring_mode,source_id,last_result_status FROM environment_connections WHERE organization_id=$1 AND id=$2 FOR UPDATE`, principal.OrganizationID, environmentID).Scan(&kind, &status, &mode, &sourceID, &resultStatus); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "not_found", "Environment not found")
+		} else {
+			writeError(w, http.StatusInternalServerError, "database_error", "Could not load the environment")
+		}
+		return
+	}
+	if kind != "endpoint" || status != "connected" || mode != "quick_scan" || sourceID == nil || resultStatus == nil || *resultStatus != "complete" && *resultStatus != "partial" {
+		writeError(w, http.StatusConflict, "upgrade_not_available", "Continuous monitoring can be enabled only after a completed endpoint Quick Scan")
+		return
+	}
+	if _, err = tx.Exec(r.Context(), `UPDATE connector_setup_sessions SET state='cancelled' WHERE organization_id=$1 AND environment_id=$2 AND state='pending'`, principal.OrganizationID, environmentID); err == nil {
+		_, err = tx.Exec(r.Context(), `UPDATE enrollment_codes SET revoked_at=now() WHERE organization_id=$1 AND environment_id=$2 AND revoked_at IS NULL`, principal.OrganizationID, environmentID)
+	}
+	token, tokenErr := randomToken(32)
+	if err == nil {
+		err = tokenErr
+	}
+	setupID := uuid.New()
+	expiresAt := time.Now().UTC().Add(endpointCredentialLifetime)
+	if err == nil {
+		_, err = tx.Exec(r.Context(), `INSERT INTO connector_setup_sessions(id,organization_id,environment_id,token_hash,kind,setup_payload,created_by,expires_at) VALUES($1,$2,$3,$4,'endpoint',$5,$6,$7)`, setupID, principal.OrganizationID, environmentID, tokenHash(normalizeCode(token)), []byte(`{"monitoring_mode":"continuous"}`), principal.Subject, expiresAt)
+	}
+	if err == nil {
+		_, err = tx.Exec(r.Context(), `INSERT INTO enrollment_codes(code_hash,organization_id,environment_id,expires_at,uses_remaining,source_type,enrollment_mode) VALUES($1,$2,$3,$4,1,'endpoint','continuous')`, tokenHash(normalizeCode(token)), principal.OrganizationID, environmentID, expiresAt)
+	}
+	if err == nil {
+		_, err = tx.Exec(r.Context(), `INSERT INTO workspace_audit_events(id,organization_id,actor_id,event_type,target_type,target_id,metadata) VALUES($1,$2,$3,'environment.continuous_monitoring_requested','environment',$4,'{}')`, uuid.New(), principal.OrganizationID, principal.Subject, environmentID.String())
+	}
+	if err != nil || tx.Commit(r.Context()) != nil {
+		writeError(w, http.StatusInternalServerError, "database_error", "Could not prepare the monitoring upgrade")
+		return
+	}
+	configuration := map[string]any{"monitoring_mode": "continuous"}
+	writeJSON(w, http.StatusCreated, map[string]any{"id": setupID, "environment_id": environmentID, "kind": "endpoint", "expires_at": expiresAt, "token_displayed_once": true, "setup": s.environmentSetupInstructions("endpoint", "endpoint", "", "", token, configuration)})
 }
 
 func (s *Server) rotateEndpointEnrollmentCredential(w http.ResponseWriter, r *http.Request) {
@@ -91,7 +161,7 @@ func (s *Server) rotateEndpointEnrollmentCredential(w http.ResponseWriter, r *ht
 		writeError(w, 400, "invalid_id", "Environment ID is invalid")
 		return
 	}
-	token, expiresAt, setupID, err := s.issueEndpointCredential(r.Context(), s.db(r.Context()), principal.OrganizationID, environmentID, principal.Subject)
+	token, expiresAt, setupID, monitoringMode, err := s.issueEndpointCredential(r.Context(), s.db(r.Context()), principal.OrganizationID, environmentID, principal.Subject)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, 409, "setup_not_pending", "Only a pending endpoint setup can rotate its credential")
 		return
@@ -102,38 +172,38 @@ func (s *Server) rotateEndpointEnrollmentCredential(w http.ResponseWriter, r *ht
 	}
 	writeJSON(w, 201, map[string]any{
 		"id": setupID, "environment_id": environmentID, "kind": "endpoint", "expires_at": expiresAt, "token_displayed_once": true,
-		"setup": s.environmentSetupInstructions("endpoint", "endpoint", "", "", token, nil),
+		"setup": s.environmentSetupInstructions("endpoint", "endpoint", "", "", token, map[string]any{"monitoring_mode": monitoringMode}),
 	})
 }
 
-func (s *Server) issueEndpointCredential(ctx context.Context, q database, orgID string, environmentID uuid.UUID, actor string) (string, time.Time, uuid.UUID, error) {
-	var kind, status string
-	if err := q.QueryRow(ctx, `SELECT kind,connection_status FROM environment_connections WHERE organization_id=$1 AND id=$2 FOR UPDATE`, orgID, environmentID).Scan(&kind, &status); err != nil {
-		return "", time.Time{}, uuid.Nil, err
+func (s *Server) issueEndpointCredential(ctx context.Context, q database, orgID string, environmentID uuid.UUID, actor string) (string, time.Time, uuid.UUID, string, error) {
+	var kind, status, monitoringMode string
+	if err := q.QueryRow(ctx, `SELECT kind,connection_status,monitoring_mode FROM environment_connections WHERE organization_id=$1 AND id=$2 FOR UPDATE`, orgID, environmentID).Scan(&kind, &status, &monitoringMode); err != nil {
+		return "", time.Time{}, uuid.Nil, "", err
 	}
 	if kind != "endpoint" || status != "setup_pending" {
-		return "", time.Time{}, uuid.Nil, pgx.ErrNoRows
+		return "", time.Time{}, uuid.Nil, "", pgx.ErrNoRows
 	}
 	if _, err := q.Exec(ctx, `UPDATE connector_setup_sessions SET state='cancelled' WHERE organization_id=$1 AND environment_id=$2 AND state='pending'`, orgID, environmentID); err != nil {
-		return "", time.Time{}, uuid.Nil, err
+		return "", time.Time{}, uuid.Nil, "", err
 	}
 	if _, err := q.Exec(ctx, `UPDATE enrollment_codes SET revoked_at=now() WHERE organization_id=$1 AND environment_id=$2 AND revoked_at IS NULL`, orgID, environmentID); err != nil {
-		return "", time.Time{}, uuid.Nil, err
+		return "", time.Time{}, uuid.Nil, "", err
 	}
 	token, err := randomToken(32)
 	if err != nil {
-		return "", time.Time{}, uuid.Nil, err
+		return "", time.Time{}, uuid.Nil, "", err
 	}
 	expiresAt := time.Now().UTC().Add(endpointCredentialLifetime)
 	hash := tokenHash(normalizeCode(token))
 	setupID := uuid.New()
 	if _, err = q.Exec(ctx, `INSERT INTO connector_setup_sessions(id,organization_id,environment_id,token_hash,kind,created_by,expires_at) VALUES($1,$2,$3,$4,'endpoint',$5,$6)`, setupID, orgID, environmentID, hash, actor, expiresAt); err != nil {
-		return "", time.Time{}, uuid.Nil, err
+		return "", time.Time{}, uuid.Nil, "", err
 	}
-	if _, err = q.Exec(ctx, `INSERT INTO enrollment_codes(code_hash,organization_id,environment_id,expires_at,uses_remaining,source_type) VALUES($1,$2,$3,$4,1,'endpoint')`, hash, orgID, environmentID, expiresAt); err != nil {
-		return "", time.Time{}, uuid.Nil, err
+	if _, err = q.Exec(ctx, `INSERT INTO enrollment_codes(code_hash,organization_id,environment_id,expires_at,uses_remaining,source_type,enrollment_mode) VALUES($1,$2,$3,$4,1,'endpoint',$5)`, hash, orgID, environmentID, expiresAt, monitoringMode); err != nil {
+		return "", time.Time{}, uuid.Nil, "", err
 	}
-	return token, expiresAt, setupID, nil
+	return token, expiresAt, setupID, monitoringMode, nil
 }
 
 func (s *Server) createEndpointHandoff(w http.ResponseWriter, r *http.Request) {
@@ -238,7 +308,7 @@ func (s *Server) resolveEndpointHandoff(w http.ResponseWriter, r *http.Request) 
 		writeError(w, 500, "database_error", "Could not open delegated setup")
 		return
 	}
-	token, expiresAt, _, err := s.issueEndpointCredential(r.Context(), tx, orgID, environmentID, "handoff:"+handoffID.String())
+	token, expiresAt, _, monitoringMode, err := s.issueEndpointCredential(r.Context(), tx, orgID, environmentID, "handoff:"+handoffID.String())
 	if err == nil {
 		_, err = tx.Exec(r.Context(), `UPDATE endpoint_setup_handoffs SET last_viewed_at=now() WHERE id=$1`, handoffID)
 	}
@@ -246,7 +316,7 @@ func (s *Server) resolveEndpointHandoff(w http.ResponseWriter, r *http.Request) 
 		writeError(w, 500, "database_error", "Could not generate the delegated setup command")
 		return
 	}
-	setup := s.environmentSetupInstructions("endpoint", "endpoint", "", environmentName, token, nil)
+	setup := s.environmentSetupInstructions("endpoint", "endpoint", "", environmentName, token, map[string]any{"monitoring_mode": monitoringMode})
 	commands, _ := setup["commands"].(map[string]string)
 	writeJSON(w, 200, map[string]any{
 		"workspace_name": workspaceName, "environment_name": environmentName,
@@ -315,6 +385,14 @@ func endpointInstallCommand(platform, token, hub string) string {
 	command := fmt.Sprintf("npx --yes barrikade-lens@%s enroll %s --hub %s --install", endpointLauncherVersion, shellQuote(token), shellQuote(strings.TrimSuffix(hub, "/")))
 	if platform == "windows" {
 		command = fmt.Sprintf("npx --yes barrikade-lens@%s enroll %s --hub %s --install", endpointLauncherVersion, powershellQuote(token), powershellQuote(strings.TrimSuffix(hub, "/")))
+	}
+	return command
+}
+
+func endpointQuickScanCommand(platform, token, hub string) string {
+	command := fmt.Sprintf("npx --yes barrikade-lens scan --enroll %s --hub %s", shellQuote(token), shellQuote(strings.TrimSuffix(hub, "/")))
+	if platform == "windows" {
+		command = fmt.Sprintf("npx --yes barrikade-lens scan --enroll %s --hub %s", powershellQuote(token), powershellQuote(strings.TrimSuffix(hub, "/")))
 	}
 	return command
 }

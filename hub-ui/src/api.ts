@@ -64,6 +64,10 @@ export class API {
 
   activation(id: string) { return this.request<Activation>(`/v1/environments/${encodeURIComponent(id)}/activation`); }
 
+  enableContinuousMonitoring(id: string) {
+    return this.request<SetupSession>(`/v1/environments/${encodeURIComponent(id)}/enable-continuous-monitoring`, { method: "POST" });
+  }
+
   createEnvironmentSetup(input: { kind: EnvironmentKind; display_name: string; external_id?: string; configuration?: Record<string, unknown> }) {
     return this.request<SetupSession>("/v1/environments/setup-sessions", { method: "POST", body: JSON.stringify(input) });
   }

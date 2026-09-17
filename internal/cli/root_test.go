@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,8 +13,62 @@ import (
 	"testing"
 
 	lensconfig "github.com/barrikadelabs/barrikade-lens/internal/config"
+	"github.com/barrikadelabs/barrikade-lens/internal/managed"
 	servicecontrol "github.com/barrikadelabs/barrikade-lens/internal/service"
 )
+
+func TestQuickScanUsesPublicHubAndNeverInstallsService(t *testing.T) {
+	var output bytes.Buffer
+	installed := false
+	called := false
+	code := ExecuteWith(Dependencies{
+		In: os.Stdin, Out: &output, Err: &output,
+		QuickScan: func(_ context.Context, hub, enrollmentCode, identityPath string) (managed.QuickScanResult, error) {
+			called = true
+			if hub != OfficialHubURL || enrollmentCode != "ABCD-1234" || identityPath != "" {
+				t.Fatalf("unexpected quick scan inputs: hub=%q code=%q path=%q", hub, enrollmentCode, identityPath)
+			}
+			return managed.QuickScanResult{JobID: "job", EntityCount: 7, RelationCount: 3}, nil
+		},
+		InstallService: func(context.Context, string, string) (servicecontrol.Status, error) {
+			installed = true
+			return servicecontrol.Status{}, nil
+		},
+	}, []string{"scan", "--enroll", "ABCD-1234"})
+	if code != 0 || !called || installed {
+		t.Fatalf("quick scan code=%d called=%v installed=%v output=%s", code, called, installed, output.String())
+	}
+	if !strings.Contains(output.String(), "7 assets") || !strings.Contains(output.String(), "No background service was installed") {
+		t.Fatalf("quick scan summary missing: %s", output.String())
+	}
+}
+
+func TestQuickScanReturnsPartialExitCodeAfterUpload(t *testing.T) {
+	var output bytes.Buffer
+	code := ExecuteWith(Dependencies{In: os.Stdin, Out: &output, Err: &output, QuickScan: func(context.Context, string, string, string) (managed.QuickScanResult, error) {
+		return managed.QuickScanResult{Partial: true}, nil
+	}}, []string{"scan", "--enroll", "ABCD-1234", "--hub", "http://localhost:8080"})
+	if code != 2 || !strings.Contains(output.String(), "partial results") {
+		t.Fatalf("partial quick scan code=%d output=%s", code, output.String())
+	}
+}
+
+func TestQuickScanUploadFailureReturnsErrorWithoutInstallingService(t *testing.T) {
+	var output bytes.Buffer
+	installed := false
+	code := ExecuteWith(Dependencies{In: os.Stdin, Out: &output, Err: &output,
+		QuickScan: func(context.Context, string, string, string) (managed.QuickScanResult, error) {
+			return managed.QuickScanResult{}, errors.New("upload unavailable")
+		},
+		InstallService: func(context.Context, string, string) (servicecontrol.Status, error) {
+			installed = true
+			return servicecontrol.Status{}, nil
+		},
+	}, []string{"scan", "--enroll", "ABCD-1234"})
+	if code != 1 || installed || !strings.Contains(output.String(), "upload unavailable") {
+		t.Fatalf("upload failure code=%d installed=%v output=%s", code, installed, output.String())
+	}
+}
 
 func TestEnrollInstallCompletesOnboardingInOneCommand(t *testing.T) {
 	server := enrollmentServer(t, nil)

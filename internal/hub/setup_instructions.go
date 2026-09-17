@@ -137,6 +137,21 @@ output "lens_workload_identity_audience" {
 		}
 	case "endpoint":
 		hub := strings.TrimSuffix(s.config.PublicURL, "/")
+		monitoringMode, _ := configuration["monitoring_mode"].(string)
+		if monitoringMode == "" {
+			monitoringMode, _ = configuration["deployment_mode"].(string)
+		}
+		if monitoringMode == "quick_scan" {
+			return map[string]any{
+				"method": "quick_scan", "enrollment_code": token,
+				"commands": map[string]string{
+					"macos": endpointQuickScanCommand("macos", token, hub), "linux": endpointQuickScanCommand("linux", token, hub), "windows": endpointQuickScanCommand("windows", token, hub),
+				},
+				"prerequisites":   []string{"Node.js 18 or newer"},
+				"what_lens_reads": []string{"Installed and running AI tools and runtimes", "Local configuration metadata and network listeners"},
+				"excluded":        []string{"Prompt and conversation contents", "Secret values", "Source file bodies", "Write access", "Background service installation"},
+			}
+		}
 		return map[string]any{
 			"method": "managed_collector", "enrollment_code": token,
 			"commands": map[string]string{

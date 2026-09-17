@@ -195,6 +195,7 @@ func (s *Server) routes() {
 	authenticated.HandleFunc("GET /v1/environments/{id}/activation", s.getEnvironmentActivation)
 	authenticated.HandleFunc("POST /v1/environments/setup-sessions", s.rateLimit("setup_creation", 30, 5*time.Minute, principalRequestKey, s.createEnvironmentSetupSession))
 	authenticated.HandleFunc("POST /v1/environments/{id}/enrollment-credentials", s.rotateEndpointEnrollmentCredential)
+	authenticated.HandleFunc("POST /v1/environments/{id}/enable-continuous-monitoring", s.enableContinuousMonitoring)
 	authenticated.HandleFunc("POST /v1/environments/{id}/handoffs", s.rateLimit("handoff_creation", 30, 5*time.Minute, principalRequestKey, s.createEndpointHandoff))
 	authenticated.HandleFunc("DELETE /v1/environments/{id}/handoffs/{handoffId}", s.revokeEndpointHandoff)
 	authenticated.HandleFunc("POST /v1/environments/{id}/verify", s.verifyEnvironment)
@@ -214,6 +215,7 @@ func (s *Server) routes() {
 	authenticated.HandleFunc("DELETE /v1/admin/service-accounts/{id}", s.revokeServiceAccount)
 	authenticated.HandleFunc("DELETE /v1/admin/sources/{id}", s.revokeSource)
 	authenticated.HandleFunc("POST /v1/discovery/snapshots", s.rateLimit("snapshot_submission", 120, time.Minute, principalRequestKey, s.submitSnapshot))
+	authenticated.HandleFunc("POST /v1/collector/quick-scan/failed", s.reportQuickScanFailure)
 	authenticated.HandleFunc("GET /v1/discovery/jobs/{id}", s.getJob)
 	authenticated.HandleFunc("GET /v1/entities", s.listEntities)
 	authenticated.HandleFunc("GET /v1/entities/{id}", s.getEntity)
@@ -382,6 +384,7 @@ func (s *Server) exchangeEnrollment(w http.ResponseWriter, r *http.Request) {
 		SourceType        string `json:"source_type"`
 		TargetIdentity    string `json:"target_identity"`
 		DisplayName       string `json:"display_name"`
+		EnrollmentMode    string `json:"enrollment_mode"`
 	}
 	if err := decodeJSON(w, r, &request, 64<<10); err != nil {
 		return
@@ -396,17 +399,17 @@ func (s *Server) exchangeEnrollment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer tx.Rollback(r.Context())
-	var orgID, sourceType string
+	var orgID, sourceType, enrollmentMode string
 	var enrollmentCredentialID uuid.UUID
 	var deploymentPolicyID *uuid.UUID
 	var enrollmentEnvironmentID *uuid.UUID
 	var credentialRevokedAt, policyRevokedAt *time.Time
 	var expires time.Time
 	var uses int
-	err = tx.QueryRow(r.Context(), `SELECT c.organization_id,c.id,c.policy_id,c.expires_at,c.uses_remaining,c.source_type,c.environment_id,c.revoked_at,p.revoked_at
+	err = tx.QueryRow(r.Context(), `SELECT c.organization_id,c.id,c.policy_id,c.expires_at,c.uses_remaining,c.source_type,c.environment_id,c.revoked_at,p.revoked_at,c.enrollment_mode
 		FROM enrollment_codes c
 		LEFT JOIN deployment_policies p ON p.organization_id=c.organization_id AND p.id=c.policy_id
-		WHERE c.code_hash=$1 FOR UPDATE OF c`, tokenHash(normalizeCode(request.Code))).Scan(&orgID, &enrollmentCredentialID, &deploymentPolicyID, &expires, &uses, &sourceType, &enrollmentEnvironmentID, &credentialRevokedAt, &policyRevokedAt)
+		WHERE c.code_hash=$1 FOR UPDATE OF c`, tokenHash(normalizeCode(request.Code))).Scan(&orgID, &enrollmentCredentialID, &deploymentPolicyID, &expires, &uses, &sourceType, &enrollmentEnvironmentID, &credentialRevokedAt, &policyRevokedAt, &enrollmentMode)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, 401, "invalid_enrollment_code", "The enrollment code is invalid or expired")
 		return
@@ -445,9 +448,20 @@ func (s *Server) exchangeEnrollment(w http.ResponseWriter, r *http.Request) {
 		rejectEnrollment(http.StatusBadRequest, "invalid_enrollment", "Persistent collector identity proof is required; upgrade the Lens collector if identity fields are unavailable", "missing_identity_proof")
 		return
 	}
+	if request.EnrollmentMode == "" {
+		request.EnrollmentMode = "continuous"
+	}
+	if request.EnrollmentMode != enrollmentMode {
+		rejectEnrollment(http.StatusUnauthorized, "enrollment_mode_mismatch", "The enrollment code was issued for a different endpoint mode", "enrollment_mode_mismatch")
+		return
+	}
+	if sourceType != "endpoint" && enrollmentMode != "continuous" {
+		rejectEnrollment(http.StatusBadRequest, "invalid_enrollment", "Quick Scan is available only for endpoints", "unsupported_enrollment_mode")
+		return
+	}
 	if enrollmentEnvironmentID != nil {
 		var active bool
-		if err = tx.QueryRow(r.Context(), `SELECT connection_status='setup_pending' FROM environment_connections WHERE organization_id=$1 AND id=$2`, orgID, *enrollmentEnvironmentID).Scan(&active); err != nil || !active {
+		if err = tx.QueryRow(r.Context(), `SELECT connection_status='setup_pending' OR (monitoring_mode='quick_scan' AND $3='continuous') FROM environment_connections WHERE organization_id=$1 AND id=$2`, orgID, *enrollmentEnvironmentID, enrollmentMode).Scan(&active); err != nil || !active {
 			rejectEnrollment(http.StatusUnauthorized, "invalid_enrollment_code", "The enrollment setup is no longer active", "setup_inactive")
 			return
 		}
@@ -506,29 +520,34 @@ func (s *Server) exchangeEnrollment(w http.ResponseWriter, r *http.Request) {
 	}
 	targetID := discovery.StableID(orgID, targetKind, targetKey)
 	publicKey, _ := base64.RawURLEncoding.DecodeString(request.IdentityPublicKey)
-	err = tx.QueryRow(r.Context(), `INSERT INTO discovery_targets(organization_id,id,target_type,identity_fingerprint,identity_public_key,identity_quality,name,platform,architecture)
-		VALUES($1,$2,$3,$4,$5,'persistent',$6,$7,$8)
+	err = tx.QueryRow(r.Context(), `INSERT INTO discovery_targets(organization_id,id,target_type,identity_fingerprint,identity_public_key,identity_quality,name,platform,architecture,reporting_mode,evidence_expires_at)
+		VALUES($1,$2,$3,$4,$5,'persistent',$6,$7,$8,$9,NULL)
 		ON CONFLICT(organization_id,identity_fingerprint) WHERE identity_fingerprint IS NOT NULL
-		DO UPDATE SET name=EXCLUDED.name,platform=EXCLUDED.platform,architecture=EXCLUDED.architecture,current=true
-		RETURNING id`, orgID, targetID, sourceType, fingerprint, publicKey, displayName, request.Platform, request.Architecture).Scan(&targetID)
+		DO UPDATE SET name=EXCLUDED.name,platform=EXCLUDED.platform,architecture=EXCLUDED.architecture,current=true,reporting_mode=EXCLUDED.reporting_mode,evidence_expires_at=CASE WHEN EXCLUDED.reporting_mode='continuous' THEN NULL ELSE discovery_targets.evidence_expires_at END
+		RETURNING id`, orgID, targetID, sourceType, fingerprint, publicKey, displayName, request.Platform, request.Architecture, enrollmentMode).Scan(&targetID)
 	if err != nil {
 		writeError(w, 500, "database_error", "Could not create discovery target")
 		return
 	}
 	var sourceID string
 	var lastSequence uint64
+	var previousMode string
 	reenrollment := false
-	err = tx.QueryRow(r.Context(), `SELECT id,last_sequence FROM sources WHERE organization_id=$1 AND target_id=$2 AND source_type=$3 AND revoked_at IS NULL FOR UPDATE`, orgID, targetID, sourceType).Scan(&sourceID, &lastSequence)
+	err = tx.QueryRow(r.Context(), `SELECT id,last_sequence,reporting_mode FROM sources WHERE organization_id=$1 AND target_id=$2 AND source_type=$3 AND revoked_at IS NULL FOR UPDATE`, orgID, targetID, sourceType).Scan(&sourceID, &lastSequence, &previousMode)
+	if err == nil && previousMode == "continuous" && enrollmentMode == "quick_scan" {
+		rejectEnrollment(http.StatusConflict, "continuous_monitoring_active", "This installation already has continuous monitoring enabled", "continuous_monitoring_active")
+		return
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		sourceUUID, idErr := uuid.NewV7()
 		if idErr != nil {
 			sourceUUID = uuid.New()
 		}
 		sourceID = "source:" + sourceUUID.String()
-		_, err = tx.Exec(r.Context(), `INSERT INTO sources(organization_id,id,target_id,source_type,name,platform,architecture,collector_version) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, orgID, sourceID, targetID, sourceType, displayName, request.Platform, request.Architecture, request.CollectorVersion)
+		_, err = tx.Exec(r.Context(), `INSERT INTO sources(organization_id,id,target_id,source_type,name,platform,architecture,collector_version,reporting_mode,quick_scan_started_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,CASE WHEN $9='quick_scan' THEN now() ELSE NULL END)`, orgID, sourceID, targetID, sourceType, displayName, request.Platform, request.Architecture, request.CollectorVersion, enrollmentMode)
 	} else if err == nil {
 		reenrollment = true
-		_, err = tx.Exec(r.Context(), `UPDATE sources SET name=$4,platform=$5,architecture=$6,collector_version=$7 WHERE organization_id=$1 AND id=$2 AND target_id=$3`, orgID, sourceID, targetID, displayName, request.Platform, request.Architecture, request.CollectorVersion)
+		_, err = tx.Exec(r.Context(), `UPDATE sources SET name=$4,platform=$5,architecture=$6,collector_version=$7,reporting_mode=$8,evidence_expires_at=CASE WHEN $8='continuous' THEN NULL ELSE evidence_expires_at END,quick_scan_started_at=CASE WHEN $8='quick_scan' THEN now() ELSE quick_scan_started_at END WHERE organization_id=$1 AND id=$2 AND target_id=$3`, orgID, sourceID, targetID, displayName, request.Platform, request.Architecture, request.CollectorVersion, enrollmentMode)
 		if err == nil {
 			_, err = tx.Exec(r.Context(), `DELETE FROM collector_refresh_tokens WHERE organization_id=$1 AND source_id=$2`, orgID, sourceID)
 		}
@@ -551,7 +570,7 @@ func (s *Server) exchangeEnrollment(w http.ResponseWriter, r *http.Request) {
 				disconnected_at=now(),purge_after=now()+interval '90 days',updated_at=now()
 			WHERE organization_id=$1 AND source_id=$2 AND id<>$3`, orgID, sourceID, setupEnvironmentID)
 		if err == nil {
-			_, err = tx.Exec(r.Context(), `UPDATE environment_connections SET external_id=COALESCE(NULLIF(external_id,''),$3),display_name=COALESCE(NULLIF(display_name,''),$4),connection_status='connected',target_id=$5,source_id=$6,verified_at=now(),last_error_code=NULL,last_error_message=NULL,updated_at=now() WHERE organization_id=$1 AND id=$2`, orgID, setupEnvironmentID, targetIdentity, displayName, targetID, sourceID)
+			_, err = tx.Exec(r.Context(), `UPDATE environment_connections SET external_id=COALESCE(NULLIF(external_id,''),$3),display_name=COALESCE(NULLIF(display_name,''),$4),connection_status='connected',target_id=$5,source_id=$6,monitoring_mode=$7,verified_at=now(),last_error_code=NULL,last_error_message=NULL,updated_at=now() WHERE organization_id=$1 AND id=$2`, orgID, setupEnvironmentID, targetIdentity, displayName, targetID, sourceID, enrollmentMode)
 		}
 		if err == nil {
 			_, err = tx.Exec(r.Context(), `UPDATE connector_setup_sessions SET state='consumed',consumed_at=now() WHERE organization_id=$1 AND environment_id=$2 AND state='pending'`, orgID, setupEnvironmentID)
@@ -597,15 +616,27 @@ func (s *Server) exchangeEnrollment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	scopes := []string{"discovery:write", "jobs:read"}
-	refresh, err := randomToken(32)
-	if err != nil {
-		writeError(w, 500, "internal_error", "Could not issue credentials")
-		return
+	refresh := ""
+	if enrollmentMode == "continuous" {
+		refresh, err = randomToken(32)
+		if err != nil {
+			writeError(w, 500, "internal_error", "Could not issue credentials")
+			return
+		}
+		_, err = tx.Exec(r.Context(), `INSERT INTO collector_refresh_tokens(token_hash,organization_id,source_id,scopes,expires_at) VALUES($1,$2,$3,$4,$5)`, tokenHash(refresh), orgID, sourceID, scopes, time.Now().UTC().Add(90*24*time.Hour))
+		if err != nil {
+			writeError(w, 500, "database_error", "Could not issue credentials")
+			return
+		}
 	}
-	_, err = tx.Exec(r.Context(), `INSERT INTO collector_refresh_tokens(token_hash,organization_id,source_id,scopes,expires_at) VALUES($1,$2,$3,$4,$5)`, tokenHash(refresh), orgID, sourceID, scopes, time.Now().UTC().Add(90*24*time.Hour))
-	if err != nil {
-		writeError(w, 500, "database_error", "Could not issue credentials")
-		return
+	if enrollmentMode == "quick_scan" {
+		if analyticsErr := recordProductEvent(r.Context(), tx, s.config.ProductAnalytics, ProductEvent{OrganizationID: orgID, Name: "quick_scan_started", Properties: map[string]any{}, DedupeKey: sourceID}); analyticsErr != nil {
+			s.config.Logger.Warn("analytics event was not recorded", "event", "quick_scan_started", "error", analyticsErr)
+		}
+	} else if previousMode == "quick_scan" {
+		if analyticsErr := recordProductEvent(r.Context(), tx, s.config.ProductAnalytics, ProductEvent{OrganizationID: orgID, Name: "quick_scan_converted", Properties: map[string]any{}, DedupeKey: sourceID}); analyticsErr != nil {
+			s.config.Logger.Warn("analytics event was not recorded", "event", "quick_scan_converted", "error", analyticsErr)
+		}
 	}
 	if setupErr == nil {
 		if analyticsErr := recordProductEvent(r.Context(), tx, s.config.ProductAnalytics, ProductEvent{OrganizationID: orgID, Name: "environment_enrolled", Properties: map[string]any{"connection_type": connectionType(setupKind, sourceType), "lifecycle_phase": "enrolled"}, DedupeKey: setupEnvironmentID.String()}); analyticsErr != nil {
@@ -698,8 +729,9 @@ func (s *Server) submitSnapshot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var revokedAt *time.Time
-	var expectedSourceType, expectedTargetID string
-	if err := s.db(r.Context()).QueryRow(r.Context(), `SELECT source_type,target_id,revoked_at FROM sources WHERE organization_id=$1 AND id=$2`, snapshot.OrganizationID, snapshot.SourceID).Scan(&expectedSourceType, &expectedTargetID, &revokedAt); err != nil || revokedAt != nil {
+	var expectedSourceType, expectedTargetID, reportingMode string
+	var lastSequence uint64
+	if err := s.db(r.Context()).QueryRow(r.Context(), `SELECT source_type,target_id,revoked_at,reporting_mode,last_sequence FROM sources WHERE organization_id=$1 AND id=$2`, snapshot.OrganizationID, snapshot.SourceID).Scan(&expectedSourceType, &expectedTargetID, &revokedAt, &reportingMode, &lastSequence); err != nil || revokedAt != nil {
 		writeError(w, 403, "source_revoked", "The discovery source is unknown or revoked")
 		return
 	}
@@ -709,6 +741,30 @@ func (s *Server) submitSnapshot(w http.ResponseWriter, r *http.Request) {
 	}
 	if expectedTargetID != snapshot.TargetID {
 		writeError(w, 403, "target_mismatch", "Snapshot target must match the enrolled discovery target")
+		return
+	}
+	if reportingMode == "quick_scan" {
+		if snapshot.Collector.Mode != "quick_scan" {
+			writeError(w, 403, "collector_mode_mismatch", "Quick Scan credentials accept only a one-shot snapshot")
+			return
+		}
+		if lastSequence > 0 {
+			var existingID uuid.UUID
+			var existingStatus string
+			existingErr := s.db(r.Context()).QueryRow(r.Context(), `SELECT id,status FROM ingestion_jobs WHERE organization_id=$1 AND snapshot_id=$2 AND source_id=$3`, snapshot.OrganizationID, snapshot.SnapshotID, snapshot.SourceID).Scan(&existingID, &existingStatus)
+			if existingErr == nil {
+				writeJSON(w, http.StatusAccepted, map[string]any{"id": existingID, "status": existingStatus})
+				return
+			}
+			if !errors.Is(existingErr, pgx.ErrNoRows) {
+				writeError(w, http.StatusServiceUnavailable, "database_unavailable", "Could not inspect the Quick Scan state")
+				return
+			}
+			writeError(w, 409, "quick_scan_complete", "This one-shot enrollment has already uploaded its snapshot")
+			return
+		}
+	} else if snapshot.Collector.Mode == "quick_scan" {
+		writeError(w, 403, "collector_mode_mismatch", "Continuous collector credentials cannot submit Quick Scan snapshots")
 		return
 	}
 	payload, err := json.Marshal(snapshot)
@@ -757,6 +813,44 @@ func (s *Server) submitSnapshot(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	writeJSON(w, http.StatusAccepted, map[string]any{"id": id, "status": status})
+}
+
+func (s *Server) reportQuickScanFailure(w http.ResponseWriter, r *http.Request) {
+	principal, err := requireScope(r, "discovery:write")
+	if err != nil || principal.SourceID == "" {
+		writeError(w, http.StatusForbidden, "forbidden", "Quick Scan collector access is required")
+		return
+	}
+	var request struct {
+		Failure string `json:"failure"`
+	}
+	if err := decodeJSON(w, r, &request, 8<<10); err != nil {
+		return
+	}
+	if request.Failure != "discovery" && request.Failure != "upload" && request.Failure != "interrupted" {
+		writeError(w, http.StatusBadRequest, "invalid_failure", "Quick Scan failure must be discovery, upload, or interrupted")
+		return
+	}
+	var reportingMode string
+	var startedAt *time.Time
+	if err = s.db(r.Context()).QueryRow(r.Context(), `SELECT reporting_mode,quick_scan_started_at FROM sources WHERE organization_id=$1 AND id=$2 AND revoked_at IS NULL`, principal.OrganizationID, principal.SourceID).Scan(&reportingMode, &startedAt); err != nil || reportingMode != "quick_scan" {
+		writeError(w, http.StatusConflict, "not_quick_scan", "The collector is not an active Quick Scan")
+		return
+	}
+	properties := map[string]any{"failure": request.Failure}
+	if startedAt != nil {
+		properties["duration_ms"] = time.Since(*startedAt).Milliseconds()
+	}
+	if err = recordProductEvent(r.Context(), s.db(r.Context()), s.config.ProductAnalytics, ProductEvent{OrganizationID: principal.OrganizationID, Name: "quick_scan_failed", Properties: properties, DedupeKey: principal.SourceID}); err != nil {
+		writeError(w, http.StatusInternalServerError, "analytics_error", "Could not record the Quick Scan failure")
+		return
+	}
+	safeMessage := map[string]string{"discovery": "Quick Scan could not complete local discovery", "upload": "Quick Scan could not upload its snapshot", "interrupted": "Quick Scan was interrupted before completion"}[request.Failure]
+	if _, err = s.db(r.Context()).Exec(r.Context(), `UPDATE environment_connections SET last_result_at=now(),last_result_status='failed',last_error_code=$3,last_error_message=$4,updated_at=now() WHERE organization_id=$1 AND source_id=$2 AND monitoring_mode='quick_scan'`, principal.OrganizationID, principal.SourceID, "quick_scan_"+request.Failure, safeMessage); err != nil {
+		writeError(w, http.StatusInternalServerError, "database_error", "Could not update the Quick Scan lifecycle")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) revokeSource(w http.ResponseWriter, r *http.Request) {
