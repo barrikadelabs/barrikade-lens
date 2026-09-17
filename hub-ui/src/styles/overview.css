@@ -1,0 +1,66 @@
+/* Overview */
+.window-switch { display: flex; width: max-content; margin-left: auto; padding: 3px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface-soft); }
+.window-switch button { padding: 5px 9px; border: 0; border-radius: 5px; color: var(--text-3); background: none; font: 700 8px var(--mono); }
+.window-switch button.active { color: white; background: rgba(255,255,255,.08); }
+.executive-strip { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 10px; }
+.metric { display: grid; min-width: 0; padding: 16px; grid-template-columns: 36px 1fr; gap: 11px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-soft); }
+.metric > i { display: grid; width: 36px; height: 36px; place-items: center; border: 1px solid var(--line); border-radius: 8px; color: var(--text-3); background: rgba(255,255,255,.025); }
+.metric.accent > i { border-color: rgba(255,107,0,.25); color: var(--orange); background: var(--orange-soft); }
+.metric > span { display: grid; min-width: 0; grid-template-columns: 1fr auto; align-items: baseline; }
+.metric small { grid-column: 1/-1; color: var(--text-3); font-size: 9px; }
+.metric b { margin-top: 3px; font-size: 28px; line-height: 1; letter-spacing: -.045em; }
+.metric p { grid-column: 1/-1; margin: 5px 0 0; overflow: hidden; color: var(--text-4); font: 8px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
+.coverage-cards { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; }
+.coverage-card { display: grid; min-width: 0; padding: 15px; grid-template-columns: 38px 1fr auto; gap: 11px; align-items: center; border: 1px solid var(--line); border-radius: 10px; color: white; text-align: left; background: var(--surface-soft); }
+button.coverage-card:hover, .coverage-card.active { border-color: rgba(255,107,0,.28); background: rgba(255,107,0,.055); }
+.coverage-icon { display: grid; width: 38px; height: 38px; place-items: center; border-radius: 8px; color: var(--orange); background: var(--orange-soft); }
+.coverage-card > div:nth-child(2) { display: grid; grid-template-columns: auto 1fr; gap: 2px 7px; align-items: baseline; }
+.coverage-card p { grid-column: 1/-1; margin: 0; color: var(--text-3); font-size: 9px; }
+.coverage-card strong { font: 700 25px var(--mono); }
+.coverage-card > div:nth-child(2) > span { color: var(--text-4); font-size: 8px; }
+.coverage-facts { display: grid; gap: 4px; }
+.coverage-facts small { display: flex; align-items: center; gap: 5px; color: var(--text-3); font: 8px var(--mono); }
+.coverage-facts i { width: 5px; height: 5px; border-radius: 50%; background: var(--text-4); }
+.coverage-facts i.fresh { background: var(--green); }
+.coverage-facts i.stale, .coverage-facts i.partial { background: var(--amber); }
+.overview-layout { display: grid; grid-template-columns: minmax(0,1.1fr) minmax(320px,.9fr); gap: 15px; }
+.state-panel, .change-panel { grid-column: 1; }
+.attention-panel, .quality-panel { grid-column: 2; }
+.attention-panel { grid-row: 1/3; }
+.state-bar { display: flex; height: 9px; margin-bottom: 16px; overflow: hidden; border-radius: 10px; background: rgba(255,255,255,.05); }
+.state-bar i.running, .state-legend i.running { background: var(--green); }
+.state-bar i.deployed, .state-legend i.deployed { background: #6edab5; }
+.state-bar i.defined, .state-legend i.defined { background: var(--blue); }
+.state-bar i.configured, .state-legend i.configured { background: var(--purple); }
+.state-bar i.installed, .state-legend i.installed { background: #7d8cff; }
+.state-bar i.residual, .state-legend i.residual { background: var(--amber); }
+.state-bar i.cached, .state-legend i.cached { background: #c58d58; }
+.state-bar i.observed, .state-legend i.observed { background: var(--text-4); }
+.state-legend { display: grid; grid-template-columns: repeat(4,1fr); gap: 6px 15px; }
+.state-legend > div { display: grid; padding: 7px 0; grid-template-columns: 1fr auto; gap: 2px 8px; border-top: 1px solid var(--line-soft); }
+.state-legend span { display: flex; align-items: center; gap: 6px; color: var(--text-3); font-size: 9px; }
+.state-legend span i { width: 6px; height: 6px; border-radius: 2px; }
+.state-legend b { font: 700 11px var(--mono); }
+.state-legend small { grid-column: 1/-1; color: var(--text-4); font: 8px var(--mono); }
+.attention-list { display: grid; }
+.attention-list button { display: grid; padding: 9px 1px; grid-template-columns: 31px 1fr auto; gap: 9px; align-items: center; border: 0; border-top: 1px solid var(--line-soft); color: var(--text-4); text-align: left; background: none; }
+.attention-list button:hover { color: white; }
+.attention-list button > span:nth-child(2) { display: grid; gap: 2px; }
+.attention-list b { color: var(--text-2); font-size: 9px; }
+.attention-list small { color: var(--text-4); font-size: 8px; }
+.attention-count { display: grid; width: 28px; height: 28px; place-items: center; border: 1px solid var(--line); border-radius: 7px; color: var(--text-4); font: 700 10px var(--mono); }
+.attention-count.active { border-color: rgba(255,181,70,.23); color: var(--amber); background: rgba(255,181,70,.08); }
+.confidence { display: grid; gap: 5px; }
+.confidence-bar { display: flex; height: 7px; margin-bottom: 7px; overflow: hidden; border-radius: 8px; background: rgba(255,255,255,.05); }
+.confidence-bar i.confirmed, .confidence span i.confirmed { background: var(--green); }
+.confidence-bar i.likely, .confidence span i.likely { background: var(--blue); }
+.confidence-bar i.possible, .confidence span i.possible { background: var(--amber); }
+.confidence > div:not(.confidence-bar) { display: flex; padding: 5px 0; justify-content: space-between; }
+.confidence > div span { display: flex; align-items: center; gap: 7px; }
+.confidence > div span i { width: 6px; height: 6px; border-radius: 2px; }
+.confidence b { color: var(--text-3); font-size: 9px; }
+.confidence strong { font: 700 11px var(--mono); }
+.quality-notes { display: grid; gap: 8px; margin-top: 15px; padding-top: 13px; border-top: 1px solid var(--line-soft); }
+.quality-notes p { display: flex; margin: 0; gap: 8px; color: var(--orange); }
+.quality-notes p span { display: grid; gap: 2px; color: var(--text-4); font-size: 8px; line-height: 1.45; }
+.quality-notes p b { color: var(--text-2); }
