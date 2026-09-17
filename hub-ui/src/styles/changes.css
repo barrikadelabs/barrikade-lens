@@ -1,0 +1,21 @@
+/* Changes */
+.change-log { padding-bottom: 10px; }
+.change-list { display: grid; }
+.change-list article { display: grid; padding: 10px 2px; grid-template-columns: 29px 1fr; gap: 10px; border-top: 1px solid var(--line-soft); }
+.change-mark { display: grid; width: 27px; height: 27px; place-items: center; border: 1px solid var(--line); border-radius: 7px; color: var(--text-3); }
+.change-mark.state { color: var(--green); background: var(--green-soft); }
+.change-mark.network_scope { color: var(--amber); background: rgba(255,181,70,.08); }
+.change-mark.capability { color: var(--purple); background: var(--purple-soft); }
+.change-mark.confidence { color: var(--blue); background: var(--blue-soft); }
+.change-list article > div > p { display: flex; margin: 0 0 3px; align-items: center; gap: 7px; }
+.change-list article p b { font-size: 9px; }
+.category-pill { padding: 3px 5px; border: 1px solid var(--line); border-radius: 4px; color: var(--text-4); font: 700 6px var(--mono); text-transform: uppercase; }
+.change-list h3 { margin: 0 0 3px; color: var(--text-2); font-size: 10px; font-weight: 550; }
+.change-list article small { color: var(--text-4); font: 7px var(--mono); }
+.change-list.expanded article { padding: 14px 2px; }
+.change-list.expanded h3 { font-size: 12px; }
+.field-diffs { display: grid; gap: 4px; margin-top: 8px; }
+.field-diffs span { display: grid; max-width: 740px; grid-template-columns: 120px 1fr 14px 1fr; gap: 7px; align-items: center; color: var(--text-4); font-size: 8px; }
+.field-diffs code { color: var(--text-3); }
+.field-diffs i { overflow: hidden; font-style: normal; text-overflow: ellipsis; white-space: nowrap; }
+.field-diffs b { overflow: hidden; color: var(--text-2); text-overflow: ellipsis; white-space: nowrap; }

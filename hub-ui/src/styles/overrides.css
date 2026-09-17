@@ -1,0 +1,25 @@
+/* Final executive readability overrides */
+.button { min-height: 42px; font-size: .875rem; }
+.text-button { font-size: .875rem; }
+.main-nav button { min-height: 48px; }
+.main-nav button b { font-size: .875rem; }
+.sidebar-footer button { min-height: 36px; font-size: .8rem; }
+.page-heading > div > p:last-child { font-size: 1rem; }
+.eyebrow { font-size: .75rem; }
+.panel-heading h2 { font-size: 1.125rem; }
+.panel-heading p { font-size: .875rem; }
+.exposure-copy > span,.executive-fact span,.mix-heading span { font-size: .875rem; }
+.exposure-copy p { font-size: 1rem; }
+.mix-heading small,.system-breakdown button small,.running-list small,.attention-list small,.coverage-summary-row small,.change-list article small { font-size: .75rem; }
+.running-list b,.running-list strong,.attention-list b,.coverage-summary-row b,.change-list article p b,.change-list h3 { font-size: .875rem; }
+.select span,.table-head,.identity small,.stacked small,.observed,.type-pill,.kind-label,.state-pill,.confidence-pill,.freshness { font-size: .75rem !important; }
+.select select,.search input,.table-summary,.system-row,.target-row,.identity b,.stacked b { font-size: .875rem; }
+.environment-summary p:last-child,.environment-wizard > header > p:last-child { font-size: .875rem; }
+.environment-card-copy b { font-size: 1rem; }
+.environment-card-copy small,.environment-card-copy p,.setup-requirements,.setup-expiry,.handoff-result p,.handoff-result small { font-size: .8rem; }
+.connection-status { font-size: .75rem; }
+.environment-catalog b,.setup-read h3,.wizard-boundary b { font-size: .875rem; }
+.environment-catalog small,.setup-read span,.wizard-boundary span { font-size: .8rem; }
+.finding-row > span:nth-child(2) b { font-size: 1rem; }
+.finding-row small,.severity-pill { font-size: .75rem; }
+.coverage-limitation,.settings-panel > p,.public-install-card > p:not(.eyebrow),.finding-detail > p,.finding-detail dd,.finding-detail .next-step p { font-size: .875rem; }

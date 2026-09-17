@@ -1,0 +1,68 @@
+/* CISO-first executive posture */
+.main-nav button small, .nav-heading { display: none; }
+.main-nav button { min-height: 44px; border: 0; border-radius: 5px; }
+.main-nav button b { font-size: 12px; }
+.page-heading h1 { font-size: clamp(31px,3.4vw,46px); letter-spacing: -.045em; }
+.page-heading > div > p:last-child { max-width: 760px; font-size: 13px; }
+.executive-overview { gap: 17px; }
+.exposure-hero { min-height: 245px; padding: 34px 38px; display: grid; grid-template-columns: minmax(0,1.3fr) minmax(390px,.7fr); align-items: center; gap: 40px; border: 1px solid var(--line); border-radius: 10px; background: radial-gradient(circle at 12% 12%,rgba(255,107,0,.09),transparent 35%),linear-gradient(145deg,rgba(255,255,255,.025),transparent 55%),#121212; box-shadow: 0 18px 55px rgba(0,0,0,.14); }
+.exposure-copy > span { color: var(--text-3); font-size: 11px; font-weight: 650; }
+.exposure-copy h2 { max-width: 760px; margin: 16px 0 14px; color: white; font-size: clamp(32px,3.7vw,52px); line-height: 1.02; letter-spacing: -.055em; }
+.exposure-copy h2 strong { color: var(--orange); font-weight: 650; }
+.exposure-copy p { max-width: 700px; margin: 0; color: var(--text-3); font-size: 14px; line-height: 1.65; }
+.enrollment-scope { margin-top: 22px; display: flex; flex-wrap: wrap; gap: 9px 20px; color: var(--text-4); font-size: 10px; }
+.enrollment-scope span { position: relative; }
+.enrollment-scope span + span::before { content: ""; position: absolute; top: 50%; left: -11px; width: 2px; height: 2px; border-radius: 50%; background: var(--text-4); }
+.enrollment-scope b { margin-right: 4px; color: var(--text-2); font-weight: 600; }
+.exposure-facts { display: grid; grid-template-columns: repeat(2,1fr); border-top: 1px solid var(--line-soft); border-left: 1px solid var(--line-soft); }
+.executive-fact { min-height: 103px; padding: 18px; display: flex; flex-direction: column; align-items: flex-start; justify-content: flex-end; gap: 8px; border: 0; border-right: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); background: transparent; text-align: left; cursor: pointer; }
+.executive-fact:hover, .executive-fact:focus-visible { background: rgba(255,255,255,.025); }
+.executive-fact strong { color: white; font-size: 34px; line-height: 1; letter-spacing: -.04em; }
+.executive-fact span { color: var(--text-3); font-size: 11px; }
+.executive-fact.active strong, .executive-fact.good strong { color: var(--green); }
+.executive-fact.attention strong { color: var(--amber); }
+.system-mix-strip { min-height: 92px; display: grid; grid-template-columns: minmax(205px,.55fr) minmax(0,1.45fr); align-items: stretch; overflow: hidden; border: 1px solid var(--line); border-radius: 10px; background: linear-gradient(90deg,rgba(255,107,0,.035),transparent 28%),var(--surface-soft); }
+.mix-heading { padding: 20px 22px; display: flex; flex-direction: column; justify-content: center; gap: 7px; border-right: 1px solid var(--line-soft); }
+.mix-heading span { color: var(--text-1); font-size: 13px; font-weight: 650; }
+.mix-heading small { color: var(--text-4); font-size: 9px; line-height: 1.4; }
+.system-mix-strip .system-breakdown { border-left: 0; }
+.system-mix-strip .system-breakdown button { padding-inline: 22px; }
+.system-mix-strip .system-breakdown button > svg { width: 33px; height: 33px; padding: 8px; border-radius: 8px; background: var(--orange-soft); }
+.executive-primary, .executive-secondary { display: grid; grid-template-columns: minmax(0,1.18fr) minmax(350px,.82fr); gap: 17px; }
+.executive-primary > .panel { min-height: 344px; }
+.panel-heading { padding: 20px 22px 17px; }
+.panel-heading h2 { font-size: 17px; }
+.panel-heading > div > p:last-child { font-size: 11px; }
+.running-list button { width: 100%; min-height: 65px; padding: 10px 20px; display: grid; grid-template-columns: 30px minmax(0,1fr) auto 14px; align-items: center; gap: 12px; border: 0; border-top: 1px solid var(--line-soft); color: inherit; background: transparent; text-align: left; cursor: pointer; }
+.running-list button:hover { background: var(--surface-hover); }
+.running-mark { width: 29px; height: 29px; display: grid; place-items: center; border-radius: 50%; color: var(--green); background: rgba(55,211,124,.09); }
+.running-list button > span:nth-child(2), .running-list button > span:nth-child(3) { min-width: 0; display: grid; gap: 5px; }
+.running-list button > span:nth-child(3) { text-align: right; }
+.running-list b, .running-list strong { overflow: hidden; color: var(--text-1); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.running-list small { color: var(--text-4); font-size: 10px; }
+.running-list button > svg { color: var(--text-4); }
+.executive-overview .attention-list button { min-height: 64px; padding: 10px 18px; }
+.executive-overview .attention-list b { font-size: 12px; }
+.executive-overview .attention-list small { font-size: 10px; line-height: 1.4; }
+.executive-overview .attention-count { color: var(--amber); background: rgba(255,181,70,.08); }
+.executive-secondary .change-list article { min-height: 70px; padding: 12px 20px; }
+.executive-secondary .change-list article p b, .executive-secondary .change-list h3 { font-size: 12px; }
+.executive-secondary .change-list article small { font-size: 10px; }
+.evidence-posture .state-distribution { padding: 8px 22px 19px; }
+.evidence-posture .confidence-summary { margin: 0; padding: 17px 22px; border-top: 1px solid var(--line-soft); }
+
+@media (max-width: 1180px) {
+  .exposure-hero { grid-template-columns: 1fr; }
+  .exposure-facts { max-width: 620px; }
+  .system-mix-strip { grid-template-columns: 1fr; }
+  .mix-heading { border-right: 0; border-bottom: 1px solid var(--line-soft); }
+  .executive-primary, .executive-secondary { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 600px) {
+  .exposure-hero { padding: 28px 23px; }
+  .exposure-facts { grid-template-columns: repeat(2,1fr); }
+  .system-breakdown { grid-template-columns: 1fr; }
+  .running-list button { grid-template-columns: 30px minmax(0,1fr) 14px; }
+  .running-list button > span:nth-child(3) { display: none; }
+}
