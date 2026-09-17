@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { AlertCircle, ArrowRight, Bot, BrainCircuit, CheckCircle2, ChevronRight, CircleDot, TerminalSquare } from "lucide-react";
 import { API, type ProductItem } from "../../api";
@@ -15,6 +15,13 @@ export function OverviewPage({ api, revision, go }: { api: API; revision: number
   const window = search.get("window") || "7d";
   const overview = useRemote(() => api.overview(window), [api, revision, window]);
   const products = useRemote(() => api.products(), [api, revision]);
+  const trackedFirstResults = useRef(false);
+  useEffect(() => {
+    const coverageState = overview.data?.executive_summary?.coverage_state;
+    if (trackedFirstResults.current || !coverageState || !["ready", "partial", "stale"].includes(coverageState)) return;
+    trackedFirstResults.current = true;
+    captureAnalytics({ name: "first_results_viewed", properties: {} });
+  }, [overview.data?.executive_summary?.coverage_state]);
   if (overview.loading || products.loading) return <Loading />;
   if (overview.error || products.error || !overview.data) return <Failure error={overview.error || products.error} retry={() => { overview.reload(); products.reload(); }} />;
   const data = overview.data;
@@ -37,7 +44,7 @@ export function OverviewPage({ api, revision, go }: { api: API; revision: number
 
   return <div className="page-stack executive-overview">
     <div className="overview-toolbar"><span>Updated {relative(data.generated_at)}</span><div className="window-switch">{["24h", "7d", "30d"].map((item) => <button className={window === item ? "active" : ""} onClick={() => { captureAnalytics({ name: "lens_interaction", properties: { surface: "overview", interaction: "filter_changed", control: "window" } }); const next = new URLSearchParams(search); item === "7d" ? next.delete("window") : next.set("window", item); setSearch(next, { replace: true }); }} key={item}>{item}</button>)}</div></div>
-    {data.executive_summary?.coverage_state === "unassessed" && <section className="panel unassessed-state"><div><p className="eyebrow">START HERE</p><h2>Your organization is unassessed</h2><p>Install the read-only endpoint collector here, or create a 24-hour handoff for IT. Results appear after normalization completes.</p></div><button className="button primary" onClick={() => go("Connections")}>Connect endpoint <ArrowRight size={15} /></button></section>}
+    {data.executive_summary?.coverage_state === "unassessed" && <section className="panel unassessed-state"><div><p className="eyebrow">START HERE</p><h2>Let’s map your AI environment</h2><p>Connect the places where AI might be running. Start with code, employee devices, or infrastructure and Lens will turn read-only evidence into an organization-wide inventory.</p></div><button className="button primary" onClick={() => location.assign("/connections/new")}>Start scan <ArrowRight size={15} /></button></section>}
     {data.executive_summary?.coverage_state === "ready" && data.executive_summary.systems.known === 0 && <section className="panel successful-empty"><CheckCircle2 size={18} /><div><h2>No AI systems found in the checked scope</h2><p>Lens completed the latest endpoint scan {data.executive_summary.last_successful_evidence_at ? relative(data.executive_summary.last_successful_evidence_at) : "recently"}. Open Connections to review the reporting endpoint and coverage.</p></div></section>}
     {data.executive_summary && data.executive_summary.coverage_state !== "ready" && <section className={`coverage-limitation ${data.executive_summary.coverage_state}`} role="status"><AlertCircle size={16} /><span><b>{pretty(data.executive_summary.coverage_state)} coverage.</b> Executive conclusions include retained evidence and show its age. Last successful evidence {data.executive_summary.last_successful_evidence_at ? relative(data.executive_summary.last_successful_evidence_at) : "has not arrived yet"}.</span></section>}
     <section className="exposure-hero">
