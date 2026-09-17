@@ -70,6 +70,65 @@ paths:
     post: {security: [], operationId: rotateCollectorToken, requestBody: {required: true, content: {application/json: {schema: {type: object, additionalProperties: false, required: [refresh_token], properties: {refresh_token: {type: string}}}}}}, responses: {'200': {description: Rotated access and refresh credentials}}}
   /v1/admin/enrollment-codes:
     post: {operationId: createEnrollmentCode, requestBody: {content: {application/json: {schema: {type: object, additionalProperties: false, properties: {expires_in_seconds: {type: integer, minimum: 60, maximum: 86400, default: 600}, uses: {type: integer, minimum: 1, maximum: 10000, default: 1}, source_type: {enum: [endpoint, repository, kubernetes], default: endpoint}}}}}}, responses: {'201': {description: Expiring use-limited enrollment code with the configured public Hub URL and exact collector version}}}
+  /v1/deployment-policies:
+    get:
+      operationId: listDeploymentPolicies
+      description: Lists organization-owned deployment policies with safe enrollment counts. Requires owner or administrator access.
+      responses:
+        '200':
+          description: Deployment policies in the active workspace
+          content: {application/json: {schema: {type: object, required: [policies], properties: {policies: {type: array, items: {$ref: '#/components/schemas/DeploymentPolicy'}}}}}}
+        '403': {description: Administrator access required}
+    post:
+      operationId: createDeploymentPolicy
+      description: Creates a durable policy; issue its display-once bootstrap credential separately.
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/DeploymentPolicyRequest'}}}}
+      responses:
+        '201': {description: Deployment policy created, content: {application/json: {schema: {$ref: '#/components/schemas/DeploymentPolicy'}}}}
+        '403': {description: Administrator access required}
+  /v1/deployment-policies/{id}:
+    get:
+      operationId: getDeploymentPolicy
+      parameters: [{$ref: '#/components/parameters/ID'}]
+      responses:
+        '200': {description: Policy and safe credential history without bootstrap values, content: {application/json: {schema: {$ref: '#/components/schemas/DeploymentPolicy'}}}}
+        '404': {description: Policy not found in the active workspace}
+    patch:
+      operationId: updateDeploymentPolicy
+      parameters: [{$ref: '#/components/parameters/ID'}]
+      requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/DeploymentPolicyUpdate'}}}}
+      responses:
+        '200': {description: Deployment policy updated, content: {application/json: {schema: {$ref: '#/components/schemas/DeploymentPolicy'}}}}
+        '409': {description: Revoked policies cannot be updated}
+    delete:
+      operationId: revokeDeploymentPolicy
+      description: Revokes the policy and its bootstrap credentials without revoking enrolled devices.
+      parameters: [{$ref: '#/components/parameters/ID'}]
+      responses: {'204': {description: Policy and active bootstrap credentials revoked}, '404': {description: Active policy not found}}
+  /v1/deployment-policies/{id}/enrollment-credentials:
+    post:
+      operationId: rotateDeploymentPolicyCredential
+      description: Revokes existing policy bootstrap credentials and returns a new display-once value. Only its hash is retained.
+      parameters: [{$ref: '#/components/parameters/ID'}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                expires_in_seconds: {type: integer, minimum: 60, maximum: 2592000}
+                max_enrollments: {type: integer, minimum: 1, maximum: 100000}
+      responses:
+        '201': {description: Display-once policy bootstrap credential, content: {application/json: {schema: {$ref: '#/components/schemas/DeploymentCredentialCreation'}}}}
+        '409': {description: Revoked policies cannot issue credentials}
+  /v1/deployment-policies/{id}/enrollment-credentials/{credentialId}:
+    delete:
+      operationId: revokeDeploymentPolicyCredential
+      description: Prevents future bootstrap exchanges without revoking devices already enrolled by the policy.
+      parameters: [{$ref: '#/components/parameters/ID'}, {name: credentialId, in: path, required: true, schema: {type: string, format: uuid}}]
+      responses: {'204': {description: Enrollment credential revoked}, '404': {description: Active credential not found in the policy}}
   /v1/admin/sources/{id}:
     delete: {operationId: revokeDiscoverySource, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'204': {description: Source credentials revoked and its current observations removed}, '404': {description: Source not found}}}
   /v1/admin/coverage/baselines:
@@ -219,6 +278,77 @@ components:
       additionalProperties: false
       required: [code, platform, architecture, collector_version, identity_public_key, identity_proof]
       properties: {code: {type: string}, source_type: {enum: [endpoint, repository, kubernetes]}, hostname: {type: string}, target_identity: {type: string, description: Stable cluster UID or owner/repository identity for non-endpoint collectors}, display_name: {type: string}, platform: {type: string}, architecture: {type: string}, collector_version: {type: string}, identity_public_key: {type: string, description: Base64url-encoded Ed25519 public key}, identity_proof: {type: string, description: Ed25519 signature over the type-aware enrollment request}}
+    DeploymentPolicyRequest:
+      type: object
+      additionalProperties: false
+      required: [name]
+      properties:
+        name: {type: string, minLength: 1, maxLength: 128}
+        description: {type: string}
+        source_type: {enum: [endpoint, repository, kubernetes], default: endpoint}
+        discovery_depth: {enum: [basic, standard, deep], default: standard}
+        configuration: {type: object, additionalProperties: true, description: Non-secret discovery options; credential-like keys are rejected.}
+        expected_device_count: {type: [integer, 'null'], minimum: 0}
+        credential_expires_in_seconds: {type: integer, minimum: 60, maximum: 2592000, default: 86400}
+        max_enrollments: {type: integer, minimum: 1, maximum: 100000, default: 100}
+    DeploymentPolicyUpdate:
+      type: object
+      additionalProperties: false
+      properties:
+        name: {type: string, minLength: 1, maxLength: 128}
+        description: {type: string}
+        discovery_depth: {enum: [basic, standard, deep]}
+        configuration: {type: object, additionalProperties: true, description: Non-secret discovery options; credential-like keys are rejected.}
+        expected_device_count: {type: [integer, 'null'], minimum: 0}
+        credential_expires_in_seconds: {type: integer, minimum: 60, maximum: 2592000}
+        max_enrollments: {type: integer, minimum: 1, maximum: 100000}
+    DeploymentCredential:
+      type: object
+      additionalProperties: false
+      required: [id, status, expires_at, max_enrollments, enrolled_count, remaining_count, created_at]
+      properties:
+        id: {type: string, format: uuid}
+        status: {enum: [active, expired, exhausted, revoked]}
+        expires_at: {type: string, format: date-time}
+        max_enrollments: {type: integer, minimum: 1}
+        enrolled_count: {type: integer, minimum: 0}
+        remaining_count: {type: integer, minimum: 0}
+        created_by: {type: string}
+        created_at: {type: string, format: date-time}
+        revoked_at: {type: string, format: date-time}
+    DeploymentPolicy:
+      type: object
+      additionalProperties: false
+      required: [id, name, source_type, discovery_depth, configuration, expected_device_count, credential_expires_in_seconds, max_enrollments, status, enrolled_count, remaining_count, created_by, updated_by, created_at, updated_at]
+      properties:
+        id: {type: string, format: uuid}
+        name: {type: string}
+        description: {type: string}
+        source_type: {enum: [endpoint, repository, kubernetes]}
+        discovery_depth: {enum: [basic, standard, deep]}
+        configuration: {type: object, additionalProperties: true}
+        expected_device_count: {type: [integer, 'null'], minimum: 0}
+        credential_expires_in_seconds: {type: integer, minimum: 60}
+        max_enrollments: {type: integer, minimum: 1}
+        status: {enum: [active, revoked]}
+        enrolled_count: {type: integer, minimum: 0, description: Distinct targets enrolled by the policy.}
+        remaining_count: {type: integer, minimum: 0, description: 'Uses remaining across active, unexpired policy credentials.'}
+        created_by: {type: string}
+        updated_by: {type: string}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+        revoked_at: {type: string, format: date-time}
+        credentials: {type: array, items: {$ref: '#/components/schemas/DeploymentCredential'}}
+    DeploymentCredentialCreation:
+      type: object
+      additionalProperties: false
+      required: [credential, code, credential_displayed_once, hub_url, collector_version]
+      properties:
+        credential: {$ref: '#/components/schemas/DeploymentCredential'}
+        code: {type: string, description: Displayed once and never retained in plaintext.}
+        credential_displayed_once: {type: boolean, const: true}
+        hub_url: {type: string}
+        collector_version: {type: string}
     EnvironmentSetupRequest:
       type: object
       additionalProperties: false
