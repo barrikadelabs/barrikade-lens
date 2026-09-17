@@ -13,7 +13,7 @@ export const pageCopy: Record<Page, { eyebrow: string; title: string; detail: st
   Overview: { eyebrow: "DISCOVERY", title: "Organization AI posture", detail: "Evidence-backed visibility across connected cloud accounts, endpoints, repositories, and clusters." },
   Findings: { eyebrow: "ATTENTION", title: "Findings", detail: "Workspace-wide priorities ranked by severity, freshness, ownership, and latest observation." },
   Inventory: { eyebrow: "INVENTORY", title: "Organization inventory", detail: "Products grouped across the organization, with every endpoint installation and its evidence one level below." },
-  Connections: { eyebrow: "VISIBILITY", title: "Scan environment", detail: "Connect discovery sources, resume setup, and understand reporting coverage." },
+  Connections: { eyebrow: "VISIBILITY", title: "Connections", detail: "Connect endpoints, resume setup, and understand reporting coverage." },
   Changes: { eyebrow: "HISTORY", title: "Changes", detail: "Material inventory changes. Routine scan refreshes are suppressed." },
   Evidence: { eyebrow: "EVIDENCE", title: "Evidence graph", detail: "Trace a system to its capabilities, deployment surfaces, observed users, and sanitized evidence." },
   Settings: { eyebrow: "ACCOUNT", title: "Account settings", detail: "Manage your Lens identity and workspace lifecycle." },
