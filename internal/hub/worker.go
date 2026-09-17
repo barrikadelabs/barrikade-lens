@@ -109,6 +109,9 @@ func (w Worker) processOne(ctx context.Context) (bool, error) {
 			) INSERT INTO notification_outbox(id,organization_id,event_type,payload)
 			SELECT gen_random_uuid(),organization_id,'first_scan_completed',jsonb_build_object('environment_id',id,'status','failed') FROM updated ON CONFLICT DO NOTHING`, snapshot.OrganizationID, snapshot.SourceID, safeError(err))
 			_ = recordProductEvent(ctx, w.Pool, w.ProductAnalytics, ProductEvent{OrganizationID: snapshot.OrganizationID, Name: "scan_failed", Properties: map[string]any{"failure": failureCategory("normalization_failed"), "duration_ms": time.Since(processingStarted).Milliseconds(), "queue_ms": processingStarted.Sub(queuedAt).Milliseconds()}, DedupeKey: jobID.String()})
+			if snapshot.Collector.Mode == "quick_scan" {
+				_ = recordProductEvent(ctx, w.Pool, w.ProductAnalytics, ProductEvent{OrganizationID: snapshot.OrganizationID, Name: "quick_scan_failed", Properties: map[string]any{"failure": failureCategory("normalization_failed"), "duration_ms": time.Since(processingStarted).Milliseconds(), "queue_ms": processingStarted.Sub(queuedAt).Milliseconds()}, DedupeKey: jobID.String()})
+			}
 		}
 		return true, err
 	}
@@ -158,6 +161,19 @@ func recordSuccessfulScanAnalytics(ctx context.Context, parent pgx.Tx, config Pr
 	if err = recordProductEvent(ctx, tx, config, ProductEvent{OrganizationID: snapshot.OrganizationID, Name: "scan_completed", Properties: properties, DedupeKey: jobID.String()}); err != nil {
 		return err
 	}
+	if snapshot.Collector.Mode == "quick_scan" {
+		quickProperties := map[string]any{}
+		for key, value := range properties {
+			quickProperties[key] = value
+		}
+		var quickStartedAt *time.Time
+		if queryErr := tx.QueryRow(ctx, `SELECT quick_scan_started_at FROM sources WHERE organization_id=$1 AND id=$2`, snapshot.OrganizationID, snapshot.SourceID).Scan(&quickStartedAt); queryErr == nil && quickStartedAt != nil {
+			quickProperties["duration_ms"] = time.Since(*quickStartedAt).Milliseconds()
+		}
+		if err = recordProductEvent(ctx, tx, config, ProductEvent{OrganizationID: snapshot.OrganizationID, Name: "quick_scan_completed", Properties: quickProperties, DedupeKey: jobID.String()}); err != nil {
+			return err
+		}
+	}
 	if rootSystems > 0 {
 		if err = recordProductEvent(ctx, tx, config, ProductEvent{OrganizationID: snapshot.OrganizationID, Name: "first_credible_discovery_completed", Properties: properties, DedupeKey: "first"}); err != nil {
 			return err
@@ -178,9 +194,9 @@ func permanentNormalizationError(err error) bool {
 
 func normalizeSnapshot(ctx context.Context, tx pgx.Tx, snapshot discovery.Snapshot) error {
 	var lastSequence uint64
-	var targetID string
+	var targetID, reportingMode string
 	var revokedAt *time.Time
-	err := tx.QueryRow(ctx, `SELECT last_sequence,target_id,revoked_at FROM sources WHERE organization_id=$1 AND id=$2 FOR UPDATE`, snapshot.OrganizationID, snapshot.SourceID).Scan(&lastSequence, &targetID, &revokedAt)
+	err := tx.QueryRow(ctx, `SELECT last_sequence,target_id,revoked_at,reporting_mode FROM sources WHERE organization_id=$1 AND id=$2 FOR UPDATE`, snapshot.OrganizationID, snapshot.SourceID).Scan(&lastSequence, &targetID, &revokedAt, &reportingMode)
 	if err != nil {
 		return fmt.Errorf("load source: %w", err)
 	}
@@ -189,6 +205,9 @@ func normalizeSnapshot(ctx context.Context, tx pgx.Tx, snapshot discovery.Snapsh
 	}
 	if snapshot.TargetID != targetID {
 		return fmt.Errorf("snapshot target_id does not match enrolled source target")
+	}
+	if reportingMode == "quick_scan" && snapshot.Collector.Mode != "quick_scan" || reportingMode == "continuous" && snapshot.Collector.Mode == "quick_scan" {
+		return fmt.Errorf("snapshot collector mode does not match enrolled source mode")
 	}
 	if snapshot.Sequence > 0 && snapshot.Sequence <= lastSequence {
 		return fmt.Errorf("%w: sequence %d; source is at %d", errSnapshotAlreadyApplied, snapshot.Sequence, lastSequence)
@@ -207,15 +226,19 @@ func normalizeSnapshot(ctx context.Context, tx pgx.Tx, snapshot discovery.Snapsh
 		return err
 	}
 	partial := snapshot.Coverage.Partial || len(snapshot.Errors) > 0
+	evidenceExpiresAt := any(nil)
+	if reportingMode == "quick_scan" {
+		evidenceExpiresAt = time.Now().UTC().Add(24 * time.Hour)
+	}
 	if snapshot.Full {
-		_, err = tx.Exec(ctx, `UPDATE sources SET last_sequence=$3,last_full_sequence=$3,last_seen_at=$4,last_full_at=$4,collector_version=$5,latest_coverage=$6,latest_partial=$7,latest_error_count=$8 WHERE organization_id=$1 AND id=$2`, snapshot.OrganizationID, snapshot.SourceID, sequence, observedAt, snapshot.Collector.Version, coverageJSON, partial, len(snapshot.Errors))
+		_, err = tx.Exec(ctx, `UPDATE sources SET last_sequence=$3,last_full_sequence=$3,last_seen_at=$4,last_full_at=$4,collector_version=$5,latest_coverage=$6,latest_partial=$7,latest_error_count=$8,evidence_expires_at=$9 WHERE organization_id=$1 AND id=$2`, snapshot.OrganizationID, snapshot.SourceID, sequence, observedAt, snapshot.Collector.Version, coverageJSON, partial, len(snapshot.Errors), evidenceExpiresAt)
 	} else {
-		_, err = tx.Exec(ctx, `UPDATE sources SET last_sequence=$3,last_seen_at=$4,collector_version=$5,latest_coverage=$6,latest_partial=$7,latest_error_count=$8 WHERE organization_id=$1 AND id=$2`, snapshot.OrganizationID, snapshot.SourceID, sequence, observedAt, snapshot.Collector.Version, coverageJSON, partial, len(snapshot.Errors))
+		_, err = tx.Exec(ctx, `UPDATE sources SET last_sequence=$3,last_seen_at=$4,collector_version=$5,latest_coverage=$6,latest_partial=$7,latest_error_count=$8,evidence_expires_at=$9 WHERE organization_id=$1 AND id=$2`, snapshot.OrganizationID, snapshot.SourceID, sequence, observedAt, snapshot.Collector.Version, coverageJSON, partial, len(snapshot.Errors), evidenceExpiresAt)
 	}
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `UPDATE discovery_targets SET name=COALESCE(NULLIF($3,''),name),platform=COALESCE(NULLIF($4,''),platform),last_seen_at=$5,last_full_at=CASE WHEN $6 THEN $5 ELSE last_full_at END,current=true WHERE organization_id=$1 AND id=$2`, snapshot.OrganizationID, targetID, snapshot.Scope.Name, snapshot.Scope.Attributes["platform"], observedAt, snapshot.Full)
+	_, err = tx.Exec(ctx, `UPDATE discovery_targets SET name=COALESCE(NULLIF($3,''),name),platform=COALESCE(NULLIF($4,''),platform),last_seen_at=$5,last_full_at=CASE WHEN $6 THEN $5 ELSE last_full_at END,current=true,reporting_mode=$7,evidence_expires_at=$8 WHERE organization_id=$1 AND id=$2`, snapshot.OrganizationID, targetID, snapshot.Scope.Name, snapshot.Scope.Attributes["platform"], observedAt, snapshot.Full, reportingMode, evidenceExpiresAt)
 	if err != nil {
 		return err
 	}

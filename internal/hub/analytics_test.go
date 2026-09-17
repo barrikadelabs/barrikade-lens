@@ -51,11 +51,15 @@ func TestAnalyticsContractRejectsSensitiveAndUnknownProperties(t *testing.T) {
 	if err := validateProductEvent(valid); err != nil {
 		t.Fatalf("valid event was rejected: %v", err)
 	}
+	if err := validateProductEvent(ProductEvent{Name: "quick_scan_failed", Properties: map[string]any{"failure": "interrupted", "duration_ms": int64(12)}}); err != nil {
+		t.Fatalf("safe Quick Scan lifecycle event was rejected: %v", err)
+	}
 	fixtures := []ProductEvent{
 		{Name: "made_up", Properties: map[string]any{}},
 		{Name: "scan_failed", Properties: map[string]any{"error": "dial db.prod.internal:5432"}},
 		{Name: "export_generated", Properties: map[string]any{"export_format": "https://customer.example/repository"}},
 		{Name: "first_credible_discovery_inspected", Properties: map[string]any{"surface": strings.Repeat("x", 100)}},
+		{Name: "quick_scan_completed", Properties: map[string]any{"hostname": "private-device.local"}},
 	}
 	for _, fixture := range fixtures {
 		if err := validateProductEvent(fixture); err == nil {

@@ -68,6 +68,8 @@ paths:
     post: {security: [], operationId: enrollCollector, requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/Enrollment'}}}}, responses: {'200': {description: Source-scoped rotating collector credentials}}}
   /v1/collector/token:
     post: {security: [], operationId: rotateCollectorToken, requestBody: {required: true, content: {application/json: {schema: {type: object, additionalProperties: false, required: [refresh_token], properties: {refresh_token: {type: string}}}}}}, responses: {'200': {description: Rotated access and refresh credentials}}}
+  /v1/collector/quick-scan/failed:
+    post: {operationId: reportQuickScanFailure, description: Records an allowlisted lifecycle failure category without discovery data., requestBody: {required: true, content: {application/json: {schema: {type: object, additionalProperties: false, required: [failure], properties: {failure: {enum: [discovery, upload, interrupted]}}}}}}, responses: {'204': {description: Failure lifecycle event recorded}, '409': {description: Credential does not belong to an active Quick Scan}}}
   /v1/admin/enrollment-codes:
     post: {operationId: createEnrollmentCode, requestBody: {content: {application/json: {schema: {type: object, additionalProperties: false, properties: {expires_in_seconds: {type: integer, minimum: 60, maximum: 86400, default: 600}, uses: {type: integer, minimum: 1, maximum: 10000, default: 1}, source_type: {enum: [endpoint, repository, kubernetes], default: endpoint}}}}}}, responses: {'201': {description: Expiring use-limited enrollment code with the configured public Hub URL and exact collector version}}}
   /v1/deployment-policies:
@@ -167,6 +169,8 @@ paths:
     get: {operationId: getEnvironmentActivation, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Durable endpoint activation state and safe first-result status}, '404': {description: Environment not found}}}
   /v1/environments/{id}/enrollment-credentials:
     post: {operationId: rotateEndpointEnrollmentCredential, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'201': {description: New 15-minute single-use endpoint credential; earlier credentials are revoked}, '409': {description: Endpoint setup is no longer pending}}}
+  /v1/environments/{id}/enable-continuous-monitoring:
+    post: {operationId: enableContinuousMonitoring, description: 'Issues a display-once continuous-monitoring setup for an endpoint that completed Quick Scan while preserving its installation identity, target, and source.', parameters: [{$ref: '#/components/parameters/ID'}], responses: {'201': {description: Managed collector installation setup}, '409': {description: The environment is not an eligible completed Quick Scan}}}
   /v1/environments/{id}/handoffs:
     post: {operationId: createEndpointHandoff, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'201': {description: One-time-displayed 24-hour delegated setup URL}, '409': {description: Endpoint setup is no longer pending}}}
   /v1/environments/{id}/handoffs/{handoffId}:
@@ -277,7 +281,7 @@ components:
       type: object
       additionalProperties: false
       required: [code, platform, architecture, collector_version, identity_public_key, identity_proof]
-      properties: {code: {type: string}, source_type: {enum: [endpoint, repository, kubernetes]}, hostname: {type: string}, target_identity: {type: string, description: Stable cluster UID or owner/repository identity for non-endpoint collectors}, display_name: {type: string}, platform: {type: string}, architecture: {type: string}, collector_version: {type: string}, identity_public_key: {type: string, description: Base64url-encoded Ed25519 public key}, identity_proof: {type: string, description: Ed25519 signature over the type-aware enrollment request}}
+      properties: {code: {type: string}, source_type: {enum: [endpoint, repository, kubernetes]}, enrollment_mode: {enum: [quick_scan, continuous], default: continuous, description: Quick Scan receives only a short-lived access token; continuous enrollment also receives rotating collector credentials.}, hostname: {type: string}, target_identity: {type: string, description: Stable cluster UID or owner/repository identity for non-endpoint collectors}, display_name: {type: string}, platform: {type: string}, architecture: {type: string}, collector_version: {type: string}, identity_public_key: {type: string, description: Base64url-encoded Ed25519 public key}, identity_proof: {type: string, description: Ed25519 signature over the type-aware enrollment request}}
     DeploymentPolicyRequest:
       type: object
       additionalProperties: false

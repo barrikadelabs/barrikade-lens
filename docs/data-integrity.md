@@ -6,6 +6,8 @@ Lens JSON is the canonical evidence graph. The Hub's Overview, Systems, Coverage
 
 `target_id` identifies the endpoint, repository, or cluster being scanned. `source_id` identifies the active collector credential. Endpoint target IDs are opaque, organization-scoped derivatives of a per-Hub Ed25519 public-key fingerprint. Hostnames are display metadata only. Two identities with the same hostname stay separate and appear as a duplicate-identity diagnostic; a hostname change does not change identity.
 
+Endpoint sources also carry an explicit reporting mode. A Quick Scan accepts exactly one full snapshot and its evidence has a fixed expiry shown by the Hub. Continuous Monitoring uses the normal collector freshness threshold. Upgrading proves possession of the same protected installation identity, reuses the existing target and source, clears the one-shot expiry, and issues rotating collector credentials without duplicating inventory.
+
 Repository and Kubernetes identities use stable repository and cluster identifiers. Cross-surface correlation may use repository URLs, commit SHAs, image digests, workload UIDs, configuration fingerprints, and explicit labels. It never correlates by display name alone.
 
 ## Fact aggregation

@@ -26,6 +26,8 @@ import (
 
 var Version = "2.0.0-dev"
 
+const OfficialHubURL = "https://lens.barrikade.ai"
+
 type Dependencies struct {
 	In                      io.Reader
 	Out                     io.Writer
@@ -33,6 +35,7 @@ type Dependencies struct {
 	CollectOnce             func(context.Context, string) error
 	InstallService          func(context.Context, string, string) (servicecontrol.Status, error)
 	EnsureInstallPrivileges func(context.Context, []string) (bool, error)
+	QuickScan               func(context.Context, string, string, string) (managed.QuickScanResult, error)
 	Args                    []string
 }
 
@@ -109,10 +112,43 @@ func newRoot(dependencies Dependencies) *cobra.Command {
 
 func newScanCommand(dependencies Dependencies, organizationID, packPath *string) *cobra.Command {
 	var scope, format, root, output string
+	var enrollmentCode, hubURL, configPath string
 	var probeURLs, allowedProbeHosts []string
 	command := &cobra.Command{
 		Use: "scan", Short: "Run an endpoint or repository discovery scan", Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
+			if enrollmentCode != "" {
+				if strings.ToLower(scope) != "endpoint" || len(probeURLs) > 0 || output != "" {
+					return fmt.Errorf("--enroll supports endpoint discovery only and cannot be combined with --probe-url or --output")
+				}
+				if hubURL == "" {
+					hubURL = os.Getenv("BARRIKADE_LENS_HUB")
+				}
+				if hubURL == "" {
+					hubURL = OfficialHubURL
+				}
+				run := dependencies.QuickScan
+				if run == nil {
+					run = func(ctx context.Context, hub, code, identityConfigPath string) (managed.QuickScanResult, error) {
+						client := hubclient.New(Version)
+						cfg, err := client.EnrollQuick(ctx, hub, code, identityConfigPath)
+						if err != nil {
+							return managed.QuickScanResult{}, err
+						}
+						return (managed.Runner{Version: Version, Client: client}).RunQuick(ctx, cfg)
+					}
+				}
+				result, err := run(command.Context(), hubURL, enrollmentCode, configPath)
+				if err != nil {
+					return err
+				}
+				fmt.Fprintf(dependencies.Out, "Quick Scan uploaded %d assets and %d relationships. No background service was installed.\n", result.EntityCount, result.RelationCount)
+				if result.Partial {
+					fmt.Fprintln(dependencies.Out, "The Hub received partial results; review scan diagnostics in Lens.")
+					return exitError{code: 2}
+				}
+				return nil
+			}
 			if !exporter.ValidFormat(format) {
 				return fmt.Errorf("--format must be human, json, ndjson, or cyclonedx")
 			}
@@ -169,6 +205,9 @@ func newScanCommand(dependencies Dependencies, organizationID, packPath *string)
 	command.Flags().StringVarP(&output, "output", "o", "", "write the export to a private local file")
 	command.Flags().StringSliceVar(&probeURLs, "probe-url", nil, "opt in to a metadata-only handshake against an already-running HTTP endpoint")
 	command.Flags().StringSliceVar(&allowedProbeHosts, "allow-probe-host", nil, "explicit host allowlist for active metadata handshakes")
+	command.Flags().StringVar(&enrollmentCode, "enroll", "", "run one Quick Scan using this Hub enrollment code")
+	command.Flags().StringVar(&hubURL, "hub", "", "Lens Hub base URL (defaults to "+OfficialHubURL+")")
+	command.Flags().StringVar(&configPath, "config", "", "installation identity location; collector credentials are not saved")
 	return command
 }
 

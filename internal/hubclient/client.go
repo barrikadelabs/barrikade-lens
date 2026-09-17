@@ -37,6 +37,7 @@ type EnrollmentRequest struct {
 	SourceType        string `json:"source_type,omitempty"`
 	TargetIdentity    string `json:"target_identity,omitempty"`
 	DisplayName       string `json:"display_name,omitempty"`
+	EnrollmentMode    string `json:"enrollment_mode,omitempty"`
 }
 type EnrollmentResponse struct {
 	HubURL               string `json:"hub_url"`
@@ -62,7 +63,20 @@ func (c *Client) Enroll(ctx context.Context, hubURL, code, configPath string) (l
 	return c.EnrollTarget(ctx, hubURL, code, configPath, "endpoint", hostname, hostname)
 }
 
+// EnrollQuick exchanges a bootstrap code for a short-lived access token while
+// retaining only the protected installation identity on disk. The returned
+// configuration must not be persisted: quick-scan enrollments intentionally do
+// not receive a refresh token.
+func (c *Client) EnrollQuick(ctx context.Context, hubURL, code, identityPath string) (lensconfig.Config, error) {
+	hostname, _ := os.Hostname()
+	return c.enrollTarget(ctx, hubURL, code, identityPath, "endpoint", hostname, hostname, "quick_scan", false)
+}
+
 func (c *Client) EnrollTarget(ctx context.Context, hubURL, code, configPath, sourceType, targetIdentity, displayName string) (lensconfig.Config, error) {
+	return c.enrollTarget(ctx, hubURL, code, configPath, sourceType, targetIdentity, displayName, "continuous", true)
+}
+
+func (c *Client) enrollTarget(ctx context.Context, hubURL, code, configPath, sourceType, targetIdentity, displayName, enrollmentMode string, requireRefresh bool) (lensconfig.Config, error) {
 	base, err := validateHubURL(hubURL)
 	if err != nil {
 		return lensconfig.Config{}, err
@@ -88,7 +102,7 @@ func (c *Client) EnrollTarget(ctx context.Context, hubURL, code, configPath, sou
 	if err != nil {
 		return lensconfig.Config{}, err
 	}
-	request := EnrollmentRequest{Code: strings.TrimSpace(code), Platform: runtime.GOOS, Architecture: runtime.GOARCH, CollectorVersion: c.Version, IdentityPublicKey: state.PublicKey, IdentityProof: proof, SourceType: sourceType, TargetIdentity: targetIdentity, DisplayName: displayName}
+	request := EnrollmentRequest{Code: strings.TrimSpace(code), Platform: runtime.GOOS, Architecture: runtime.GOARCH, CollectorVersion: c.Version, IdentityPublicKey: state.PublicKey, IdentityProof: proof, SourceType: sourceType, TargetIdentity: targetIdentity, DisplayName: displayName, EnrollmentMode: enrollmentMode}
 	if sourceType == "endpoint" {
 		request.Hostname = hostname
 	}
@@ -96,13 +110,33 @@ func (c *Client) EnrollTarget(ctx context.Context, hubURL, code, configPath, sou
 	if err := c.doJSON(ctx, http.MethodPost, base+"/v1/enrollment/exchange", "", request, &response); err != nil {
 		return lensconfig.Config{}, err
 	}
-	if response.OrganizationID == "" || response.SourceID == "" || response.TargetID == "" || response.RefreshToken == "" {
+	if response.OrganizationID == "" || response.SourceID == "" || response.TargetID == "" || response.AccessToken == "" || requireRefresh && response.RefreshToken == "" {
 		return lensconfig.Config{}, fmt.Errorf("Hub returned an incomplete enrollment response")
 	}
 	if response.HubURL == "" {
 		response.HubURL = base
 	}
 	return lensconfig.Config{ConfigVersion: 2, HubURL: response.HubURL, OrganizationID: response.OrganizationID, SourceID: response.SourceID, TargetID: response.TargetID, AccessToken: response.AccessToken, AccessTokenExpiresAt: response.AccessTokenExpiresAt, RefreshToken: response.RefreshToken, Sequence: response.Sequence}, nil
+}
+
+// UploadTransient submits a snapshot without refreshing or writing collector
+// credentials. It is the only upload path used by Quick Scan.
+func (c *Client) UploadTransient(ctx context.Context, cfg lensconfig.Config, snapshot discovery.Snapshot) (IngestionJob, error) {
+	base, err := validateHubURL(cfg.HubURL)
+	if err != nil {
+		return IngestionJob{}, err
+	}
+	var job IngestionJob
+	err = c.doJSON(ctx, http.MethodPost, base+"/v1/discovery/snapshots", cfg.AccessToken, snapshot, &job)
+	return job, err
+}
+
+func (c *Client) ReportQuickFailure(ctx context.Context, cfg lensconfig.Config, failure string) error {
+	base, err := validateHubURL(cfg.HubURL)
+	if err != nil {
+		return err
+	}
+	return c.doJSON(ctx, http.MethodPost, base+"/v1/collector/quick-scan/failed", cfg.AccessToken, map[string]string{"failure": failure}, nil)
 }
 
 func (c *Client) Upload(ctx context.Context, configPath string, cfg *lensconfig.Config, snapshot discovery.Snapshot) (IngestionJob, error) {

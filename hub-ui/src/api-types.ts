@@ -262,6 +262,7 @@ export type Environment = {
   first_result_at?: string;
   last_result_at?: string;
   last_result_status?: "complete" | "partial" | "failed";
+  monitoring_mode: "quick_scan" | "continuous";
   created_at: string;
   updated_at: string;
 };
@@ -274,6 +275,10 @@ export type Activation = {
   last_result_at?: string;
   last_result_status?: "complete" | "partial" | "failed";
   last_seen_at?: string;
+  monitoring_mode: "quick_scan" | "continuous";
+  evidence_expires_at?: string;
+  summary: { assets_found: number; systems_found: number };
+  can_enable_continuous_monitoring: boolean;
   safe_error?: { code?: string; message?: string };
 };
 

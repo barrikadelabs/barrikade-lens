@@ -55,12 +55,16 @@ func createTestEndpointSetup(t *testing.T, server *Server, organizationID, code 
 }
 
 func exchangeTestIdentity(t *testing.T, server *Server, state identity.State, code, hostname string) (*httptest.ResponseRecorder, enrollmentResult) {
+	return exchangeTestIdentityMode(t, server, state, code, hostname, "continuous")
+}
+
+func exchangeTestIdentityMode(t *testing.T, server *Server, state identity.State, code, hostname, enrollmentMode string) (*httptest.ResponseRecorder, enrollmentResult) {
 	t.Helper()
 	proof, err := state.Sign(code, hostname, "darwin", "arm64", "2.0.0-test")
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, _ := json.Marshal(map[string]any{"code": code, "hostname": hostname, "platform": "darwin", "architecture": "arm64", "collector_version": "2.0.0-test", "identity_public_key": state.PublicKey, "identity_proof": proof})
+	body, _ := json.Marshal(map[string]any{"code": code, "hostname": hostname, "platform": "darwin", "architecture": "arm64", "collector_version": "2.0.0-test", "identity_public_key": state.PublicKey, "identity_proof": proof, "enrollment_mode": enrollmentMode})
 	request := httptest.NewRequest(http.MethodPost, "/v1/enrollment/exchange", bytes.NewReader(body))
 	response := httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, request)
@@ -71,6 +75,70 @@ func exchangeTestIdentity(t *testing.T, server *Server, state identity.State, co
 		}
 	}
 	return response, result
+}
+
+func TestQuickScanUpgradeReusesTargetAndSourceWithoutRefreshCredential(t *testing.T) {
+	server, orgID := newIdentityTestServer(t)
+	state, err := identity.LoadOrCreate(filepath.Join(t.TempDir(), "identity.json"), "http://lens.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	environmentID, setupID := uuid.New(), uuid.New()
+	quickCode := "QUICK-CODE"
+	expiresAt := time.Now().Add(10 * time.Minute)
+	tx, err := server.config.Pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(t.Context())
+	if _, err = tx.Exec(t.Context(), `INSERT INTO environment_connections(id,organization_id,kind,provider,display_name,monitoring_mode,created_by) VALUES($1,$2,'endpoint','endpoint','Quick endpoint','quick_scan','test')`, environmentID, orgID); err == nil {
+		_, err = tx.Exec(t.Context(), `INSERT INTO connector_setup_sessions(id,organization_id,environment_id,token_hash,kind,created_by,expires_at) VALUES($1,$2,$3,$4,'endpoint','test',$5)`, setupID, orgID, environmentID, tokenHash(normalizeCode(quickCode)), expiresAt)
+	}
+	if err == nil {
+		_, err = tx.Exec(t.Context(), `INSERT INTO enrollment_codes(code_hash,organization_id,environment_id,expires_at,uses_remaining,source_type,enrollment_mode) VALUES($1,$2,$3,$4,1,'endpoint','quick_scan')`, tokenHash(normalizeCode(quickCode)), orgID, environmentID, expiresAt)
+	}
+	if err != nil || tx.Commit(t.Context()) != nil {
+		t.Fatalf("create quick setup: %v", err)
+	}
+	response, quick := exchangeTestIdentityMode(t, server, state, quickCode, "quick.local", "quick_scan")
+	if response.Code != http.StatusOK || quick.RefreshToken != "" {
+		t.Fatalf("quick enrollment returned %d refresh=%q body=%s", response.Code, quick.RefreshToken, response.Body.String())
+	}
+	if _, err = server.config.Pool.Exec(t.Context(), `UPDATE environment_connections SET first_result_at=now(),last_result_at=now(),last_result_status='complete' WHERE organization_id=$1 AND id=$2`, orgID, environmentID); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/v1/environments/"+environmentID.String()+"/enable-continuous-monitoring", nil)
+	request.Header.Set("Authorization", "Bearer identity-admin")
+	upgradeResponse := httptest.NewRecorder()
+	server.Handler().ServeHTTP(upgradeResponse, request)
+	if upgradeResponse.Code != http.StatusCreated {
+		t.Fatalf("upgrade setup returned %d: %s", upgradeResponse.Code, upgradeResponse.Body.String())
+	}
+	var upgrade struct {
+		Setup struct {
+			EnrollmentCode string `json:"enrollment_code"`
+		} `json:"setup"`
+	}
+	if err = json.Unmarshal(upgradeResponse.Body.Bytes(), &upgrade); err != nil || upgrade.Setup.EnrollmentCode == "" {
+		t.Fatalf("decode upgrade setup: %v %s", err, upgradeResponse.Body.String())
+	}
+	response, continuous := exchangeTestIdentityMode(t, server, state, upgrade.Setup.EnrollmentCode, "quick.local", "continuous")
+	if response.Code != http.StatusOK || continuous.RefreshToken == "" || continuous.TargetID != quick.TargetID || continuous.SourceID != quick.SourceID {
+		t.Fatalf("upgrade did not preserve identity: quick=%+v continuous=%+v response=%d %s", quick, continuous, response.Code, response.Body.String())
+	}
+	var targets, sources, refreshTokens int
+	var sourceMode, environmentMode string
+	if err = server.config.Pool.QueryRow(t.Context(), `SELECT
+		(SELECT count(*) FROM discovery_targets WHERE organization_id=$1),
+		(SELECT count(*) FROM sources WHERE organization_id=$1 AND revoked_at IS NULL),
+		(SELECT count(*) FROM collector_refresh_tokens WHERE organization_id=$1),
+		(SELECT reporting_mode FROM sources WHERE organization_id=$1 AND id=$2),
+		(SELECT monitoring_mode FROM environment_connections WHERE organization_id=$1 AND id=$3)`, orgID, quick.SourceID, environmentID).Scan(&targets, &sources, &refreshTokens, &sourceMode, &environmentMode); err != nil {
+		t.Fatal(err)
+	}
+	if targets != 1 || sources != 1 || refreshTokens != 1 || sourceMode != "continuous" || environmentMode != "continuous" {
+		t.Fatalf("unexpected upgraded state targets=%d sources=%d refresh=%d source_mode=%s environment_mode=%s", targets, sources, refreshTokens, sourceMode, environmentMode)
+	}
 }
 
 func newIdentityTestServer(t *testing.T) (*Server, string) {

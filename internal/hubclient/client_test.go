@@ -2,11 +2,64 @@ package hubclient
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/barrikadelabs/barrikade-lens/pkg/discovery"
 )
+
+func TestEnrollQuickUsesTransientCredentialsAndUploadDoesNotPersistConfig(t *testing.T) {
+	uploads := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/v1/enrollment/exchange":
+			var payload EnrollmentRequest
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil {
+				t.Fatal(err)
+			}
+			if payload.EnrollmentMode != "quick_scan" || payload.IdentityPublicKey == "" || payload.IdentityProof == "" {
+				t.Fatalf("unexpected quick enrollment: %+v", payload)
+			}
+			_, _ = writer.Write([]byte(`{"organization_id":"org","source_id":"source","target_id":"target","access_token":"short-lived"}`))
+		case "/v1/discovery/snapshots":
+			uploads++
+			if request.Header.Get("Authorization") != "Bearer short-lived" {
+				t.Fatalf("missing transient bearer token")
+			}
+			writer.WriteHeader(http.StatusAccepted)
+			_, _ = writer.Write([]byte(`{"id":"job","status":"pending"}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+	configPath := filepath.Join(t.TempDir(), "collector.json")
+	client := New("test")
+	cfg, err := client.EnrollQuick(context.Background(), server.URL, "ABCD-1234", configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.RefreshToken != "" {
+		t.Fatal("quick enrollment unexpectedly returned a refresh token")
+	}
+	snapshot := discovery.NewSnapshot("org", "source", discovery.SourceEndpoint, discovery.Collector{ID: "test", Name: "test", Version: "test", Mode: "quick_scan"})
+	snapshot.TargetID = "target"
+	if _, err = client.UploadTransient(context.Background(), cfg, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if uploads != 1 {
+		t.Fatalf("uploads=%d want exactly one", uploads)
+	}
+	if _, err = os.Stat(configPath); !os.IsNotExist(err) {
+		t.Fatalf("collector config was persisted: %v", err)
+	}
+}
 
 func TestDoJSONSurfacesSafeHubError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {

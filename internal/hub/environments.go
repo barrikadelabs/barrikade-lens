@@ -47,17 +47,18 @@ type environmentConnection struct {
 	FirstResultAt    *time.Time      `json:"first_result_at,omitempty"`
 	LastResultAt     *time.Time      `json:"last_result_at,omitempty"`
 	LastResultStatus *string         `json:"last_result_status,omitempty"`
+	MonitoringMode   string          `json:"monitoring_mode"`
 	CreatedAt        time.Time       `json:"created_at"`
 	UpdatedAt        time.Time       `json:"updated_at"`
 }
 
-const environmentColumns = `id,kind,provider,external_id,display_name,connection_status,configuration,target_id,source_id,schedule_enabled,next_scan_at,verified_at,disconnected_at,purge_after,last_error_code,last_error_message,first_result_at,last_result_at,last_result_status,created_at,updated_at`
+const environmentColumns = `id,kind,provider,external_id,display_name,connection_status,configuration,target_id,source_id,schedule_enabled,next_scan_at,verified_at,disconnected_at,purge_after,last_error_code,last_error_message,first_result_at,last_result_at,last_result_status,monitoring_mode,created_at,updated_at`
 
 type environmentRowScanner interface{ Scan(...any) error }
 
 func scanEnvironment(row environmentRowScanner) (environmentConnection, error) {
 	var value environmentConnection
-	err := row.Scan(&value.ID, &value.Kind, &value.Provider, &value.ExternalID, &value.DisplayName, &value.ConnectionStatus, &value.Configuration, &value.TargetID, &value.SourceID, &value.ScheduleEnabled, &value.NextScanAt, &value.VerifiedAt, &value.DisconnectedAt, &value.PurgeAfter, &value.LastErrorCode, &value.LastErrorMessage, &value.FirstResultAt, &value.LastResultAt, &value.LastResultStatus, &value.CreatedAt, &value.UpdatedAt)
+	err := row.Scan(&value.ID, &value.Kind, &value.Provider, &value.ExternalID, &value.DisplayName, &value.ConnectionStatus, &value.Configuration, &value.TargetID, &value.SourceID, &value.ScheduleEnabled, &value.NextScanAt, &value.VerifiedAt, &value.DisconnectedAt, &value.PurgeAfter, &value.LastErrorCode, &value.LastErrorMessage, &value.FirstResultAt, &value.LastResultAt, &value.LastResultStatus, &value.MonitoringMode, &value.CreatedAt, &value.UpdatedAt)
 	return value, err
 }
 
@@ -353,6 +354,17 @@ func (s *Server) createEnvironmentSetupSession(w http.ResponseWriter, r *http.Re
 	if request.Configuration == nil {
 		request.Configuration = map[string]any{}
 	}
+	monitoringMode := "continuous"
+	if request.Kind == "endpoint" {
+		if requested, _ := request.Configuration["monitoring_mode"].(string); requested != "" {
+			monitoringMode = requested
+		}
+		if monitoringMode != "quick_scan" && monitoringMode != "continuous" {
+			writeError(w, 400, "invalid_environment", "Endpoint monitoring_mode must be quick_scan or continuous")
+			return
+		}
+		request.Configuration["monitoring_mode"] = monitoringMode
+	}
 	for key := range request.Configuration {
 		if sensitiveSetupKey.MatchString(key) {
 			writeError(w, 400, "secret_not_allowed", "Setup configuration must not contain credentials or secret values")
@@ -385,7 +397,7 @@ func (s *Server) createEnvironmentSetupSession(w http.ResponseWriter, r *http.Re
 		return
 	}
 	defer tx.Rollback(r.Context())
-	_, err = tx.Exec(r.Context(), `INSERT INTO environment_connections(id,organization_id,kind,provider,external_id,display_name,configuration,created_by) VALUES($1,$2,$3,$4,NULLIF($5,''),$6,$7,$8)`, environmentID, principal.OrganizationID, request.Kind, provider, externalID, request.DisplayName, configuration, principal.Subject)
+	_, err = tx.Exec(r.Context(), `INSERT INTO environment_connections(id,organization_id,kind,provider,external_id,display_name,configuration,monitoring_mode,created_by) VALUES($1,$2,$3,$4,NULLIF($5,''),$6,$7,$8,$9)`, environmentID, principal.OrganizationID, request.Kind, provider, externalID, request.DisplayName, configuration, monitoringMode, principal.Subject)
 	if err == nil {
 		_, err = tx.Exec(r.Context(), `INSERT INTO connector_setup_sessions(id,organization_id,environment_id,token_hash,kind,setup_payload,created_by,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)`, setupID, principal.OrganizationID, environmentID, tokenHash(normalizeCode(token)), request.Kind, configuration, principal.Subject, expiresAt)
 	}
@@ -394,7 +406,7 @@ func (s *Server) createEnvironmentSetupSession(w http.ResponseWriter, r *http.Re
 		if request.Kind == "kubernetes_cluster" {
 			sourceType = "kubernetes"
 		}
-		_, err = tx.Exec(r.Context(), `INSERT INTO enrollment_codes(code_hash,organization_id,environment_id,expires_at,uses_remaining,source_type) VALUES($1,$2,$3,$4,1,$5)`, tokenHash(normalizeCode(token)), principal.OrganizationID, environmentID, expiresAt, sourceType)
+		_, err = tx.Exec(r.Context(), `INSERT INTO enrollment_codes(code_hash,organization_id,environment_id,expires_at,uses_remaining,source_type,enrollment_mode) VALUES($1,$2,$3,$4,1,$5,$6)`, tokenHash(normalizeCode(token)), principal.OrganizationID, environmentID, expiresAt, sourceType, monitoringMode)
 	}
 	if err == nil {
 		_, err = tx.Exec(r.Context(), `INSERT INTO workspace_audit_events(id,organization_id,actor_id,event_type,target_type,target_id,metadata) VALUES($1,$2,$3,'environment.setup_started','environment',$4,$5)`, uuid.New(), principal.OrganizationID, principal.Subject, environmentID.String(), jsonBytes(map[string]any{"kind": request.Kind, "provider": provider}))

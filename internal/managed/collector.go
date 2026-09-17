@@ -35,6 +35,56 @@ type Runner struct {
 	Client     *hubclient.Client
 }
 
+type QuickScanResult struct {
+	JobID         string
+	Partial       bool
+	EntityCount   int
+	RelationCount int
+}
+
+// RunQuick performs one endpoint scan and one upload. It never saves cfg and
+// never installs or starts a background collector.
+func (r Runner) RunQuick(ctx context.Context, cfg lensconfig.Config) (QuickScanResult, error) {
+	if cfg.ConfigVersion != 2 || cfg.TargetID == "" || cfg.AccessToken == "" || cfg.RefreshToken != "" {
+		return QuickScanResult{}, fmt.Errorf("invalid transient quick-scan enrollment")
+	}
+	if r.Client == nil {
+		r.Client = hubclient.New(r.Version)
+	}
+	pack, err := detector.Builtin()
+	if err != nil {
+		reportQuickFailure(r.Client, cfg, "discovery")
+		return QuickScanResult{}, err
+	}
+	home, err := currentHomeDirectory()
+	if err != nil {
+		reportQuickFailure(r.Client, cfg, "discovery")
+		return QuickScanResult{}, err
+	}
+	snapshot, err := scanProfilesMode(ctx, cfg.OrganizationID, cfg.SourceID, cfg.TargetID, pack, managedProfiles(home), r.Version, "quick_scan")
+	if err != nil {
+		reportQuickFailure(r.Client, cfg, "discovery")
+		return QuickScanResult{}, err
+	}
+	snapshot.Sequence, snapshot.Full = cfg.Sequence+1, true
+	job, err := r.Client.UploadTransient(ctx, cfg, snapshot)
+	if err != nil {
+		failure := "upload"
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			failure = "interrupted"
+		}
+		reportQuickFailure(r.Client, cfg, failure)
+		return QuickScanResult{}, fmt.Errorf("upload quick scan: %w", err)
+	}
+	return QuickScanResult{JobID: job.ID, Partial: snapshot.Coverage.Partial || len(snapshot.Errors) > 0, EntityCount: len(snapshot.Entities), RelationCount: len(snapshot.Relationships)}, nil
+}
+
+func reportQuickFailure(client *hubclient.Client, cfg lensconfig.Config, failure string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_ = client.ReportQuickFailure(ctx, cfg, failure)
+}
+
 func (r Runner) RunOnce(ctx context.Context) error {
 	cfg, err := lensconfig.Load(r.ConfigPath)
 	if err != nil {
@@ -208,6 +258,10 @@ type profile struct {
 }
 
 func scanProfiles(ctx context.Context, organizationID, sourceID, targetID string, pack detector.Pack, profiles []profile, version string) (discovery.Snapshot, error) {
+	return scanProfilesMode(ctx, organizationID, sourceID, targetID, pack, profiles, version, "managed")
+}
+
+func scanProfilesMode(ctx context.Context, organizationID, sourceID, targetID string, pack detector.Pack, profiles []profile, version, mode string) (discovery.Snapshot, error) {
 	var combined discovery.Snapshot
 	var firstError error
 	scanned := 0
@@ -231,7 +285,7 @@ func scanProfiles(ctx context.Context, organizationID, sourceID, targetID string
 	if scanned == 0 {
 		return discovery.Snapshot{}, firstError
 	}
-	combined.Collector.Mode = "managed"
+	combined.Collector.Mode = mode
 	combined.Collector.Version = version
 	if combined.Scope.Attributes == nil {
 		combined.Scope.Attributes = map[string]string{}
