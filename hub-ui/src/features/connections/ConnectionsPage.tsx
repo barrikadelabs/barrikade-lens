@@ -4,9 +4,7 @@ import { ArrowRight, CheckCircle2, ChevronDown, ChevronRight, CircleDot, Cloud, 
 import { API, authConfig, type Environment, type EnvironmentKind, type EnvironmentScan, type Overview, type SetupSession } from "../../api";
 import { captureAnalytics } from "../../analytics";
 import { CopyBlock, Empty, Failure, Freshness, Identity, InlineError, Loading, PanelHeading, pretty, relative, useRemote } from "../../ui";
-import { EmployeeDeploymentMethods } from "./EmployeeDeploymentMethods";
-import { ScanSourceChooser } from "./ScanSourceChooser";
-import { analyticsConnectionType, defaultEnvironmentName, environmentCatalog, type DeploymentMethod } from "./connection-options";
+import { analyticsConnectionType, environmentCatalog } from "./connection-options";
 
 export function ConnectionsPage({ api, revision, onResults, startWizard = false }: { api: API; revision: number; onResults: () => void; startWizard?: boolean }) {
   return <div className="page-stack"><EnvironmentsPage api={api} revision={revision} onResults={onResults} startWizard={startWizard} /><CoveragePage api={api} revision={revision} /></div>;
@@ -19,7 +17,6 @@ function EnvironmentsPage({ api, revision, onResults, startWizard = false }: { a
   const session = useRemote(() => api.session(), [api]);
   const [wizard, setWizard] = useState(startWizard);
   const [kind, setKind] = useState<EnvironmentKind>();
-  const [deploymentMethod, setDeploymentMethod] = useState<DeploymentMethod>();
   const [name, setName] = useState("");
   const [externalID, setExternalID] = useState("");
   const [tenantID, setTenantID] = useState("");
@@ -49,7 +46,7 @@ function EnvironmentsPage({ api, revision, onResults, startWizard = false }: { a
     if (!environmentId || !environments.data) return;
     const environment = environments.data.items.find((item) => item.id === environmentId);
     if (!environment || environment.kind !== "endpoint" || environment.connection_status !== "setup_pending") return;
-    setKind("endpoint"); setDeploymentMethod("command_line"); setName(environment.display_name); setWizard(true); setBusy(true);
+    setKind("endpoint"); setName(environment.display_name); setWizard(true); setBusy(true);
     api.rotateEndpointCredential(environment.id).then(setSetup).catch((reason) => setError(String(reason))).finally(() => setBusy(false));
   }, [api, environmentId, environments.data]);
 
