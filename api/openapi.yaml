@@ -205,7 +205,7 @@ paths:
   /v1/environments/{id}/activation:
     get: {operationId: getEnvironmentActivation, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Durable endpoint activation state and safe first-result status}, '404': {description: Environment not found}}}
   /v1/environments/{id}/github-status:
-    get: {operationId: getGitHubEnvironmentStatus, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Tenant-scoped GitHub authorization, repository progress, partial-result, and recovery state}, '404': {description: GitHub environment not found}}}
+    get: {operationId: getGitHubEnvironmentStatus, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: 'Tenant-scoped GitHub authorization, repository progress, partial-result, and recovery state'}, '404': {description: GitHub environment not found}}}
   /v1/environments/{id}/github-reconcile:
     post: {operationId: reconcileGitHubEnvironment, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'202': {description: Current selected repositories reconciled and scans queued}, '409': {description: GitHub App reauthorization required}, '503': {description: GitHub connector deployment is not healthy}}}
   /v1/environments/{id}/github-reauthorize:
