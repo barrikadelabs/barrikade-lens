@@ -11,14 +11,14 @@ export function SystemsPage({ api, revision }: { api: API; revision: number }) {
   const navigate = useNavigate();
   const { systemId } = useParams();
   const [searchParams, setSearchParams] = useSearchParams();
-  const hasInstallationFilter = ["freshness", "system_type", "state", "confidence", "network_scope", "owner_status"].some((key) => searchParams.has(key));
+  const hasInstallationFilter = ["freshness", "system_type", "state", "confidence", "network_scope", "owner_status", "target_id"].some((key) => searchParams.has(key));
   const [inventoryView, setInventoryView] = useState<"products" | "installations">(() => systemId || searchParams.get("view") === "installations" || hasInstallationFilter ? "installations" : "products");
   const [productSearch, setProductSearch] = useState("");
   const [productType, setProductType] = useState("");
   const [productReach, setProductReach] = useState("");
   const [productActivity, setProductActivity] = useState("");
   const [selectedProduct, setSelectedProduct] = useState<ProductItem>();
-  const [filters, setFilters] = useState<Record<string, string>>(() => ({ sort: "last_seen", freshness: searchParams.get("freshness") || "all", search: searchParams.get("search") || "", system_type: searchParams.get("system_type") || "", state: searchParams.get("state") || "", confidence: searchParams.get("confidence") || "", network_scope: searchParams.get("network_scope") || "", owner_status: searchParams.get("owner_status") || "" }));
+  const [filters, setFilters] = useState<Record<string, string>>(() => ({ sort: "last_seen", freshness: searchParams.get("freshness") || "all", search: searchParams.get("search") || "", system_type: searchParams.get("system_type") || "", state: searchParams.get("state") || "", confidence: searchParams.get("confidence") || "", network_scope: searchParams.get("network_scope") || "", owner_status: searchParams.get("owner_status") || "", target_id: searchParams.get("target_id") || "" }));
   const [cursor, setCursor] = useState("");
   const [items, setItems] = useState<SystemItem[]>([]);
   const [next, setNext] = useState("");

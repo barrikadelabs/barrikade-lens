@@ -131,6 +131,43 @@ paths:
       description: Prevents future bootstrap exchanges without revoking devices already enrolled by the policy.
       parameters: [{$ref: '#/components/parameters/ID'}, {name: credentialId, in: path, required: true, schema: {type: string, format: uuid}}]
       responses: {'204': {description: Enrollment credential revoked}, '404': {description: Active credential not found in the policy}}
+  /v1/deployment-policies/{id}/devices:
+    get:
+      operationId: listDeploymentPolicyDevices
+      description: Lists the paginated device membership and lifecycle summary for an endpoint deployment policy. Requires owner or administrator access.
+      parameters: [{$ref: '#/components/parameters/ID'}, {name: status, in: query, schema: {enum: [reporting, stale_offline, never_scanned, partial, failed, revoked]}}, {name: search, in: query, schema: {type: string}}, {$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
+      responses:
+        '200': {description: Policy-scoped device fleet, content: {application/json: {schema: {$ref: '#/components/schemas/DeviceFleetPage'}}}}
+        '403': {description: Administrator access required}
+        '404': {description: Policy not found in the active workspace}
+  /v1/device-fleet:
+    get:
+      operationId: listDeviceFleet
+      description: Lists endpoint installations with safe lifecycle, collector, policy, and identity-quality metadata. Results are cursor paginated and retained revoked devices remain distinguishable from offline devices.
+      parameters: [{name: policy_id, in: query, schema: {type: string, format: uuid}}, {name: status, in: query, schema: {enum: [reporting, stale_offline, never_scanned, partial, failed, revoked]}}, {name: search, in: query, schema: {type: string}}, {$ref: '#/components/parameters/Cursor'}, {$ref: '#/components/parameters/Limit'}]
+      responses:
+        '200': {description: Paginated device fleet, content: {application/json: {schema: {$ref: '#/components/schemas/DeviceFleetPage'}}}}
+        '403': {description: Inventory read permission required}
+  /v1/device-fleet/{id}:
+    get:
+      operationId: getFleetDevice
+      description: Inspects one endpoint installation without exposing protected identity material.
+      parameters: [{$ref: '#/components/parameters/ID'}]
+      responses:
+        '200': {description: Device lifecycle detail, content: {application/json: {schema: {$ref: '#/components/schemas/FleetDevice'}}}}
+        '403': {description: Inventory read permission required}
+        '404': {description: Device not found in the active workspace}
+    patch:
+      operationId: renameFleetDevice
+      description: Sets administrator-defined display metadata without changing observed hostname or installation identity.
+      parameters: [{$ref: '#/components/parameters/ID'}]
+      requestBody: {required: true, content: {application/json: {schema: {type: object, additionalProperties: false, required: [name], properties: {name: {type: string, minLength: 1, maxLength: 128}}}}}}
+      responses: {'200': {description: Device renamed}, '403': {description: Administrator access required}, '404': {description: Device not found}}
+    delete:
+      operationId: revokeFleetDevice
+      description: Revokes an individual installation and all active collector credentials while retaining its stale evidence and policy lineage.
+      parameters: [{$ref: '#/components/parameters/ID'}]
+      responses: {'204': {description: Device revoked}, '403': {description: Administrator access required}, '404': {description: Active device not found}}
   /v1/admin/sources/{id}:
     delete: {operationId: revokeDiscoverySource, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'204': {description: Source credentials revoked and its current observations removed}, '404': {description: Source not found}}}
   /v1/admin/coverage/baselines:
@@ -353,6 +390,68 @@ components:
         credential_displayed_once: {type: boolean, const: true}
         hub_url: {type: string}
         collector_version: {type: string}
+    DeviceFleetSummary:
+      type: object
+      additionalProperties: false
+      required: [enrolled, scanned, reporting, stale_offline, partial, failed, revoked]
+      properties:
+        enrolled: {type: integer, minimum: 0}
+        scanned: {type: integer, minimum: 0}
+        reporting: {type: integer, minimum: 0}
+        stale_offline: {type: integer, minimum: 0}
+        partial: {type: integer, minimum: 0}
+        failed: {type: integer, minimum: 0}
+        revoked: {type: integer, minimum: 0}
+    FleetDevice:
+      type: object
+      additionalProperties: false
+      required: [id, name, observed_name, reporting_mode, lifecycle_status, freshness, identity_quality, possible_duplicate, partial, failed, current, first_seen_at, evidence_url]
+      properties:
+        id: {type: string}
+        name: {type: string, description: 'Administrator-defined friendly name when present, otherwise the latest observed hostname.'}
+        observed_name: {type: string, description: Latest hostname observed from the collector; not used as installation identity.}
+        custom_name: {type: string}
+        platform: {type: string}
+        architecture: {type: string}
+        collector_version: {type: string}
+        reporting_mode: {enum: [continuous, quick_scan]}
+        lifecycle_status: {enum: [never_scanned, reporting, stale_offline, partial, failed, revoked]}
+        freshness: {enum: [fresh, stale, never]}
+        identity_quality: {enum: [persistent, legacy_identity]}
+        possible_duplicate: {type: boolean}
+        partial: {type: boolean}
+        failed: {type: boolean}
+        current: {type: boolean}
+        first_seen_at: {type: string, format: date-time}
+        last_seen_at: {type: string, format: date-time}
+        last_full_at: {type: string, format: date-time}
+        evidence_expires_at: {type: string, format: date-time}
+        revoked_at: {type: string, format: date-time}
+        deployment_policy_id: {type: string, format: uuid}
+        deployment_policy_name: {type: string}
+        evidence_url: {type: string}
+    DeviceFleetPage:
+      type: object
+      additionalProperties: false
+      required: [items, summary, policies, limit]
+      properties:
+        items: {type: array, items: {$ref: '#/components/schemas/FleetDevice'}}
+        summary: {$ref: '#/components/schemas/DeviceFleetSummary'}
+        policies:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [id, name, status, expected_device_count, enrolled_count, remaining_count]
+            properties:
+              id: {type: string, format: uuid}
+              name: {type: string}
+              status: {enum: [active, revoked]}
+              expected_device_count: {type: [integer, 'null'], minimum: 0}
+              enrolled_count: {type: integer, minimum: 0}
+              remaining_count: {type: integer, minimum: 0}
+        limit: {type: integer, minimum: 1, maximum: 1000}
+        next_cursor: {type: string}
     EnvironmentSetupRequest:
       type: object
       additionalProperties: false

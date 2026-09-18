@@ -18,5 +18,6 @@ import "./styles/dashboard.css";
 import "./styles/executive.css";
 import "./styles/guided-review.css";
 import "./styles/self-serve.css";
+import "./styles/device-fleet.css";
 import "./styles/overrides.css";
 createRoot(document.getElementById("root")!).render(<StrictMode><App/></StrictMode>);

@@ -210,6 +210,52 @@ export type Target = {
   collectors: Collector[];
 };
 
+export type DeviceFleetSummary = {
+  enrolled: number;
+  scanned: number;
+  reporting: number;
+  stale_offline: number;
+  partial: number;
+  failed: number;
+  revoked: number;
+};
+
+export type FleetPolicySummary = {
+  id: string;
+  name: string;
+  status: "active" | "revoked";
+  expected_device_count: number | null;
+  enrolled_count: number;
+  remaining_count: number;
+};
+
+export type FleetDevice = {
+  id: string;
+  name: string;
+  observed_name: string;
+  custom_name?: string;
+  platform?: string;
+  architecture?: string;
+  collector_version?: string;
+  reporting_mode: "continuous" | "quick_scan";
+  lifecycle_status: "never_scanned" | "reporting" | "stale_offline" | "partial" | "failed" | "revoked";
+  freshness: "fresh" | "stale" | "never";
+  identity_quality: "persistent" | "legacy_identity";
+  possible_duplicate: boolean;
+  partial: boolean;
+  failed: boolean;
+  current: boolean;
+  first_seen_at: string;
+  last_seen_at?: string;
+  last_full_at?: string;
+  revoked_at?: string;
+  deployment_policy_id?: string;
+  deployment_policy_name?: string;
+  evidence_url: string;
+};
+
+export type DeviceFleetPage = PageResult<FleetDevice> & { summary: DeviceFleetSummary; policies: FleetPolicySummary[] };
+
 export type PageResult<T> = { items: T[]; limit: number; next_cursor?: string };
 
 export type AuthConfig = {

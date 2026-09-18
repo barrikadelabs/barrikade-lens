@@ -209,6 +209,7 @@ func (s *Server) routes() {
 	authenticated.HandleFunc("GET /v1/deployment-policies/{id}", s.getDeploymentPolicy)
 	authenticated.HandleFunc("PATCH /v1/deployment-policies/{id}", s.updateDeploymentPolicy)
 	authenticated.HandleFunc("DELETE /v1/deployment-policies/{id}", s.revokeDeploymentPolicy)
+	authenticated.HandleFunc("GET /v1/deployment-policies/{id}/devices", s.listDeploymentPolicyDevices)
 	authenticated.HandleFunc("POST /v1/deployment-policies/{id}/enrollment-credentials", s.rotateDeploymentPolicyCredential)
 	authenticated.HandleFunc("DELETE /v1/deployment-policies/{id}/enrollment-credentials/{credentialId}", s.revokeDeploymentPolicyCredential)
 	authenticated.HandleFunc("POST /v1/admin/service-accounts", s.createServiceAccount)
@@ -225,6 +226,10 @@ func (s *Server) routes() {
 	authenticated.HandleFunc("GET /v1/systems/{id}", s.getSystem)
 	authenticated.HandleFunc("GET /v1/targets", s.listTargets)
 	authenticated.HandleFunc("GET /v1/targets/{id}", s.getTarget)
+	authenticated.HandleFunc("GET /v1/device-fleet", s.listDeviceFleet)
+	authenticated.HandleFunc("GET /v1/device-fleet/{id}", s.getFleetDevice)
+	authenticated.HandleFunc("PATCH /v1/device-fleet/{id}", s.renameFleetDevice)
+	authenticated.HandleFunc("DELETE /v1/device-fleet/{id}", s.revokeFleetDevice)
 	authenticated.HandleFunc("PUT /v1/admin/coverage/baselines", s.putCoverageBaselines)
 	authenticated.HandleFunc("GET /v1/relationships", s.listRelationships)
 	authenticated.HandleFunc("GET /v1/changes", s.listChanges)
@@ -514,16 +519,26 @@ func (s *Server) exchangeEnrollment(w http.ResponseWriter, r *http.Request) {
 		rejectEnrollment(http.StatusBadRequest, "invalid_collector_identity", "The collector identity is invalid", "invalid_identity")
 		return
 	}
+	var deviceRevokedAt *time.Time
+	err = tx.QueryRow(r.Context(), `SELECT revoked_at FROM discovery_targets WHERE organization_id=$1 AND identity_fingerprint=$2 FOR UPDATE`, orgID, fingerprint).Scan(&deviceRevokedAt)
+	if err == nil && deviceRevokedAt != nil {
+		rejectEnrollment(http.StatusForbidden, "device_revoked", "This device installation was revoked by an administrator", "device_revoked")
+		return
+	}
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusInternalServerError, "database_error", "Could not validate device enrollment state")
+		return
+	}
 	targetKey := sourceType + ":" + targetIdentity
 	if sourceType == "endpoint" {
 		targetKey = "installation-key:" + fingerprint
 	}
 	targetID := discovery.StableID(orgID, targetKind, targetKey)
 	publicKey, _ := base64.RawURLEncoding.DecodeString(request.IdentityPublicKey)
-	err = tx.QueryRow(r.Context(), `INSERT INTO discovery_targets(organization_id,id,target_type,identity_fingerprint,identity_public_key,identity_quality,name,platform,architecture,reporting_mode,evidence_expires_at)
-		VALUES($1,$2,$3,$4,$5,'persistent',$6,$7,$8,$9,NULL)
+	err = tx.QueryRow(r.Context(), `INSERT INTO discovery_targets(organization_id,id,target_type,identity_fingerprint,identity_public_key,identity_quality,name,observed_name,platform,architecture,reporting_mode,evidence_expires_at)
+		VALUES($1,$2,$3,$4,$5,'persistent',$6,$6,$7,$8,$9,NULL)
 		ON CONFLICT(organization_id,identity_fingerprint) WHERE identity_fingerprint IS NOT NULL
-		DO UPDATE SET name=EXCLUDED.name,platform=EXCLUDED.platform,architecture=EXCLUDED.architecture,current=true,reporting_mode=EXCLUDED.reporting_mode,evidence_expires_at=CASE WHEN EXCLUDED.reporting_mode='continuous' THEN NULL ELSE discovery_targets.evidence_expires_at END
+		DO UPDATE SET name=EXCLUDED.name,observed_name=EXCLUDED.observed_name,platform=EXCLUDED.platform,architecture=EXCLUDED.architecture,current=true,reporting_mode=EXCLUDED.reporting_mode,evidence_expires_at=CASE WHEN EXCLUDED.reporting_mode='continuous' THEN NULL ELSE discovery_targets.evidence_expires_at END
 		RETURNING id`, orgID, targetID, sourceType, fingerprint, publicKey, displayName, request.Platform, request.Architecture, enrollmentMode).Scan(&targetID)
 	if err != nil {
 		writeError(w, 500, "database_error", "Could not create discovery target")

@@ -1,4 +1,4 @@
-import type { Activation, AuthConfig, Change, ConnectionStatus, Environment, EnvironmentKind, EnvironmentScan, ExposureFinding, Notification, Overview, PageResult, ProductItem, ScanStatus, Session, SetupSession, SystemDetail, SystemItem, Target } from "./api-types";
+import type { Activation, AuthConfig, Change, ConnectionStatus, DeviceFleetPage, Environment, EnvironmentKind, EnvironmentScan, ExposureFinding, FleetDevice, Notification, Overview, PageResult, ProductItem, ScanStatus, Session, SetupSession, SystemDetail, SystemItem, Target } from "./api-types";
 export type * from "./api-types";
 
 export async function authConfig() {
@@ -128,6 +128,22 @@ export class API {
 
   targets(filters: Record<string, string | number | undefined> = {}) {
     return this.request<PageResult<Target>>(queryPath("/v1/targets", { limit: 50, ...filters }));
+  }
+
+  deviceFleet(filters: Record<string, string | number | undefined> = {}) {
+    return this.request<DeviceFleetPage>(queryPath("/v1/device-fleet", { limit: 50, ...filters }));
+  }
+
+  device(id: string) {
+    return this.request<FleetDevice>(`/v1/device-fleet/${encodeURIComponent(id)}`);
+  }
+
+  renameDevice(id: string, name: string) {
+    return this.request<{ id: string; name: string }>(`/v1/device-fleet/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ name }) });
+  }
+
+  revokeDevice(id: string) {
+    return this.request<void>(`/v1/device-fleet/${encodeURIComponent(id)}`, { method: "DELETE" });
   }
 
   changes(filters: Record<string, string | number | undefined> = {}) {

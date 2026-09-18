@@ -9,6 +9,7 @@ import { OverviewPage } from "../../features/overview/OverviewPage";
 import { FindingsPage } from "../../features/findings/FindingsPage";
 import { SystemsPage } from "../../features/inventory/SystemsPage";
 import { ConnectionsPage } from "../../features/connections/ConnectionsPage";
+import { DeviceFleetPage } from "../../features/connections/DeviceFleetPage";
 import { ChangesPage } from "../../features/changes/ChangesPage";
 import { AccountSettings } from "../../features/settings/AccountSettings";
 const EvidenceGraphPage = lazy(() => import("../../EvidenceGraph").then((module) => ({ default: module.EvidenceGraphPage })));
@@ -66,6 +67,7 @@ export function Shell({ api, signOut, organizationControl, userControl, selfServ
           <Route path="/systems/:systemId" element={<SystemRoute api={api} revision={revision} />} />
           <Route path="/connections" element={<ConnectionsPage api={api} revision={revision} onResults={() => navigate("/overview")} />} />
           <Route path="/connections/new" element={<ConnectionsPage api={api} revision={revision} onResults={() => navigate("/overview")} startWizard />} />
+          <Route path="/connections/devices" element={<DeviceFleetPage api={api} revision={revision} />} />
           <Route path="/connections/:environmentId" element={<ConnectionsPage api={api} revision={revision} onResults={() => navigate("/overview")} />} />
           <Route path="/systems/:systemId/evidence" element={<EvidenceRoute api={api} revision={revision} />} />
           <Route path="/changes" element={<ChangesPage api={api} revision={revision} />} />

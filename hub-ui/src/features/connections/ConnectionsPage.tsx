@@ -176,6 +176,7 @@ function EnvironmentActivationCard({ api, environment, revision, canManage, onRe
 }
 
 function CoveragePage({ api, revision }: { api: API; revision: number }) {
+	const navigate = useNavigate();
   const [targetType, setTargetType] = useState("");
   const overview = useRemote(() => api.overview("7d"), [api, revision]);
   const targets = useRemote(() => api.targets({ target_type: targetType, limit: 100 }), [api, revision, targetType]);
@@ -185,7 +186,7 @@ function CoveragePage({ api, revision }: { api: API; revision: number }) {
   return <div className="page-stack">
     <section className="coverage-cards">{overview.data.coverage.map((item) => <CoverageCard key={item.target_type} item={item} active={targetType === item.target_type} onClick={() => { captureAnalytics({ name: "lens_interaction", properties: { surface: "connections", interaction: "filter_changed", control: "target_type" } }); setTargetType((value) => value === item.target_type ? "" : item.target_type); }} />)}</section>
     <section className="panel data-panel">
-      <PanelHeading title="Unique discovery targets" detail="One row per endpoint installation, repository, or cluster. Collector credentials are nested below the target." count={targets.data.items.length} />
+      <PanelHeading title="Unique discovery targets" detail="One row per endpoint installation, repository, or cluster. Collector credentials are nested below the target." action={<button className="button subtle" onClick={() => navigate("/connections/devices")}><Monitor size={14} /> Manage device fleet</button>} />
       <div className="target-table table-scroll"><div className="target-row table-head"><span>Target</span><span>Surface</span><span>Freshness</span><span>Last full scan</span><span>Data quality</span><span /></div>
         {targets.data.items.map((target) => <div className="target-group" key={target.id}>
           <button className="target-row" onClick={() => setExpanded((value) => value === target.id ? undefined : target.id)}>
