@@ -238,7 +238,7 @@ func normalizeSnapshot(ctx context.Context, tx pgx.Tx, snapshot discovery.Snapsh
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `UPDATE discovery_targets SET name=COALESCE(NULLIF($3,''),name),platform=COALESCE(NULLIF($4,''),platform),last_seen_at=$5,last_full_at=CASE WHEN $6 THEN $5 ELSE last_full_at END,current=true,reporting_mode=$7,evidence_expires_at=$8 WHERE organization_id=$1 AND id=$2`, snapshot.OrganizationID, targetID, snapshot.Scope.Name, snapshot.Scope.Attributes["platform"], observedAt, snapshot.Full, reportingMode, evidenceExpiresAt)
+	_, err = tx.Exec(ctx, `UPDATE discovery_targets SET name=COALESCE(NULLIF($3,''),name),observed_name=COALESCE(NULLIF($3,''),observed_name,name),platform=COALESCE(NULLIF($4,''),platform),last_seen_at=$5,last_full_at=CASE WHEN $6 THEN $5 ELSE last_full_at END,current=true,reporting_mode=$7,evidence_expires_at=$8 WHERE organization_id=$1 AND id=$2 AND revoked_at IS NULL`, snapshot.OrganizationID, targetID, snapshot.Scope.Name, snapshot.Scope.Attributes["platform"], observedAt, snapshot.Full, reportingMode, evidenceExpiresAt)
 	if err != nil {
 		return err
 	}

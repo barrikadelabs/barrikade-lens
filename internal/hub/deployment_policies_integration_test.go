@@ -199,6 +199,112 @@ func TestDeploymentPolicyEnrollmentLineageAndReenrollment(t *testing.T) {
 	}
 }
 
+func TestPolicyAwareDeviceFleetLifecycle(t *testing.T) {
+	server, orgID := newIdentityTestServer(t)
+	engineering := createPolicyCredentialFixture(t, server, "identity-admin", 4)
+	finance := createPolicyCredentialFixture(t, server, "identity-admin", 2)
+	firstIdentity, _ := identity.LoadOrCreate(filepath.Join(t.TempDir(), "first.json"), "http://lens.test")
+	secondIdentity, _ := identity.LoadOrCreate(filepath.Join(t.TempDir(), "second.json"), "http://lens.test")
+	firstResponse, first := exchangePolicyIdentity(t, server, firstIdentity, engineering.Code, "shared-host.local", "endpoint")
+	secondResponse, second := exchangePolicyIdentity(t, server, secondIdentity, finance.Code, "shared-host.local", "endpoint")
+	if firstResponse.Code != http.StatusOK || secondResponse.Code != http.StatusOK || first.TargetID == second.TargetID {
+		t.Fatalf("hostname collision did not preserve installation identity: first=%d %+v second=%d %+v", firstResponse.Code, first, secondResponse.Code, second)
+	}
+	updates := []struct {
+		query string
+		id    string
+	}{
+		{`UPDATE discovery_targets SET last_seen_at=now(),last_full_at=now() WHERE organization_id=$1 AND id=$2`, first.TargetID},
+		{`UPDATE sources SET last_seen_at=now(),last_full_at=now(),collector_version='2.1.0',latest_partial=false,latest_error_count=0 WHERE organization_id=$1 AND id=$2`, first.SourceID},
+		{`UPDATE discovery_targets SET last_seen_at=now()-interval '2 hours',last_full_at=NULL WHERE organization_id=$1 AND id=$2`, second.TargetID},
+		{`UPDATE sources SET last_seen_at=now()-interval '2 hours',last_full_at=NULL,collector_version='2.0.0',latest_partial=true,latest_error_count=2 WHERE organization_id=$1 AND id=$2`, second.SourceID},
+	}
+	for _, update := range updates {
+		if _, err := server.config.Pool.Exec(t.Context(), update.query, orgID, update.id); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	page := policyAPICall(server, "identity-admin", http.MethodGet, "/v1/device-fleet?limit=1", "")
+	if page.Code != http.StatusOK {
+		t.Fatalf("fleet list returned %d: %s", page.Code, page.Body.String())
+	}
+	var fleet struct {
+		Items      []fleetDevice      `json:"items"`
+		Summary    deviceFleetSummary `json:"summary"`
+		NextCursor string             `json:"next_cursor"`
+	}
+	if err := json.Unmarshal(page.Body.Bytes(), &fleet); err != nil {
+		t.Fatal(err)
+	}
+	if len(fleet.Items) != 1 || fleet.NextCursor == "" || fleet.Summary.Enrolled != 2 || fleet.Summary.Scanned != 2 || fleet.Summary.Reporting != 1 || fleet.Summary.StaleOffline != 1 || fleet.Summary.Partial != 1 || fleet.Summary.Failed != 1 {
+		t.Fatalf("unexpected fleet page or lifecycle totals: %+v", fleet)
+	}
+	duplicatePage := policyAPICall(server, "identity-admin", http.MethodGet, "/v1/device-fleet?limit=10", "")
+	if !strings.Contains(duplicatePage.Body.String(), `"possible_duplicate":true`) {
+		t.Fatalf("hostname collision diagnostics missing: %s", duplicatePage.Body.String())
+	}
+
+	rename := policyAPICall(server, "identity-admin", http.MethodPatch, "/v1/device-fleet/"+first.TargetID, `{"name":"Ishaan's laptop"}`)
+	if rename.Code != http.StatusOK {
+		t.Fatalf("device rename returned %d: %s", rename.Code, rename.Body.String())
+	}
+	reenrolledResponse, reenrolled := exchangePolicyIdentity(t, server, firstIdentity, engineering.Code, "renamed-host.local", "endpoint")
+	if reenrolledResponse.Code != http.StatusOK || reenrolled.TargetID != first.TargetID {
+		t.Fatalf("rename or hostname change broke target continuity: %d %+v", reenrolledResponse.Code, reenrolled)
+	}
+	renamed := policyAPICall(server, "identity-admin", http.MethodGet, "/v1/device-fleet?search=Ishaan", "")
+	if renamed.Code != http.StatusOK || !strings.Contains(renamed.Body.String(), `"name":"Ishaan's laptop"`) || !strings.Contains(renamed.Body.String(), `"observed_name":"renamed-host.local"`) {
+		t.Fatalf("friendly and observed names were not kept separate: %d %s", renamed.Code, renamed.Body.String())
+	}
+	if inspect := policyAPICall(server, "identity-admin", http.MethodGet, "/v1/device-fleet/"+first.TargetID, ""); inspect.Code != http.StatusOK || !strings.Contains(inspect.Body.String(), `"deployment_policy_name":"Engineering laptops"`) {
+		t.Fatalf("device inspection returned %d: %s", inspect.Code, inspect.Body.String())
+	}
+	members := policyAPICall(server, "identity-admin", http.MethodGet, "/v1/deployment-policies/"+engineering.PolicyID+"/devices", "")
+	if members.Code != http.StatusOK || !strings.Contains(members.Body.String(), first.TargetID) || strings.Contains(members.Body.String(), second.TargetID) {
+		t.Fatalf("policy membership was not isolated: %d %s", members.Code, members.Body.String())
+	}
+
+	viewer, _, err := server.auth.issueHumanToken(orgID, "fleet-viewer", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response := policyAPICall(server, viewer, http.MethodGet, "/v1/device-fleet", ""); response.Code != http.StatusOK {
+		t.Fatalf("viewer could not inspect fleet: %d %s", response.Code, response.Body.String())
+	}
+	if response := policyAPICall(server, viewer, http.MethodPatch, "/v1/device-fleet/"+first.TargetID, `{"name":"unauthorized"}`); response.Code != http.StatusForbidden {
+		t.Fatalf("viewer rename returned %d: %s", response.Code, response.Body.String())
+	}
+	otherOrg := "fleet-other-" + uuid.NewString()
+	otherServer, err := NewServer(t.Context(), Config{Pool: server.config.Pool, WorkerPool: server.config.WorkerPool, JWTSecret: []byte("other-fleet-012345678901234567890123456789"), DevAdminToken: "other-fleet-admin", DefaultOrganizationID: otherOrg, PublicURL: "http://lens.test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = server.config.Pool.Exec(t.Context(), `DELETE FROM organizations WHERE id=$1`, otherOrg) })
+	if response := policyAPICall(otherServer, "other-fleet-admin", http.MethodGet, "/v1/device-fleet", ""); response.Code != http.StatusOK || strings.Contains(response.Body.String(), first.TargetID) {
+		t.Fatalf("cross-organization fleet list leaked a device: %d %s", response.Code, response.Body.String())
+	}
+	for _, operation := range []struct{ method, path, body string }{
+		{http.MethodGet, "/v1/device-fleet/" + first.TargetID, ""},
+		{http.MethodPatch, "/v1/device-fleet/" + first.TargetID, `{"name":"cross-tenant"}`},
+		{http.MethodDelete, "/v1/device-fleet/" + first.TargetID, ""},
+	} {
+		if response := policyAPICall(otherServer, "other-fleet-admin", operation.method, operation.path, operation.body); response.Code != http.StatusNotFound {
+			t.Fatalf("cross-organization %s returned %d: %s", operation.method, response.Code, response.Body.String())
+		}
+	}
+
+	if response := policyAPICall(server, "identity-admin", http.MethodDelete, "/v1/device-fleet/"+first.TargetID, ""); response.Code != http.StatusNoContent {
+		t.Fatalf("device revocation returned %d: %s", response.Code, response.Body.String())
+	}
+	if response := policyAPICall(server, "identity-admin", http.MethodGet, "/v1/device-fleet?status=revoked", ""); response.Code != http.StatusOK || !strings.Contains(response.Body.String(), first.TargetID) || !strings.Contains(response.Body.String(), `"lifecycle_status":"revoked"`) {
+		t.Fatalf("revoked device status missing: %d %s", response.Code, response.Body.String())
+	}
+	if response, _ := exchangePolicyIdentity(t, server, firstIdentity, engineering.Code, "renamed-again.local", "endpoint"); response.Code != http.StatusForbidden || !strings.Contains(response.Body.String(), "device_revoked") {
+		t.Fatalf("revoked installation re-enrolled: %d %s", response.Code, response.Body.String())
+	}
+}
+
 func TestDeploymentPolicyEnrollmentRejectionsAndRevocation(t *testing.T) {
 	server, orgID := newIdentityTestServer(t)
 	state, _ := identity.LoadOrCreate(filepath.Join(t.TempDir(), "identity.json"), "http://lens.test")

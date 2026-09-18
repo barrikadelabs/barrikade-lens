@@ -144,6 +144,49 @@ test("a resumable setup closes into live device status after enrollment", async 
   await expect(page.getByRole("heading", { name: "1 connected sources" })).toBeVisible();
 });
 
+test("device fleet keeps identity, policy, lifecycle, and admin controls operational", async ({ page }) => {
+  await authenticateDevelopment(page);
+  let deviceName = "shared-host.local";
+  let revoked = false;
+  const requests: Array<{ method: string; body?: unknown }> = [];
+  await page.route(/\/v1\/device-fleet(?:\/[^?]+)?(?:\?.*)?$/, async (route) => {
+    const method = route.request().method();
+    if (method === "PATCH") {
+      const body = JSON.parse(route.request().postData() || "{}") as { name?: string };
+      deviceName = body.name || deviceName;
+      requests.push({ method, body });
+      return route.fulfill({ json: { id: "target-1", name: deviceName } });
+    }
+    if (method === "DELETE") {
+      revoked = true;
+      requests.push({ method });
+      return route.fulfill({ status: 204, body: "" });
+    }
+    return route.fulfill({ json: {
+      summary: { enrolled: 2, scanned: 2, reporting: revoked ? 0 : 1, stale_offline: 1, partial: 1, failed: 0, revoked: revoked ? 1 : 0 },
+      policies: [{ id: "11111111-1111-1111-1111-111111111111", name: "Engineering laptops", status: "active", expected_device_count: 25, enrolled_count: 2, remaining_count: 23 }],
+      items: [{ id: "target-1", name: deviceName, observed_name: "shared-host.local", custom_name: deviceName === "shared-host.local" ? undefined : deviceName, platform: "darwin", architecture: "arm64", collector_version: "2.1.0", reporting_mode: "continuous", lifecycle_status: revoked ? "revoked" : "reporting", freshness: revoked ? "stale" : "fresh", identity_quality: "persistent", possible_duplicate: true, partial: false, failed: false, current: !revoked, first_seen_at: new Date().toISOString(), last_seen_at: new Date().toISOString(), last_full_at: new Date().toISOString(), deployment_policy_id: "11111111-1111-1111-1111-111111111111", deployment_policy_name: "Engineering laptops", evidence_url: "/v1/entities?target_id=target-1" }],
+      limit: 50,
+    } });
+  });
+
+  await page.goto("/connections/devices");
+  await expect(page.getByRole("heading", { name: "Device fleet" })).toBeVisible();
+  await expect(page.getByText("Engineering laptops").first()).toBeVisible();
+  await expect(page.getByText("Reporting", { exact: true }).last()).toBeVisible();
+  await expect(page.getByText("duplicate hostname")).toBeVisible();
+
+  page.once("dialog", (dialog) => dialog.accept("Ishaan's laptop"));
+  await page.getByTitle("Rename device").click();
+  await expect(page.getByText("Ishaan's laptop")).toBeVisible();
+  expect(requests[0]).toEqual({ method: "PATCH", body: { name: "Ishaan's laptop" } });
+
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByTitle("Revoke device").click();
+  await expect(page.getByText("Revoked", { exact: true }).last()).toBeVisible();
+  expect(requests[1]).toEqual({ method: "DELETE" });
+});
+
 test("viewers can inspect coverage but cannot start an environment scan", async ({ page }) => {
   await authenticateDevelopment(page, { role: "viewer" });
   await page.route("**/v1/environments", async (route) => route.fulfill({ json: { items: [] } }));
