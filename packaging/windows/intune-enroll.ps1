@@ -16,8 +16,9 @@ Remove-Item Env:BARRIKADE_LENS_ENROLLMENT_CODE -ErrorAction SilentlyContinue
 
 try {
     if ($MsiPath) {
-        $installer = Start-Process msiexec.exe -Wait -PassThru -WindowStyle Hidden -ArgumentList @('/i', ('"{0}"' -f $MsiPath), '/qn', '/norestart')
-        if ($installer.ExitCode -notin @(0, 3010)) { throw "Barrikade Lens MSI installation failed with exit code $($installer.ExitCode)" }
+        $resolvedMsiPath = (Resolve-Path -LiteralPath $MsiPath).Path
+        & msiexec.exe /i $resolvedMsiPath /qn /norestart
+        if ($LASTEXITCODE -notin @(0, 3010)) { throw "Barrikade Lens MSI installation failed with exit code $LASTEXITCODE" }
     }
 
     $binary = Join-Path $env:ProgramFiles "Barrikade Lens\barrikade-lens.exe"

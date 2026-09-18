@@ -141,8 +141,9 @@ jobs:
           $env:GOOS = 'windows'; $env:GOARCH = 'amd64'; $env:CGO_ENABLED = '0'
           go build -o dist/barrikade-lens.exe ./cmd/barrikade-lens
           ./packaging/windows/build-msi.ps1 -Version 0.0.0 -Architecture x64 -Binary "$pwd/dist/barrikade-lens.exe" -Output "$pwd/dist/barrikade-lens.msi"
-          $install = Start-Process msiexec.exe -Wait -PassThru -ArgumentList @('/i', "`"$pwd/dist/barrikade-lens.msi`"", '/qn', '/norestart')
-          if ($install.ExitCode -ne 0) { throw "silent MSI install failed with $($install.ExitCode)" }
+          $msi = (Resolve-Path "$pwd/dist/barrikade-lens.msi").Path
+          & msiexec.exe /i $msi /qn /norestart
+          if ($LASTEXITCODE -notin @(0, 3010)) { throw "silent MSI install failed with $LASTEXITCODE" }
           if (-not (Test-Path "$env:ProgramFiles\Barrikade Lens\barrikade-lens.exe")) { throw 'binary was not installed' }
           if (-not (Get-Service BarrikadeLens -ErrorAction SilentlyContinue)) { throw 'service was not registered' }
           $state = "$env:ProgramData\Barrikade\Lens"
@@ -157,11 +158,12 @@ jobs:
           $state = "$env:ProgramData\Barrikade\Lens"
           Set-Content -NoNewline -Encoding ascii -Path "$state\identity.json" -Value package-smoke
           Copy-Item "$env:ProgramFiles\Barrikade Lens\full-cleanup.ps1" "$env:RUNNER_TEMP\full-cleanup.ps1"
-          $repair = Start-Process msiexec.exe -Wait -PassThru -ArgumentList @('/fa', "`"$pwd/dist/barrikade-lens.msi`"", '/qn', '/norestart')
-          if ($repair.ExitCode -ne 0) { throw "silent MSI repair failed with $($repair.ExitCode)" }
+          $msi = (Resolve-Path "$pwd/dist/barrikade-lens.msi").Path
+          & msiexec.exe /fa $msi /qn /norestart
+          if ($LASTEXITCODE -notin @(0, 3010)) { throw "silent MSI repair failed with $LASTEXITCODE" }
           if ((Get-Content -Raw "$state\identity.json") -ne 'package-smoke') { throw 'repair replaced machine identity' }
-          $uninstall = Start-Process msiexec.exe -Wait -PassThru -ArgumentList @('/x', "`"$pwd/dist/barrikade-lens.msi`"", '/qn', '/norestart')
-          if ($uninstall.ExitCode -ne 0) { throw "silent MSI uninstall failed with $($uninstall.ExitCode)" }
+          & msiexec.exe /x $msi /qn /norestart
+          if ($LASTEXITCODE -notin @(0, 3010)) { throw "silent MSI uninstall failed with $LASTEXITCODE" }
           if (Test-Path "$env:ProgramFiles\Barrikade Lens\barrikade-lens.exe") { throw 'binary remained after uninstall' }
           if ((Get-Content -Raw "$state\identity.json") -ne 'package-smoke') { throw 'uninstall removed machine identity' }
           & "$env:RUNNER_TEMP\full-cleanup.ps1" -Confirm:$false
