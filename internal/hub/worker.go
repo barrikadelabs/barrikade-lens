@@ -146,11 +146,11 @@ func recordSuccessfulScanAnalytics(ctx context.Context, parent pgx.Tx, config Pr
 		return err
 	}
 	defer tx.Rollback(ctx)
-	var rootSystems int
-	if err = tx.QueryRow(ctx, `SELECT count(*) FROM source_entities se
+	var entityCount, rootSystems int
+	if err = tx.QueryRow(ctx, `SELECT count(*),count(*) FILTER(WHERE p.system_role='system') FROM source_entities se
 		JOIN entities e ON e.organization_id=se.organization_id AND e.id=se.entity_id AND e.current=true
-		JOIN entity_posture p ON p.organization_id=e.organization_id AND p.entity_id=e.id
-		WHERE se.organization_id=$1 AND se.source_id=$2 AND se.current=true AND p.system_role='system'`, snapshot.OrganizationID, snapshot.SourceID).Scan(&rootSystems); err != nil {
+		LEFT JOIN entity_posture p ON p.organization_id=e.organization_id AND p.entity_id=e.id
+		WHERE se.organization_id=$1 AND se.source_id=$2 AND se.current=true`, snapshot.OrganizationID, snapshot.SourceID).Scan(&entityCount, &rootSystems); err != nil {
 		return err
 	}
 	properties := map[string]any{"status": resultStatus, "partial": resultStatus == "partial", "duration_ms": time.Since(processingStarted).Milliseconds(), "queue_ms": processingStarted.Sub(queuedAt).Milliseconds(), "system_count_bucket": systemCountBucket(max(rootSystems, 1))}
@@ -178,6 +178,44 @@ func recordSuccessfulScanAnalytics(ctx context.Context, parent pgx.Tx, config Pr
 		if err = recordProductEvent(ctx, tx, config, ProductEvent{OrganizationID: snapshot.OrganizationID, Name: "first_credible_discovery_completed", Properties: properties, DedupeKey: "first"}); err != nil {
 			return err
 		}
+	}
+	var installationID int64
+	var firstScanStartedAt *time.Time
+	if err = tx.QueryRow(ctx, `SELECT gi.installation_id,gi.first_scan_started_at FROM github_repositories gr JOIN github_installations gi ON gi.installation_id=gr.installation_id AND gi.organization_id=gr.organization_id WHERE gr.organization_id=$1 AND gr.source_id=$2`, snapshot.OrganizationID, snapshot.SourceID).Scan(&installationID, &firstScanStartedAt); err == nil {
+		duration := time.Since(processingStarted).Milliseconds()
+		if firstScanStartedAt != nil {
+			duration = time.Since(*firstScanStartedAt).Milliseconds()
+		}
+		if entityCount > 0 {
+			if err = recordProductEvent(ctx, tx, config, ProductEvent{OrganizationID: snapshot.OrganizationID, Name: "github_first_result_received", Properties: map[string]any{"duration_ms": duration}, DedupeKey: fmt.Sprintf("%d", installationID)}); err != nil {
+				return err
+			}
+		}
+		var selected, terminal, failed, outstanding int
+		if err = tx.QueryRow(ctx, `WITH latest AS (
+			SELECT DISTINCT ON (j.owner,j.repository) j.status FROM repository_scan_jobs j
+			JOIN github_repository_selections rs ON rs.installation_id=j.installation_id AND rs.organization_id=j.organization_id AND rs.owner=lower(j.owner) AND rs.repository=lower(j.repository)
+			WHERE j.organization_id=$1 AND j.installation_id=$2 ORDER BY j.owner,j.repository,j.created_at DESC
+		) SELECT gi.selected_repository_count,
+			(SELECT count(*) FROM latest WHERE status IN ('complete','failed')),
+			(SELECT count(*) FROM latest WHERE status='failed'),
+			(SELECT count(*) FROM github_repositories gr JOIN ingestion_jobs ij ON ij.organization_id=gr.organization_id AND ij.source_id=gr.source_id AND ij.status IN ('pending','processing') WHERE gr.organization_id=$1 AND gr.installation_id=$2)
+			FROM github_installations gi WHERE gi.organization_id=$1 AND gi.installation_id=$2`, snapshot.OrganizationID, installationID).Scan(&selected, &terminal, &failed, &outstanding); err != nil {
+			return err
+		}
+		if selected > 0 && terminal >= selected && outstanding == 0 {
+			partial := resultStatus == "partial" || failed > 0
+			status := "complete"
+			if partial {
+				status = "partial"
+			}
+			githubProperties := map[string]any{"status": status, "partial": partial, "duration_ms": duration}
+			if err = recordProductEvent(ctx, tx, config, ProductEvent{OrganizationID: snapshot.OrganizationID, Name: "github_first_scan_completed", Properties: githubProperties, DedupeKey: fmt.Sprintf("%d", installationID)}); err != nil {
+				return err
+			}
+		}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return err
 	}
 	return tx.Commit(ctx)
 }

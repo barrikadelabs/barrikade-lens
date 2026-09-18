@@ -178,10 +178,8 @@ func (s *Server) routes() {
 	if s.config.ClerkWebhookSecret != "" {
 		s.mux.HandleFunc("POST /v1/auth/clerk/webhook", s.clerkWebhook)
 	}
-	if len(s.config.GitHubWebhookSecret) > 0 {
+	if s.githubConnectorHealthy() {
 		s.mux.HandleFunc("POST /v1/connectors/github/webhook", s.githubWebhook)
-	}
-	if s.config.GitHubClient != nil && s.config.GitHubConnectorEnabled {
 		s.mux.HandleFunc("GET /v1/connectors/github/setup", s.githubSetupCallback)
 	}
 	authenticated := http.NewServeMux()
@@ -193,6 +191,9 @@ func (s *Server) routes() {
 	authenticated.HandleFunc("GET /v1/environments", s.listEnvironments)
 	authenticated.HandleFunc("GET /v1/environments/{id}", s.getEnvironment)
 	authenticated.HandleFunc("GET /v1/environments/{id}/activation", s.getEnvironmentActivation)
+	authenticated.HandleFunc("GET /v1/environments/{id}/github-status", s.getGitHubEnvironmentStatus)
+	authenticated.HandleFunc("POST /v1/environments/{id}/github-reconcile", s.reconcileGitHubEnvironment)
+	authenticated.HandleFunc("POST /v1/environments/{id}/github-reauthorize", s.reauthorizeGitHubEnvironment)
 	authenticated.HandleFunc("POST /v1/environments/setup-sessions", s.rateLimit("setup_creation", 30, 5*time.Minute, principalRequestKey, s.createEnvironmentSetupSession))
 	authenticated.HandleFunc("POST /v1/environments/{id}/enrollment-credentials", s.rotateEndpointEnrollmentCredential)
 	authenticated.HandleFunc("POST /v1/environments/{id}/enable-continuous-monitoring", s.enableContinuousMonitoring)

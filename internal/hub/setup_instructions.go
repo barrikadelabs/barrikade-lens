@@ -164,10 +164,7 @@ output "lens_workload_identity_audience" {
 			"excluded":        []string{"Prompt and conversation contents", "Secret values", "Source file bodies", "Write access"},
 		}
 	case "github_repository":
-		if s.config.GitHubAppSlug != "" {
-			return map[string]any{"method": "github_app", "install_url": "https://github.com/apps/" + url.PathEscape(s.config.GitHubAppSlug) + "/installations/new?state=" + url.QueryEscape(token), "select_repositories": true, "what_lens_reads": []string{"Selected repository metadata and detector-relevant configuration files"}, "excluded": []string{"Secret values", "Write access", "Repository administration"}}
-		}
-		return map[string]any{"method": "generic_ci", "enrollment_token": token, "message": "Install the Lens CI collector in the selected repository provider", "what_lens_reads": []string{"Detector-relevant repository configuration"}, "excluded": []string{"Secret values", "Write access"}}
+		return map[string]any{"method": "github_app", "install_url": "https://github.com/apps/" + url.PathEscape(s.config.GitHubAppSlug) + "/installations/new?state=" + url.QueryEscape(token), "select_repositories": true, "what_lens_reads": []string{"Selected repository metadata", "Detector-relevant configuration files"}, "excluded": []string{"Secret values", "Prompts and model inputs or outputs", "Write access", "Repository administration"}}
 	case "kubernetes_cluster":
 		return map[string]any{
 			"method": "helm", "enrollment_code": token,

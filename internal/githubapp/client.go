@@ -33,6 +33,16 @@ type Repository struct {
 	DefaultBranch string
 }
 
+// InstallationAccess is the effective, short-lived access granted to the App
+// installation. Keeping the permission response lets the Hub fail closed when
+// an App is deployed with broader permissions than the repository scanner uses.
+type InstallationAccess struct {
+	Token               string
+	ExpiresAt           time.Time
+	Permissions         map[string]string
+	RepositorySelection string
+}
+
 func New(appID string, keyPEM []byte, version string) (*Client, error) {
 	block, _ := pem.Decode(keyPEM)
 	if block == nil {
@@ -56,35 +66,45 @@ func New(appID string, keyPEM []byte, version string) (*Client, error) {
 }
 
 func (c *Client) InstallationToken(ctx context.Context, installationID int64) (string, time.Time, error) {
-	appToken, err := c.appJWT()
+	access, err := c.InstallationAccess(ctx, installationID)
 	if err != nil {
 		return "", time.Time{}, err
+	}
+	return access.Token, access.ExpiresAt, nil
+}
+
+func (c *Client) InstallationAccess(ctx context.Context, installationID int64) (InstallationAccess, error) {
+	appToken, err := c.appJWT()
+	if err != nil {
+		return InstallationAccess{}, err
 	}
 	endpoint := fmt.Sprintf("%s/app/installations/%d/access_tokens", strings.TrimSuffix(c.APIBase, "/"), installationID)
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, nil)
 	if err != nil {
-		return "", time.Time{}, err
+		return InstallationAccess{}, err
 	}
 	c.headers(request, appToken)
 	response, err := c.HTTP.Do(request)
 	if err != nil {
-		return "", time.Time{}, err
+		return InstallationAccess{}, err
 	}
 	defer response.Body.Close()
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return "", time.Time{}, fmt.Errorf("GitHub installation token returned HTTP %d", response.StatusCode)
+		return InstallationAccess{}, fmt.Errorf("GitHub installation token returned HTTP %d", response.StatusCode)
 	}
 	var value struct {
-		Token     string    `json:"token"`
-		ExpiresAt time.Time `json:"expires_at"`
+		Token               string            `json:"token"`
+		ExpiresAt           time.Time         `json:"expires_at"`
+		Permissions         map[string]string `json:"permissions"`
+		RepositorySelection string            `json:"repository_selection"`
 	}
 	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&value); err != nil {
-		return "", time.Time{}, err
+		return InstallationAccess{}, err
 	}
 	if value.Token == "" {
-		return "", time.Time{}, fmt.Errorf("GitHub returned an empty installation token")
+		return InstallationAccess{}, fmt.Errorf("GitHub returned an empty installation token")
 	}
-	return value.Token, value.ExpiresAt, nil
+	return InstallationAccess{Token: value.Token, ExpiresAt: value.ExpiresAt, Permissions: value.Permissions, RepositorySelection: value.RepositorySelection}, nil
 }
 
 func (c *Client) DownloadRepository(ctx context.Context, token, owner, repository, commit, destination string) error {

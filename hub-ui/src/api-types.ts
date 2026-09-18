@@ -328,6 +328,18 @@ export type Activation = {
   safe_error?: { code?: string; message?: string };
 };
 
+export type GitHubDiscoveryStatus = {
+  environment_id: string;
+  phase: "authorizing" | "awaiting_selection" | "scanning" | "partial" | "ready" | "failed" | "revoked" | "disconnected";
+  connection_status: ConnectionStatus;
+  repository_selection?: "all" | "selected";
+  selected_repositories: number;
+  progress: { percent: number; pending: number; processing: number; complete: number; failed: number };
+  summary: { assets_found: number };
+  first_scan_started_at?: string;
+  safe_error?: { code?: string; message?: string };
+};
+
 export type Notification = { id: string; event_type: string; payload: Record<string, unknown>; read_at?: string; created_at: string };
 
 export type SetupSession = {
