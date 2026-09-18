@@ -204,6 +204,12 @@ paths:
     post: {operationId: verifyEnvironment, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Access verified and first scan queued}, '202': {description: Collector enrollment awaited}, '401': {description: Provider rejected the temporary Lens identity}, '410': {description: Setup session expired or was cancelled}}}
   /v1/environments/{id}/activation:
     get: {operationId: getEnvironmentActivation, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: Durable endpoint activation state and safe first-result status}, '404': {description: Environment not found}}}
+  /v1/environments/{id}/github-status:
+    get: {operationId: getGitHubEnvironmentStatus, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'200': {description: 'Tenant-scoped GitHub authorization, repository progress, partial-result, and recovery state'}, '404': {description: GitHub environment not found}}}
+  /v1/environments/{id}/github-reconcile:
+    post: {operationId: reconcileGitHubEnvironment, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'202': {description: Current selected repositories reconciled and scans queued}, '409': {description: GitHub App reauthorization required}, '503': {description: GitHub connector deployment is not healthy}}}
+  /v1/environments/{id}/github-reauthorize:
+    post: {operationId: reauthorizeGitHubEnvironment, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'201': {description: New short-lived GitHub App authorization URL for the existing environment}, '404': {description: GitHub environment not found}, '503': {description: GitHub connector deployment is not healthy}}}
   /v1/environments/{id}/enrollment-credentials:
     post: {operationId: rotateEndpointEnrollmentCredential, parameters: [{$ref: '#/components/parameters/ID'}], responses: {'201': {description: New 15-minute single-use endpoint credential; earlier credentials are revoked}, '409': {description: Endpoint setup is no longer pending}}}
   /v1/environments/{id}/enable-continuous-monitoring:

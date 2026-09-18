@@ -1,4 +1,4 @@
-import type { Activation, AuthConfig, Change, ConnectionStatus, DeviceFleetPage, Environment, EnvironmentKind, EnvironmentScan, ExposureFinding, FleetDevice, Notification, Overview, PageResult, ProductItem, ScanStatus, Session, SetupSession, SystemDetail, SystemItem, Target } from "./api-types";
+import type { Activation, AuthConfig, Change, ConnectionStatus, DeviceFleetPage, Environment, EnvironmentKind, EnvironmentScan, ExposureFinding, FleetDevice, GitHubDiscoveryStatus, Notification, Overview, PageResult, ProductItem, ScanStatus, Session, SetupSession, SystemDetail, SystemItem, Target } from "./api-types";
 export type * from "./api-types";
 
 export async function authConfig() {
@@ -63,6 +63,16 @@ export class API {
   environment(id: string) { return this.request<Environment>(`/v1/environments/${encodeURIComponent(id)}`); }
 
   activation(id: string) { return this.request<Activation>(`/v1/environments/${encodeURIComponent(id)}/activation`); }
+
+  githubStatus(id: string) { return this.request<GitHubDiscoveryStatus>(`/v1/environments/${encodeURIComponent(id)}/github-status`); }
+
+  reconcileGitHub(id: string) {
+    return this.request<{ environment_id: string; selected_repositories: number; phase: string }>(`/v1/environments/${encodeURIComponent(id)}/github-reconcile`, { method: "POST" });
+  }
+
+  reauthorizeGitHub(id: string) {
+    return this.request<SetupSession>(`/v1/environments/${encodeURIComponent(id)}/github-reauthorize`, { method: "POST" });
+  }
 
   enableContinuousMonitoring(id: string) {
     return this.request<SetupSession>(`/v1/environments/${encodeURIComponent(id)}/enable-continuous-monitoring`, { method: "POST" });

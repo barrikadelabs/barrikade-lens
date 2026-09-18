@@ -415,6 +415,11 @@ func (s *Server) createEnvironmentSetupSession(w http.ResponseWriter, r *http.Re
 		if analyticsErr := recordProductEvent(r.Context(), tx, s.config.ProductAnalytics, ProductEvent{OrganizationID: principal.OrganizationID, ActorID: principal.Subject, Name: "connection_setup_started", Properties: map[string]any{"connection_type": connectionType(request.Kind, provider), "lifecycle_phase": "setup"}, DedupeKey: environmentID.String()}); analyticsErr != nil {
 			s.config.Logger.Warn("analytics event was not recorded", "event", "connection_setup_started", "error", analyticsErr)
 		}
+		if request.Kind == "github_repository" {
+			if analyticsErr := recordProductEvent(r.Context(), tx, s.config.ProductAnalytics, ProductEvent{OrganizationID: principal.OrganizationID, ActorID: principal.Subject, Name: "github_authorization_started", DedupeKey: environmentID.String()}); analyticsErr != nil {
+				s.config.Logger.Warn("analytics event was not recorded", "event", "github_authorization_started", "error", analyticsErr)
+			}
+		}
 	}
 	if err != nil || tx.Commit(r.Context()) != nil {
 		if isUniqueViolation(err) {
@@ -472,7 +477,7 @@ func (s *Server) validateEnvironmentSetup(kind, displayName, externalID string, 
 		}
 		return "endpoint", externalID, nil
 	case "github_repository":
-		if !s.config.GitHubConnectorEnabled || s.config.GitHubClient == nil {
+		if !s.githubConnectorHealthy() {
 			return "", "", fmt.Errorf("the GitHub connector is not enabled")
 		}
 		if externalID != "" && !repositoryPattern.MatchString(externalID) {

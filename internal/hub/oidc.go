@@ -22,7 +22,7 @@ func (s *Server) oidcConfig(w http.ResponseWriter, r *http.Request) {
 			"azure":      s.config.AzureConnectorEnabled,
 			"gcp":        s.config.GCPConnectorEnabled,
 			"endpoint":   s.config.EndpointConnectorEnabled,
-			"github":     s.config.GitHubConnectorEnabled && s.config.GitHubClient != nil,
+			"github":     s.githubConnectorHealthy(),
 			"kubernetes": s.config.KubernetesConnectorEnabled,
 		},
 	}

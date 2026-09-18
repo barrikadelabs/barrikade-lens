@@ -4,10 +4,45 @@ import (
 	"archive/tar"
 	"bytes"
 	"compress/gzip"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 )
+
+func TestRepositoriesPaginatesInstallationAccess(t *testing.T) {
+	pages := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		pages++
+		if got := r.Header.Get("Authorization"); got != "Bearer installation-token" {
+			t.Fatalf("unexpected authorization header %q", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if r.URL.Query().Get("page") == "1" {
+			_, _ = w.Write([]byte(`{"repositories":[`))
+			for i := 0; i < 100; i++ {
+				if i > 0 {
+					_, _ = w.Write([]byte(","))
+				}
+				_, _ = w.Write([]byte(`{"name":"repo-` + strconv.Itoa(i) + `","default_branch":"main","owner":{"login":"acme"}}`))
+			}
+			_, _ = w.Write([]byte(`]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"repositories":[{"name":"last","default_branch":"main","owner":{"login":"acme"}}]}`))
+	}))
+	defer server.Close()
+	client := &Client{HTTP: server.Client(), APIBase: server.URL, Version: "test"}
+	repositories, err := client.Repositories(t.Context(), "installation-token")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(repositories) != 101 || pages != 2 || repositories[100].Name != "last" {
+		t.Fatalf("expected 101 repositories over two pages, got %d over %d pages", len(repositories), pages)
+	}
+}
 
 func TestExtractTarGzDropsRootAndRejectsTraversal(t *testing.T) {
 	archive := tarball(t, map[string]string{"repo-sha/package.json": "{}", "repo-sha/agents/a.yaml": "name: a"})

@@ -214,7 +214,7 @@ func run() error {
 	if *exposureEnabled {
 		go func() { errChannel <- (hub.ExposureWorker{Pool: workerPool, Logger: slog.Default()}).Run(ctx) }()
 	}
-	if githubClient != nil {
+	if *githubConnectorEnabled && githubClient != nil && strings.TrimSpace(*githubAppSlug) != "" && strings.TrimSpace(*githubWebhookSecret) != "" {
 		go func() {
 			errChannel <- hub.RepositoryWorker{Pool: workerPool, Client: githubClient, Logger: slog.Default()}.Run(ctx)
 		}()
