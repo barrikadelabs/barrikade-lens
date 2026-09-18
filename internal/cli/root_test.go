@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -176,6 +178,46 @@ func TestEnrollWithoutInstallPreservesManualServiceFlow(t *testing.T) {
 	}
 	if !strings.Contains(output.String(), "barrikade-lens service install") {
 		t.Fatalf("manual service guidance was omitted: %s", output.String())
+	}
+}
+
+func TestEnrollReadsProtectedBootstrapCredentialFromStdinWithoutLoggingIt(t *testing.T) {
+	const secret = "ABCDE-FGHIJ"
+	server := enrollmentServer(t, nil)
+	var output, errors bytes.Buffer
+	configuration := filepath.Join(t.TempDir(), "config.json")
+	code := ExecuteWith(Dependencies{In: strings.NewReader(secret + "\n"), Out: &output, Err: &errors}, []string{"enroll", "--enrollment-code-stdin", "--hub", server.URL, "--config", configuration})
+	if code != 0 {
+		t.Fatalf("stdin enrollment failed: code=%d error=%s", code, errors.String())
+	}
+	if strings.Contains(output.String(), secret) || strings.Contains(errors.String(), secret) {
+		t.Fatal("bootstrap credential was printed")
+	}
+}
+
+func TestEnrollRejectsAmbiguousBootstrapCredentialSources(t *testing.T) {
+	var errors bytes.Buffer
+	code := ExecuteWith(Dependencies{In: strings.NewReader("stdin-secret"), Out: io.Discard, Err: &errors}, []string{"enroll", "argument-secret", "--enrollment-code-stdin", "--hub", "https://lens.example"})
+	if code == 0 || !strings.Contains(errors.String(), "either as an argument") {
+		t.Fatalf("expected ambiguous credential error, code=%d error=%s", code, errors.String())
+	}
+	if strings.Contains(errors.String(), "stdin-secret") || strings.Contains(errors.String(), "argument-secret") {
+		t.Fatal("bootstrap credential was printed in the validation error")
+	}
+}
+
+func TestEnrollRedactsBootstrapCredentialFromHubErrors(t *testing.T) {
+	const secret = "private-bootstrap-code"
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusBadRequest)
+		_, _ = fmt.Fprintf(writer, `{"error":{"code":"invalid_enrollment","message":"rejected %s"}}`, secret)
+	}))
+	defer server.Close()
+	var errors bytes.Buffer
+	code := ExecuteWith(Dependencies{In: strings.NewReader(secret), Out: io.Discard, Err: &errors}, []string{"enroll", "--enrollment-code-stdin", "--hub", server.URL, "--config", filepath.Join(t.TempDir(), "config.json")})
+	if code == 0 || strings.Contains(errors.String(), secret) || !strings.Contains(errors.String(), "[redacted]") {
+		t.Fatalf("bootstrap credential was not redacted: code=%d error=%s", code, errors.String())
 	}
 }
 

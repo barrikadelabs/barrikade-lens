@@ -11,6 +11,7 @@ on:
 permissions:
   contents: write
   id-token: write
+  attestations: write
   packages: write
 
 jobs:
@@ -19,6 +20,19 @@ jobs:
     runs-on: ubuntu-latest
     env:
       NODE_AUTH_TOKEN: '${{ secrets.NPM_TOKEN }}'
+      APPLE_CERTIFICATE_P12: '${{ secrets.APPLE_CERTIFICATE_P12 }}'
+      APPLE_CERTIFICATE_PASSWORD: '${{ secrets.APPLE_CERTIFICATE_PASSWORD }}'
+      APPLE_APPLICATION_IDENTITY: '${{ vars.APPLE_APPLICATION_IDENTITY }}'
+      APPLE_INSTALLER_IDENTITY: '${{ vars.APPLE_INSTALLER_IDENTITY }}'
+      APPLE_NOTARY_KEY_P8: '${{ secrets.APPLE_NOTARY_KEY_P8 }}'
+      APPLE_NOTARY_KEY_ID: '${{ secrets.APPLE_NOTARY_KEY_ID }}'
+      APPLE_NOTARY_ISSUER_ID: '${{ secrets.APPLE_NOTARY_ISSUER_ID }}'
+      AZURE_CLIENT_ID: '${{ secrets.AZURE_CLIENT_ID }}'
+      AZURE_TENANT_ID: '${{ secrets.AZURE_TENANT_ID }}'
+      AZURE_SUBSCRIPTION_ID: '${{ secrets.AZURE_SUBSCRIPTION_ID }}'
+      AZURE_ARTIFACT_SIGNING_ENDPOINT: '${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}'
+      AZURE_ARTIFACT_SIGNING_ACCOUNT: '${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT }}'
+      AZURE_ARTIFACT_SIGNING_PROFILE: '${{ vars.AZURE_ARTIFACT_SIGNING_PROFILE }}'
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
@@ -31,7 +45,16 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo "Release tag must be SemVer prefixed with v" >&2; exit 1; }
-          test -n "$NODE_AUTH_TOKEN" || { echo "Missing required release secret: NPM_TOKEN" >&2; exit 1; }
+          required=(
+            NODE_AUTH_TOKEN
+            APPLE_CERTIFICATE_P12 APPLE_CERTIFICATE_PASSWORD APPLE_APPLICATION_IDENTITY APPLE_INSTALLER_IDENTITY
+            APPLE_NOTARY_KEY_P8 APPLE_NOTARY_KEY_ID APPLE_NOTARY_ISSUER_ID
+            AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID
+            AZURE_ARTIFACT_SIGNING_ENDPOINT AZURE_ARTIFACT_SIGNING_ACCOUNT AZURE_ARTIFACT_SIGNING_PROFILE
+          )
+          for name in "${required[@]}"; do
+            test -n "${!name}" || { echo "Missing required release configuration: $name" >&2; exit 1; }
+          done
       - name: Test release source
         shell: bash
         run: |
@@ -70,6 +93,12 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            dist/*.deb
+            dist/*.rpm
+            dist/*.tar.gz
 
   linux-native:
     needs: goreleaser
@@ -94,11 +123,33 @@ jobs:
     runs-on: macos-15
     env:
       GH_TOKEN: '${{ secrets.GITHUB_TOKEN }}'
+      MACOS_APPLICATION_IDENTITY: '${{ vars.APPLE_APPLICATION_IDENTITY }}'
+      MACOS_INSTALLER_IDENTITY: '${{ vars.APPLE_INSTALLER_IDENTITY }}'
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with: {go-version: '1.26.x', cache: true}
-      - name: Build MVP native binaries
+      - name: Install Syft
+        uses: anchore/sbom-action/download-syft@v0
+        with:
+          syft-version: v1.44.0
+      - name: Import Apple signing certificate
+        shell: bash
+        env:
+          CERTIFICATE_P12: '${{ secrets.APPLE_CERTIFICATE_P12 }}'
+          CERTIFICATE_PASSWORD: '${{ secrets.APPLE_CERTIFICATE_PASSWORD }}'
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/barrikade-signing.keychain-db"
+          password="$(uuidgen)"
+          printf '%s' "$CERTIFICATE_P12" | base64 -D > "$RUNNER_TEMP/signing.p12"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          security import "$RUNNER_TEMP/signing.p12" -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$keychain"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain"
+          security list-keychains -d user -s "$keychain" login.keychain-db
+      - name: Build and sign native binaries and universal package
         shell: bash
         run: |
           set -euo pipefail
@@ -106,13 +157,48 @@ jobs:
           mkdir -p dist
           GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$version" -o dist/barrikade-lens-darwin-arm64 ./cmd/barrikade-lens
           GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.version=$version" -o dist/barrikade-lens-darwin-x64 ./cmd/barrikade-lens
-          gh release upload "$GITHUB_REF_NAME" dist/barrikade-lens-darwin-arm64 dist/barrikade-lens-darwin-x64 --clobber
+          codesign --force --options runtime --timestamp --sign "$MACOS_APPLICATION_IDENTITY" dist/barrikade-lens-darwin-arm64
+          codesign --force --options runtime --timestamp --sign "$MACOS_APPLICATION_IDENTITY" dist/barrikade-lens-darwin-x64
+          packaging/macos/build-pkg.sh "$version" dist/barrikade-lens-darwin-arm64 dist/barrikade-lens-darwin-x64 dist/barrikade-lens-universal.pkg
+          codesign --verify --strict --verbose=2 dist/barrikade-lens-darwin-arm64
+          codesign --verify --strict --verbose=2 dist/barrikade-lens-darwin-x64
+          pkgutil --check-signature dist/barrikade-lens-universal.pkg
+      - name: Notarize and staple package
+        shell: bash
+        env:
+          NOTARY_KEY_P8: '${{ secrets.APPLE_NOTARY_KEY_P8 }}'
+          NOTARY_KEY_ID: '${{ secrets.APPLE_NOTARY_KEY_ID }}'
+          NOTARY_ISSUER_ID: '${{ secrets.APPLE_NOTARY_ISSUER_ID }}'
+        run: |
+          set -euo pipefail
+          printf '%s' "$NOTARY_KEY_P8" | base64 -D > "$RUNNER_TEMP/AuthKey.p8"
+          xcrun notarytool submit dist/barrikade-lens-universal.pkg --key "$RUNNER_TEMP/AuthKey.p8" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER_ID" --wait
+          xcrun stapler staple dist/barrikade-lens-universal.pkg
+          xcrun stapler validate dist/barrikade-lens-universal.pkg
+          spctl --assess --type install --verbose=2 dist/barrikade-lens-universal.pkg
+      - name: Generate package integrity metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          syft scan file:dist/barrikade-lens-universal.pkg -o spdx-json=dist/barrikade-lens-universal.pkg.spdx.json
+          shasum -a 256 \
+            dist/barrikade-lens-darwin-arm64 \
+            dist/barrikade-lens-darwin-x64 \
+            dist/barrikade-lens-universal.pkg \
+            dist/barrikade-lens-universal.pkg.spdx.json > dist/checksums-macos.txt
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            dist/barrikade-lens-darwin-arm64
+            dist/barrikade-lens-darwin-x64
+            dist/barrikade-lens-universal.pkg
+      - name: Upload signed release assets
+        shell: bash
+        run: gh release upload "$GITHUB_REF_NAME" dist/* --clobber
       - uses: actions/upload-artifact@v4
         with:
           name: native-macos
-          path: |
-            dist/barrikade-lens-darwin-arm64
-            dist/barrikade-lens-darwin-x64
+          path: dist/*
 
   windows-native:
     needs: goreleaser
@@ -123,7 +209,14 @@ jobs:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with: {go-version: '1.26.x', cache: true}
-      - name: Build MVP native binaries
+      - name: Install Syft
+        uses: anchore/sbom-action/download-syft@v0
+        with:
+          syft-version: v1.44.0
+      - name: Install WiX
+        shell: pwsh
+        run: dotnet tool install --global wix --version 4.0.6
+      - name: Build native binaries
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -133,13 +226,67 @@ jobs:
           go build -trimpath -ldflags "-s -w -X main.version=$version" -o dist/barrikade-lens-win32-x64.exe ./cmd/barrikade-lens
           $env:GOARCH = "arm64"
           go build -trimpath -ldflags "-s -w -X main.version=$version" -o dist/barrikade-lens-win32-arm64.exe ./cmd/barrikade-lens
-          gh release upload $env:GITHUB_REF_NAME dist/barrikade-lens-win32-x64.exe dist/barrikade-lens-win32-arm64.exe --clobber
+      - name: Authenticate to Azure Artifact Signing
+        uses: azure/login@v3
+        with:
+          client-id: '${{ secrets.AZURE_CLIENT_ID }}'
+          tenant-id: '${{ secrets.AZURE_TENANT_ID }}'
+          subscription-id: '${{ secrets.AZURE_SUBSCRIPTION_ID }}'
+      - name: Sign native binaries
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: '${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}'
+          signing-account-name: '${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT }}'
+          certificate-profile-name: '${{ vars.AZURE_ARTIFACT_SIGNING_PROFILE }}'
+          files-folder: '${{ github.workspace }}\dist'
+          files-folder-filter: exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+      - name: Build architecture-specific MSI packages
+        shell: pwsh
+        run: |
+          $version = $env:GITHUB_REF_NAME.TrimStart("v")
+          ./packaging/windows/build-msi.ps1 -Version $version -Architecture x64 -Binary "$pwd/dist/barrikade-lens-win32-x64.exe" -Output "$pwd/dist/barrikade-lens-win32-x64.msi"
+          ./packaging/windows/build-msi.ps1 -Version $version -Architecture arm64 -Binary "$pwd/dist/barrikade-lens-win32-arm64.exe" -Output "$pwd/dist/barrikade-lens-win32-arm64.msi"
+      - name: Sign MSI packages
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: '${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}'
+          signing-account-name: '${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT }}'
+          certificate-profile-name: '${{ vars.AZURE_ARTIFACT_SIGNING_PROFILE }}'
+          files-folder: '${{ github.workspace }}\dist'
+          files-folder-filter: msi
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+      - name: Verify signatures and generate integrity metadata
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          Get-ChildItem dist/* -Include *.exe,*.msi -File | ForEach-Object {
+            $signature = Get-AuthenticodeSignature $_.FullName
+            if ($signature.Status -ne 'Valid') { throw "$($_.Name) has invalid Authenticode status $($signature.Status)" }
+          }
+          syft scan "file:dist/barrikade-lens-win32-x64.msi" -o "spdx-json=dist/barrikade-lens-win32-x64.msi.spdx.json"
+          syft scan "file:dist/barrikade-lens-win32-arm64.msi" -o "spdx-json=dist/barrikade-lens-win32-arm64.msi.spdx.json"
+          Get-ChildItem dist -File | Sort-Object Name | Get-FileHash -Algorithm SHA256 | ForEach-Object { "$($_.Hash.ToLower())  $(Split-Path $_.Path -Leaf)" } | Set-Content -Encoding ascii dist/checksums-windows.txt
+      - uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            dist/barrikade-lens-win32-x64.exe
+            dist/barrikade-lens-win32-arm64.exe
+            dist/barrikade-lens-win32-x64.msi
+            dist/barrikade-lens-win32-arm64.msi
+      - name: Upload signed release assets
+        shell: pwsh
+        run: |
+          $files = (Get-ChildItem dist -File).FullName
+          gh release upload $env:GITHUB_REF_NAME $files --clobber
       - uses: actions/upload-artifact@v4
         with:
           name: native-windows
-          path: |
-            dist/barrikade-lens-win32-x64.exe
-            dist/barrikade-lens-win32-arm64.exe
+          path: dist/*
 
   containers:
     needs: preflight

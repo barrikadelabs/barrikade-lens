@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+
+state_directory="/Library/Application Support/Barrikade/Lens"
+configuration="$state_directory/config.json"
+install -d -m 0700 "$state_directory"
+
+# Initial deployment is enrolled by the Jamf script. On upgrades, reinstalling
+# the service atomically stages the new executable while preserving identity.
+if [ -f "$configuration" ]; then
+  /usr/local/bin/barrikade-lens service install --config "$configuration"
+fi

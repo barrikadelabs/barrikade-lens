@@ -10,11 +10,26 @@
           <File Id="LensLicense" Source="$(var.LicenseFile)"/>
           <File Id="LensNotice" Source="$(var.NoticeFile)"/>
           <File Id="LensThirdPartyNotices" Source="$(var.ThirdPartyNoticesFile)"/>
+          <File Id="LensFullCleanup" Source="$(var.FullCleanupScript)"/>
           <ServiceInstall Id="LensService" Name="BarrikadeLens" DisplayName="Barrikade Lens" Description="Managed autonomous-agent discovery collector" Start="auto" Type="ownProcess" ErrorControl="normal" Arguments="service run --config &quot;[CommonAppDataFolder]Barrikade\Lens\config.json&quot;"/>
-          <ServiceControl Id="LensServiceControl" Name="BarrikadeLens" Stop="both" Remove="uninstall" Wait="yes"/>
+          <ServiceControl Id="LensServiceControl" Name="BarrikadeLens" Start="install" Stop="both" Remove="uninstall" Wait="no"/>
         </Component>
       </Directory>
     </StandardDirectory>
-    <Feature Id="Main" Title="Barrikade Lens"><ComponentRef Id="LensBinary"/></Feature>
+    <StandardDirectory Id="CommonAppDataFolder">
+      <Directory Id="CompanyStateFolder" Name="Barrikade">
+        <Directory Id="LensStateFolder" Name="Lens">
+          <Component Id="LensStateDirectory" Guid="CD5DE9BF-C6B3-435D-8E4F-B0CA265AA90E" Permanent="yes" NeverOverwrite="yes">
+            <CreateFolder>
+              <PermissionEx Id="LensStatePermissions" Sddl="D:PAI(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)"/>
+            </CreateFolder>
+          </Component>
+        </Directory>
+      </Directory>
+    </StandardDirectory>
+    <Feature Id="Main" Title="Barrikade Lens">
+      <ComponentRef Id="LensBinary"/>
+      <ComponentRef Id="LensStateDirectory"/>
+    </Feature>
   </Package>
 </Wix>
