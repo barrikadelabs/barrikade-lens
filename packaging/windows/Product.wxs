@@ -5,7 +5,7 @@
     <MediaTemplate EmbedCab="yes"/>
     <StandardDirectory Id="ProgramFiles64Folder">
       <Directory Id="INSTALLFOLDER" Name="Barrikade Lens">
-        <Component Id="LensBinary" Guid="*">
+        <Component Id="LensBinary" Guid="62B80146-1C87-481B-8CB0-E08FFFF1A9C6">
           <File Id="LensExe" Source="$(var.LensBinary)" KeyPath="yes"/>
           <File Id="LensLicense" Source="$(var.LicenseFile)"/>
           <File Id="LensNotice" Source="$(var.NoticeFile)"/>
