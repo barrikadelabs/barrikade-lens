@@ -182,7 +182,7 @@ jobs:
         with:
           distribution: goreleaser
           version: v2.17.0
-          args: release --snapshot --clean
+          args: release --snapshot --clean --skip=sign
       - name: Exercise noninteractive deb install, reinstall, and uninstall
         shell: bash
         run: |
