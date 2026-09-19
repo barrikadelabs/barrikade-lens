@@ -12,6 +12,7 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -30,16 +31,17 @@ import (
 )
 
 type Controller struct {
-	Client         kubernetes.Interface
-	Metadata       metadata.Interface
-	Extensions     dynamic.Interface
-	ConfigPath     string
-	ClusterID      string
-	ClusterName    string
-	Version        string
-	ResyncInterval time.Duration
-	Logger         *slog.Logger
-	HubClient      *hubclient.Client
+	Client           kubernetes.Interface
+	Metadata         metadata.Interface
+	Extensions       dynamic.Interface
+	ConfigPath       string
+	ClusterID        string
+	ClusterName      string
+	Version          string
+	ResyncInterval   time.Duration
+	CacheSyncTimeout time.Duration
+	Logger           *slog.Logger
+	HubClient        *hubclient.Client
 }
 
 func (c *Controller) Run(ctx context.Context) error {
@@ -51,6 +53,9 @@ func (c *Controller) Run(ctx context.Context) error {
 	}
 	if c.ResyncInterval == 0 {
 		c.ResyncInterval = 6 * time.Hour
+	}
+	if c.CacheSyncTimeout == 0 {
+		c.CacheSyncTimeout = 30 * time.Second
 	}
 	cfg, err := lensconfig.Load(c.ConfigPath)
 	if err != nil {
@@ -77,25 +82,25 @@ func (c *Controller) Run(ctx context.Context) error {
 		c.ClusterName = c.ClusterID
 	}
 	factory := informers.NewSharedInformerFactory(c.Client, 0)
-	informersList := []cache.SharedIndexInformer{
-		factory.Apps().V1().Deployments().Informer(), factory.Apps().V1().StatefulSets().Informer(), factory.Apps().V1().DaemonSets().Informer(),
-		factory.Batch().V1().Jobs().Informer(), factory.Batch().V1().CronJobs().Informer(), factory.Core().V1().Pods().Informer(),
-		factory.Core().V1().Services().Informer(), factory.Networking().V1().Ingresses().Informer(),
+	informersList := []informerRegistration{
+		{"deployments", factory.Apps().V1().Deployments().Informer()}, {"statefulsets", factory.Apps().V1().StatefulSets().Informer()}, {"daemonsets", factory.Apps().V1().DaemonSets().Informer()},
+		{"jobs", factory.Batch().V1().Jobs().Informer()}, {"cronjobs", factory.Batch().V1().CronJobs().Informer()}, {"pods", factory.Core().V1().Pods().Informer()},
+		{"services", factory.Core().V1().Services().Informer()}, {"ingresses", factory.Networking().V1().Ingresses().Informer()},
 	}
 	var metadataFactory metadatainformer.SharedInformerFactory
 	if c.Metadata != nil {
 		metadataFactory = metadatainformer.NewFilteredSharedInformerFactory(c.Metadata, 0, metav1.NamespaceAll, nil)
-		informersList = append(informersList, metadataFactory.ForResource(schema.GroupVersionResource{Version: "v1", Resource: "configmaps"}).Informer())
+		informersList = append(informersList, informerRegistration{"configmaps", metadataFactory.ForResource(schema.GroupVersionResource{Version: "v1", Resource: "configmaps"}).Informer()})
 	}
 	var extensionInformer cache.SharedIndexInformer
 	if c.Extensions != nil {
 		extensionInformer = dynamicinformer.NewFilteredDynamicInformer(c.Extensions, schema.GroupVersionResource{Group: "apiextensions.k8s.io", Version: "v1", Resource: "customresourcedefinitions"}, metav1.NamespaceAll, 0, cache.Indexers{}, nil).Informer()
-		informersList = append(informersList, extensionInformer)
+		informersList = append(informersList, informerRegistration{"customresourcedefinitions", extensionInformer})
 	}
 	events := make(chan struct{}, 1)
 	handler := cache.ResourceEventHandlerFuncs{AddFunc: func(any) { notify(events) }, UpdateFunc: func(any, any) { notify(events) }, DeleteFunc: func(any) { notify(events) }}
-	for _, informer := range informersList {
-		if _, err := informer.AddEventHandler(handler); err != nil {
+	for _, registration := range informersList {
+		if _, err := registration.Informer.AddEventHandler(handler); err != nil {
 			return err
 		}
 	}
@@ -107,14 +112,25 @@ func (c *Controller) Run(ctx context.Context) error {
 		go extensionInformer.Run(ctx.Done())
 	}
 	synced := []cache.InformerSynced{}
-	for _, informer := range informersList {
-		synced = append(synced, informer.HasSynced)
+	for _, registration := range informersList {
+		synced = append(synced, registration.Informer.HasSynced)
 	}
-	if !cache.WaitForCacheSync(ctx.Done(), synced...) {
-		return fmt.Errorf("Kubernetes informer caches did not synchronize")
+	waitContext, cancelWait := context.WithTimeout(ctx, c.CacheSyncTimeout)
+	allSynced := cache.WaitForCacheSync(waitContext.Done(), synced...)
+	cancelWait()
+	if !allSynced && ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if !allSynced {
+		c.Logger.Warn("Kubernetes informer cache sync was partial; reporting available surfaces", "timeout", c.CacheSyncTimeout)
 	}
 	upload := func(full bool) error {
 		inventory := buildInventory(c.ClusterID, c.ClusterName, informersList)
+		for _, registration := range informersList {
+			if !registration.Informer.HasSynced() {
+				inventory.ResourceErrors = append(inventory.ResourceErrors, scanner.ResourceError{Resource: registration.Resource})
+			}
+		}
 		populateReferencedConfigMaps(ctx, c.Client, &inventory)
 		cfg.Sequence++
 		if err := lensconfig.Save(c.ConfigPath, cfg); err != nil {
@@ -175,6 +191,11 @@ func (c *Controller) Run(ctx context.Context) error {
 	}
 }
 
+type informerRegistration struct {
+	Resource string
+	Informer cache.SharedIndexInformer
+}
+
 func notify(channel chan struct{}) {
 	select {
 	case channel <- struct{}{}:
@@ -182,10 +203,10 @@ func notify(channel chan struct{}) {
 	}
 }
 
-func buildInventory(clusterID, clusterName string, stores []cache.SharedIndexInformer) scanner.Inventory {
+func buildInventory(clusterID, clusterName string, stores []informerRegistration) scanner.Inventory {
 	inventory := scanner.Inventory{ClusterID: clusterID, ClusterName: clusterName, ConfigMaps: map[string]scanner.ConfigMap{}}
-	for _, informer := range stores {
-		for _, raw := range informer.GetStore().List() {
+	for _, registration := range stores {
+		for _, raw := range registration.Informer.GetStore().List() {
 			switch object := raw.(type) {
 			case *appsv1.Deployment:
 				inventory.Workloads = append(inventory.Workloads, workload(string(object.UID), object.Namespace, "Deployment", object.Name, object.Labels, object.Spec.Template.Spec, object.Status.ReadyReplicas > 0))
@@ -208,6 +229,7 @@ func buildInventory(clusterID, clusterName string, stores []cache.SharedIndexInf
 			case *networkingv1.Ingress:
 				hosts := []string{}
 				ports := []int{}
+				backends := []string{}
 				for _, rule := range object.Spec.Rules {
 					if rule.Host != "" {
 						hosts = append(hosts, rule.Host)
@@ -217,10 +239,16 @@ func buildInventory(clusterID, clusterName string, stores []cache.SharedIndexInf
 							if path.Backend.Service != nil && path.Backend.Service.Port.Number > 0 {
 								ports = append(ports, int(path.Backend.Service.Port.Number))
 							}
+							if path.Backend.Service != nil && path.Backend.Service.Name != "" {
+								backends = append(backends, path.Backend.Service.Name)
+							}
 						}
 					}
 				}
-				inventory.Services = append(inventory.Services, scanner.Service{UID: string(object.UID), Namespace: object.Namespace, Kind: "Ingress", Name: object.Name, Hosts: hosts, Ports: ports})
+				if object.Spec.DefaultBackend != nil && object.Spec.DefaultBackend.Service != nil && object.Spec.DefaultBackend.Service.Name != "" {
+					backends = append(backends, object.Spec.DefaultBackend.Service.Name)
+				}
+				inventory.Services = append(inventory.Services, scanner.Service{UID: string(object.UID), Namespace: object.Namespace, Kind: "Ingress", Name: object.Name, Hosts: hosts, Ports: ports, Backends: unique(backends)})
 			case *unstructured.Unstructured:
 				if object.GetAPIVersion() == "apiextensions.k8s.io/v1" && object.GetKind() == "CustomResourceDefinition" {
 					group, _, _ := unstructured.NestedString(object.Object, "spec", "group")
@@ -246,6 +274,9 @@ func populateReferencedConfigMaps(ctx context.Context, client kubernetes.Interfa
 		object, err := client.CoreV1().ConfigMaps(reference[0]).Get(ctx, reference[1], metav1.GetOptions{})
 		if err != nil {
 			inventory.ConfigMapErrors++
+			if apierrors.IsForbidden(err) {
+				inventory.ConfigMapDenied++
+			}
 			continue
 		}
 		inventory.ConfigMaps[key] = scanner.ConfigMap{Namespace: object.Namespace, Name: object.Name, Data: copyMap(object.Data)}

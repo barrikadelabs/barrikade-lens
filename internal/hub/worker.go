@@ -405,6 +405,15 @@ func upsertEntity(ctx context.Context, tx pgx.Tx, snapshot discovery.Snapshot, e
 }
 
 func upsertRelationship(ctx context.Context, tx pgx.Tx, snapshot discovery.Snapshot, relation discovery.Relationship, observedAt time.Time, sequence uint64) (*changeMetadata, error) {
+	if relation.Surface == "" {
+		relation.Surface = snapshot.SourceType
+	}
+	if relation.ObservationState == "" {
+		relation.ObservationState = discovery.ObservationDiscovered
+	}
+	if relation.ObservedAt == "" {
+		relation.ObservedAt = observedAt.Format(time.RFC3339Nano)
+	}
 	attributes, err := json.Marshal(relation.Attributes)
 	if err != nil {
 		return nil, err
@@ -421,8 +430,8 @@ func upsertRelationship(ctx context.Context, tx pgx.Tx, snapshot discovery.Snaps
 	if err != nil {
 		return nil, err
 	}
-	digest := materialDigest(map[string]any{"kind": relation.Kind, "from": relation.From, "to": relation.To, "attributes": relation.Attributes, "confidence": relation.Confidence})
-	_, err = tx.Exec(ctx, `INSERT INTO source_relationships(organization_id,source_id,relationship_id,last_seen_at,last_seen_sequence,consecutive_full_misses,current,stale,observation_kind,from_entity,to_entity,attributes,confidence,material_digest) VALUES($1,$2,$3,$4,$5,0,true,false,$6,$7,$8,$9,$10,$11) ON CONFLICT(organization_id,source_id,relationship_id) DO UPDATE SET last_seen_at=EXCLUDED.last_seen_at,last_seen_sequence=EXCLUDED.last_seen_sequence,consecutive_full_misses=0,current=true,stale=false,observation_kind=EXCLUDED.observation_kind,from_entity=EXCLUDED.from_entity,to_entity=EXCLUDED.to_entity,attributes=EXCLUDED.attributes,confidence=EXCLUDED.confidence,material_digest=EXCLUDED.material_digest`, snapshot.OrganizationID, snapshot.SourceID, relation.ID, observedAt, sequence, relation.Kind, relation.From, relation.To, attributes, relation.Confidence, digest)
+	digest := materialDigest(map[string]any{"kind": relation.Kind, "from": relation.From, "to": relation.To, "attributes": relation.Attributes, "confidence": relation.Confidence, "surface": relation.Surface, "observation_state": relation.ObservationState})
+	_, err = tx.Exec(ctx, `INSERT INTO source_relationships(organization_id,source_id,relationship_id,last_seen_at,last_seen_sequence,consecutive_full_misses,current,stale,observation_kind,from_entity,to_entity,attributes,confidence,material_digest,surface,observation_state,observed_at) VALUES($1,$2,$3,$4,$5,0,true,false,$6,$7,$8,$9,$10,$11,$12,$13,$14) ON CONFLICT(organization_id,source_id,relationship_id) DO UPDATE SET last_seen_at=EXCLUDED.last_seen_at,last_seen_sequence=EXCLUDED.last_seen_sequence,consecutive_full_misses=0,current=true,stale=false,observation_kind=EXCLUDED.observation_kind,from_entity=EXCLUDED.from_entity,to_entity=EXCLUDED.to_entity,attributes=EXCLUDED.attributes,confidence=EXCLUDED.confidence,material_digest=EXCLUDED.material_digest,surface=EXCLUDED.surface,observation_state=EXCLUDED.observation_state,observed_at=EXCLUDED.observed_at`, snapshot.OrganizationID, snapshot.SourceID, relation.ID, observedAt, sequence, relation.Kind, relation.From, relation.To, attributes, relation.Confidence, digest, relation.Surface, relation.ObservationState, observedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -431,7 +440,7 @@ func upsertRelationship(ctx context.Context, tx pgx.Tx, snapshot discovery.Snaps
 		return nil, err
 	}
 	aggregatedAttributes, _ := json.Marshal(aggregated.Attributes)
-	_, err = tx.Exec(ctx, `UPDATE relationships SET kind=$3,from_entity=$4,to_entity=$5,attributes=$6,confidence=$7,current=true,stale=false,last_seen_at=$8 WHERE organization_id=$1 AND id=$2`, snapshot.OrganizationID, relation.ID, aggregated.Kind, aggregated.From, aggregated.To, aggregatedAttributes, aggregated.Confidence, observedAt)
+	_, err = tx.Exec(ctx, `UPDATE relationships SET kind=$3,from_entity=$4,to_entity=$5,attributes=$6,confidence=$7,current=true,stale=false,last_seen_at=$8,surfaces=$9,observation_states=$10 WHERE organization_id=$1 AND id=$2`, snapshot.OrganizationID, relation.ID, aggregated.Kind, aggregated.From, aggregated.To, aggregatedAttributes, aggregated.Confidence, observedAt, aggregated.Surfaces, aggregated.ObservationStates)
 	if err != nil {
 		return nil, err
 	}
@@ -531,7 +540,7 @@ func applyFullMisses(ctx context.Context, tx pgx.Tx, snapshot discovery.Snapshot
 		aggregated, aggregateErr := aggregateRelationshipObservations(ctx, tx, snapshot.OrganizationID, relationshipID)
 		if aggregateErr == nil {
 			attributes, _ := json.Marshal(aggregated.Attributes)
-			_, err = tx.Exec(ctx, `UPDATE relationships r SET kind=$3,from_entity=$4,to_entity=$5,attributes=$6,confidence=$7,current=true,stale=NOT EXISTS(SELECT 1 FROM source_relationships sr WHERE sr.organization_id=r.organization_id AND sr.relationship_id=r.id AND sr.current AND NOT sr.stale),last_seen_at=(SELECT max(last_seen_at) FROM source_relationships sr WHERE sr.organization_id=r.organization_id AND sr.relationship_id=r.id AND sr.current) WHERE organization_id=$1 AND id=$2`, snapshot.OrganizationID, relationshipID, aggregated.Kind, aggregated.From, aggregated.To, attributes, aggregated.Confidence)
+			_, err = tx.Exec(ctx, `UPDATE relationships r SET kind=$3,from_entity=$4,to_entity=$5,attributes=$6,confidence=$7,surfaces=$8,observation_states=$9,current=true,stale=NOT EXISTS(SELECT 1 FROM source_relationships sr WHERE sr.organization_id=r.organization_id AND sr.relationship_id=r.id AND sr.current AND NOT sr.stale),last_seen_at=(SELECT max(last_seen_at) FROM source_relationships sr WHERE sr.organization_id=r.organization_id AND sr.relationship_id=r.id AND sr.current) WHERE organization_id=$1 AND id=$2`, snapshot.OrganizationID, relationshipID, aggregated.Kind, aggregated.From, aggregated.To, attributes, aggregated.Confidence, aggregated.Surfaces, aggregated.ObservationStates)
 		} else if errors.Is(aggregateErr, pgx.ErrNoRows) {
 			_, err = tx.Exec(ctx, `UPDATE relationships SET current=false,stale=true WHERE organization_id=$1 AND id=$2`, snapshot.OrganizationID, relationshipID)
 		} else {

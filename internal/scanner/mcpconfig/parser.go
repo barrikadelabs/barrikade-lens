@@ -18,6 +18,12 @@ type Server struct {
 	Enabled           *bool
 	EnvironmentKeys   []string
 	CredentialPresent bool
+	Tools             []Tool
+}
+
+type Tool struct {
+	Name    string
+	Enabled *bool
 }
 
 // Find returns normalized MCP server declarations. A generic "servers"
@@ -90,6 +96,7 @@ func addServer(result map[string]Server, server Server) {
 		if current.Enabled == nil {
 			current.Enabled = server.Enabled
 		}
+		current.Tools = mergeTools(current.Tools, server.Tools)
 		result[key] = current
 		return
 	}
@@ -128,8 +135,99 @@ func serverFrom(name string, config map[string]any) Server {
 		}
 	}
 	server.EnvironmentKeys = union(nil, server.EnvironmentKeys)
+	server.Tools = declaredTools(config)
 	return server
 }
+
+func declaredTools(config map[string]any) []Tool {
+	tools := map[string]Tool{}
+	for _, definition := range []struct {
+		keys    []string
+		enabled *bool
+	}{
+		{keys: []string{"tools", "declaredTools", "declared_tools"}},
+		{keys: []string{"allowedTools", "allowed_tools", "enabledTools", "enabled_tools"}, enabled: boolPointer(true)},
+		{keys: []string{"disabledTools", "disabled_tools"}, enabled: boolPointer(false)},
+	} {
+		for _, key := range definition.keys {
+			value, ok := anyValue(config, key)
+			if !ok {
+				continue
+			}
+			collectTools(value, definition.enabled, tools)
+		}
+	}
+	result := make([]Tool, 0, len(tools))
+	for _, tool := range tools {
+		result = append(result, tool)
+	}
+	sort.Slice(result, func(i, j int) bool { return strings.ToLower(result[i].Name) < strings.ToLower(result[j].Name) })
+	if len(result) > 500 {
+		result = result[:500]
+	}
+	return result
+}
+
+func collectTools(value any, enabled *bool, result map[string]Tool) {
+	add := func(name string, state *bool) {
+		name = strings.TrimSpace(name)
+		if name == "" || len(name) > 200 || strings.ContainsAny(name, "\r\n\x00") {
+			return
+		}
+		key := strings.ToLower(name)
+		current, exists := result[key]
+		if !exists || current.Enabled == nil {
+			result[key] = Tool{Name: name, Enabled: state}
+		}
+	}
+	switch typed := value.(type) {
+	case string:
+		add(typed, enabled)
+	case []any:
+		for _, item := range typed {
+			switch candidate := item.(type) {
+			case string:
+				add(candidate, enabled)
+			case map[string]any:
+				name, _ := stringValue(candidate, "name", "id")
+				state := enabled
+				if declared, ok := boolValue(candidate, "enabled"); ok {
+					state = boolPointer(declared)
+				}
+				add(name, state)
+			}
+		}
+	case map[string]any:
+		for name, raw := range typed {
+			state := enabled
+			if candidate, ok := raw.(map[string]any); ok {
+				if declared, present := boolValue(candidate, "enabled"); present {
+					state = boolPointer(declared)
+				}
+			}
+			add(name, state)
+		}
+	}
+}
+
+func mergeTools(existing, additions []Tool) []Tool {
+	values := map[string]Tool{}
+	for _, tool := range append(existing, additions...) {
+		key := strings.ToLower(tool.Name)
+		current, exists := values[key]
+		if !exists || current.Enabled == nil {
+			values[key] = tool
+		}
+	}
+	result := make([]Tool, 0, len(values))
+	for _, tool := range values {
+		result = append(result, tool)
+	}
+	sort.Slice(result, func(i, j int) bool { return strings.ToLower(result[i].Name) < strings.ToLower(result[j].Name) })
+	return result
+}
+
+func boolPointer(value bool) *bool { return &value }
 
 func looksLikeServerCollection(value any) bool {
 	switch typed := value.(type) {
@@ -215,6 +313,15 @@ func mapValue(object map[string]any, keys ...string) (map[string]any, bool) {
 				result, ok := value.(map[string]any)
 				return result, ok
 			}
+		}
+	}
+	return nil, false
+}
+
+func anyValue(object map[string]any, key string) (any, bool) {
+	for present, value := range object {
+		if normalizeKey(present) == normalizeKey(key) {
+			return value, true
 		}
 	}
 	return nil, false

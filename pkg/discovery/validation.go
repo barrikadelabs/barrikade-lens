@@ -10,7 +10,7 @@ import (
 
 func (s *Snapshot) Validate() error {
 	if !IsSupportedSchemaVersion(s.SchemaVersion) {
-		return fmt.Errorf("schema_version must be %q or %q", LegacySchemaVersion, SchemaVersion)
+		return fmt.Errorf("unsupported schema_version %q", s.SchemaVersion)
 	}
 	if s.SnapshotID == "" || s.OrganizationID == "" || s.SourceID == "" || s.TargetID == "" {
 		return fmt.Errorf("snapshot_id, organization_id, source_id, and target_id are required")
@@ -68,6 +68,17 @@ func (s *Snapshot) Validate() error {
 		if err := validateConfidence(relationship.Confidence); err != nil {
 			return fmt.Errorf("relationship %s: %w", relationship.ID, err)
 		}
+		if s.SchemaVersion == SchemaVersion {
+			if relationship.Surface != s.SourceType {
+				return fmt.Errorf("relationship %s surface must match snapshot source_type", relationship.ID)
+			}
+			if _, err := time.Parse(time.RFC3339Nano, relationship.ObservedAt); err != nil {
+				return fmt.Errorf("relationship %s observed_at: %w", relationship.ID, err)
+			}
+			if !validObservationState(relationship.ObservationState) {
+				return fmt.Errorf("relationship %s has invalid observation_state %q", relationship.ID, relationship.ObservationState)
+			}
+		}
 		for _, ref := range relationship.EvidenceRefs {
 			if _, ok := evidence[ref]; !ok {
 				return fmt.Errorf("relationship %s references missing evidence %s", relationship.ID, ref)
@@ -78,7 +89,11 @@ func (s *Snapshot) Validate() error {
 }
 
 func IsSupportedSchemaVersion(version string) bool {
-	return version == LegacySchemaVersion || version == SchemaVersion
+	return version == LegacySchemaVersion || version == PreviousSchemaVersion || version == SchemaVersion
+}
+
+func validObservationState(value ObservationState) bool {
+	return value == ObservationDeclared || value == ObservationDiscovered || value == ObservationObserved
 }
 
 func validateConfidence(value Confidence) error {

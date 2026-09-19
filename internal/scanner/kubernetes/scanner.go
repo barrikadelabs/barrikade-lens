@@ -10,18 +10,26 @@ import (
 	"github.com/barrikadelabs/barrikade-lens/internal/detector"
 	"github.com/barrikadelabs/barrikade-lens/internal/scanner/builder"
 	"github.com/barrikadelabs/barrikade-lens/internal/scanner/mcpconfig"
+	"github.com/barrikadelabs/barrikade-lens/internal/scanner/mcptopology"
 	"github.com/barrikadelabs/barrikade-lens/pkg/discovery"
 	"gopkg.in/yaml.v3"
 )
 
 type Inventory struct {
-	ClusterID       string
-	ClusterName     string
-	Workloads       []Workload
-	Services        []Service
-	ConfigMaps      map[string]ConfigMap
-	ConfigMapErrors int
-	CRDs            []CRD
+	ClusterID            string
+	ClusterName          string
+	Workloads            []Workload
+	Services             []Service
+	ConfigMaps           map[string]ConfigMap
+	ConfigMapErrors      int
+	ConfigMapDenied      int
+	ConfigMapParseErrors int
+	ResourceErrors       []ResourceError
+	CRDs                 []CRD
+}
+type ResourceError struct {
+	Resource string
+	Denied   bool
 }
 type Workload struct {
 	UID             string
@@ -45,6 +53,7 @@ type Service struct {
 	Hosts     []string
 	Ports     []int
 	Selector  map[string]string
+	Backends  []string
 }
 type ConfigMap struct {
 	Namespace string
@@ -94,12 +103,13 @@ func Scan(options Options) (discovery.Snapshot, error) {
 	snapshot.Sequence = options.Sequence
 	snapshot.Scope = discovery.Scope{Name: options.Inventory.ClusterName}
 	b := builder.New(snapshot)
+	configMapParseErrors := options.Inventory.ConfigMapParseErrors
 	clusterEvidence := b.AddEvidence(builder.Observation{DetectorID: "kubernetes.cluster", DetectorVersion: Version, Method: "workload_uid", Family: "cluster_identity", Specificity: "high", Locator: discovery.HashLocator(options.OrganizationID, options.Inventory.ClusterID), Authoritative: true})
 	clusterID := b.AddEntity(discovery.KindCluster, "cluster:"+options.Inventory.ClusterID, options.Inventory.ClusterName, map[string]any{"connected": true, "source_surface": "kubernetes"}, clusterEvidence)
 	workloadIDs := map[string]string{}
 	for _, workload := range options.Inventory.Workloads {
 		ref := b.AddEvidence(builder.Observation{DetectorID: "kubernetes.workload", DetectorVersion: Version, Method: "workload_uid", Family: "deployment", Specificity: "high", Locator: discovery.HashLocator(options.OrganizationID, workload.UID), Authoritative: true})
-		attrs := map[string]any{"namespace": workload.Namespace, "workload_kind": workload.Kind, "running_at_scan": workload.Running, "images": sorted(workload.Images), "environment_keys": sorted(workload.EnvironmentKeys), "mount_names": sorted(workload.MountNames), "configmap_references": sorted(workload.ConfigMapRefs)}
+		attrs := map[string]any{"namespace": workload.Namespace, "workload_kind": workload.Kind, "running_at_scan": workload.Running, "images": sorted(workload.Images), "image_digests": imageDigests(workload.Images), "environment_keys": sorted(workload.EnvironmentKeys), "mount_names": sorted(workload.MountNames), "configmap_references": sorted(workload.ConfigMapRefs)}
 		if len(workload.CredentialRefs) > 0 {
 			attrs["credential_reference_count"] = len(sorted(workload.CredentialRefs))
 		}
@@ -119,6 +129,7 @@ func Scan(options Options) (discovery.Snapshot, error) {
 		id := b.AddEntity(discovery.KindWorkload, "kubernetes:"+options.Inventory.ClusterID+":"+workload.UID, workload.Namespace+"/"+workload.Name, attrs, ref)
 		workloadIDs[workload.Namespace+"/"+workload.Name] = id
 		b.AddRelationship(discovery.RelationshipRunsOn, id, clusterID, nil, ref)
+		linkWorkloadRepository(b, options, workload, id, ref)
 		for _, credentialRef := range sorted(workload.CredentialRefs) {
 			credentialID := b.AddEntity(discovery.KindCredentialReference, "kubernetes:"+options.Inventory.ClusterID+":credential-ref:"+workload.Namespace+":"+credentialRef, workload.Namespace+"/"+credentialRef, map[string]any{"configured": true, "reference_type": "kubernetes_secret"}, ref)
 			b.AddRelationship(discovery.RelationshipConfiguredBy, id, credentialID, nil, ref)
@@ -159,8 +170,10 @@ func Scan(options Options) (discovery.Snapshot, error) {
 			}
 			configurationOwnerID = agentID
 		}
-		scanReferencedConfigMaps(b, options, workload, configurationOwnerID, ref)
+		configMapParseErrors += scanReferencedConfigMaps(b, options, workload, configurationOwnerID, ref)
 	}
+	serviceIDs := map[string]string{}
+	serviceRefs := map[string]string{}
 	for _, service := range options.Inventory.Services {
 		ref := b.AddEvidence(builder.Observation{DetectorID: "kubernetes.service", DetectorVersion: Version, Method: "workload_uid", Family: "network_service", Specificity: "high", Locator: discovery.HashLocator(options.OrganizationID, service.UID), Authoritative: true})
 		attributes := map[string]any{"namespace": service.Namespace, "service_kind": service.Kind, "ports": service.Ports}
@@ -176,11 +189,27 @@ func Scan(options Options) (discovery.Snapshot, error) {
 			attributes["host"] = hosts[0]
 		}
 		apiID := b.AddEntity(discovery.KindAPIService, "kubernetes:"+options.Inventory.ClusterID+":service:"+service.UID, service.Namespace+"/"+service.Name, attributes, ref)
+		serviceKey := service.Namespace + "/" + service.Kind + "/" + service.Name
+		serviceIDs[serviceKey] = apiID
+		serviceRefs[serviceKey] = ref
 		for _, workload := range options.Inventory.Workloads {
 			if workload.Namespace == service.Namespace && selectorMatches(service.Selector, workload.Labels) {
 				if workloadID := workloadIDs[workload.Namespace+"/"+workload.Name]; workloadID != "" {
 					b.AddRelationship(discovery.RelationshipExposes, workloadID, apiID, nil, ref)
 				}
+			}
+		}
+	}
+	for _, ingress := range options.Inventory.Services {
+		if ingress.Kind != "Ingress" {
+			continue
+		}
+		ingressID := serviceIDs[ingress.Namespace+"/Ingress/"+ingress.Name]
+		ingressRef := serviceRefs[ingress.Namespace+"/Ingress/"+ingress.Name]
+		for _, backend := range ingress.Backends {
+			serviceKey := ingress.Namespace + "/Service/" + backend
+			if serviceID := serviceIDs[serviceKey]; serviceID != "" {
+				b.AddRelationship(discovery.RelationshipExposes, serviceID, ingressID, map[string]any{"routing_basis": "ingress_backend"}, serviceRefs[serviceKey], ingressRef)
 			}
 		}
 	}
@@ -200,10 +229,69 @@ func Scan(options Options) (discovery.Snapshot, error) {
 	b.Snapshot.Coverage.LocationsChecked = len(options.Inventory.Workloads) + len(options.Inventory.Services)
 	if options.Inventory.ConfigMapErrors > 0 {
 		b.Snapshot.Coverage.Partial = true
-		b.Snapshot.Coverage.LocationsDenied += options.Inventory.ConfigMapErrors
+		b.Snapshot.Coverage.DetectorsFailed += options.Inventory.ConfigMapErrors
+		b.Snapshot.Coverage.LocationsDenied += options.Inventory.ConfigMapDenied
 		b.Snapshot.Errors = append(b.Snapshot.Errors, discovery.ScanError{DetectorID: "kubernetes.configmap", Code: "referenced_configmap_unavailable", Message: "One or more referenced ConfigMaps could not be inspected"})
 	}
+	if configMapParseErrors > 0 {
+		b.Snapshot.Coverage.Partial = true
+		b.Snapshot.Coverage.DetectorsFailed += configMapParseErrors
+		b.Snapshot.Errors = append(b.Snapshot.Errors, discovery.ScanError{DetectorID: "kubernetes.configmap", Code: "referenced_configmap_parse_failed", Message: "One or more referenced MCP ConfigMap entries could not be parsed"})
+	}
+	for _, resourceError := range options.Inventory.ResourceErrors {
+		b.Snapshot.Coverage.Partial = true
+		b.Snapshot.Coverage.DetectorsFailed++
+		if resourceError.Denied {
+			b.Snapshot.Coverage.LocationsDenied++
+		}
+		code := "kubernetes_resource_unavailable"
+		if resourceError.Denied {
+			code = "kubernetes_resource_denied"
+		}
+		b.Snapshot.Errors = append(b.Snapshot.Errors, discovery.ScanError{DetectorID: "kubernetes." + resourceError.Resource, Code: code, Message: "A Kubernetes resource surface could not be inspected", Retryable: !resourceError.Denied})
+	}
 	return b.Finish()
+}
+
+func imageDigests(images []string) []string {
+	result := []string{}
+	for _, image := range images {
+		if index := strings.LastIndex(image, "@sha256:"); index >= 0 {
+			digest := strings.ToLower(image[index+1:])
+			if len(digest) == len("sha256:")+64 {
+				valid := true
+				for _, character := range strings.TrimPrefix(digest, "sha256:") {
+					if !strings.ContainsRune("0123456789abcdef", character) {
+						valid = false
+						break
+					}
+				}
+				if valid {
+					result = append(result, digest)
+				}
+			}
+		}
+	}
+	return sorted(result)
+}
+
+func linkWorkloadRepository(b *builder.Builder, options Options, workload Workload, workloadID, ref string) {
+	repositoryURL := ""
+	for _, key := range []string{"barrikade.ai/repository-url", "org.opencontainers.image.source"} {
+		if value := discovery.NormalizeRepositoryURL(workload.Labels[key]); value != "" {
+			repositoryURL = value
+			break
+		}
+	}
+	if repositoryURL == "" {
+		return
+	}
+	attributes := map[string]any{"repository_url": repositoryURL, "source_surface": "kubernetes"}
+	if revision := strings.TrimSpace(workload.Labels["org.opencontainers.image.revision"]); len(revision) == 40 || len(revision) == 64 {
+		attributes["commit_sha"] = strings.ToLower(revision)
+	}
+	repositoryID := b.AddEntity(discovery.KindRepository, repositoryURL, repositoryURL, attributes, ref)
+	b.AddRelationship(discovery.RelationshipDefinedIn, workloadID, repositoryID, map[string]any{"correlation_basis": "explicit_repository_label"}, ref)
 }
 
 type runtimeObservation struct {
@@ -341,7 +429,8 @@ func agentIntentObservation(workload Workload) (runtimeObservation, bool) {
 	return runtimeObservation{}, false
 }
 
-func scanReferencedConfigMaps(b *builder.Builder, options Options, workload Workload, ownerID, workloadRef string) {
+func scanReferencedConfigMaps(b *builder.Builder, options Options, workload Workload, ownerID, workloadRef string) int {
+	parseErrors := 0
 	for _, name := range workload.ConfigMapRefs {
 		config, ok := options.Inventory.ConfigMaps[workload.Namespace+"/"+name]
 		if !ok {
@@ -349,11 +438,19 @@ func scanReferencedConfigMaps(b *builder.Builder, options Options, workload Work
 		}
 		for key, value := range config.Data {
 			if len(value) > 4<<20 {
+				if strings.Contains(strings.ToLower(key), "mcp") {
+					parseErrors++
+				}
 				continue
 			}
 			document := map[string]any{}
 			if json.Unmarshal([]byte(value), &document) != nil {
-				_ = yaml.Unmarshal([]byte(value), &document)
+				if err := yaml.Unmarshal([]byte(value), &document); err != nil {
+					if strings.Contains(strings.ToLower(key), "mcp") {
+						parseErrors++
+					}
+					continue
+				}
 			}
 			servers := mcpconfig.Find(document)
 			if len(servers) == 0 {
@@ -361,29 +458,15 @@ func scanReferencedConfigMaps(b *builder.Builder, options Options, workload Work
 			}
 			ref := b.AddEvidence(builder.Observation{DetectorID: "kubernetes.configmap", DetectorVersion: Version, Method: "descriptor", Family: "mcp_configuration", Specificity: "high", Locator: discovery.HashLocator(options.OrganizationID, config.Namespace+"/"+config.Name+"/"+key), ContentHash: discovery.ContentHash([]byte(value)), Authoritative: true})
 			for _, server := range servers {
-				attrs := map[string]any{"configured": true, "source": "configmap", "transport": server.Transport}
-				canonical := "kubernetes:" + options.Inventory.ClusterID + ":mcp:" + config.Namespace + ":" + strings.ToLower(server.Name)
-				if server.URL != "" {
-					if sanitized, err := discovery.SanitizeURL(server.URL); err == nil {
-						attrs["endpoint"] = sanitized
-						attrs["host"] = discovery.URLHost(sanitized)
-						canonical = "kubernetes:" + options.Inventory.ClusterID + ":mcp-url:" + sanitized
-					}
-				}
-				if server.Enabled != nil {
-					attrs["enabled"] = *server.Enabled
-				}
-				if len(server.EnvironmentKeys) > 0 {
-					attrs["environment_keys"] = server.EnvironmentKeys
-				}
-				if server.CredentialPresent {
-					attrs["credential_present"] = true
-				}
-				serverID := b.AddEntity(discovery.KindMCPServer, canonical, server.Name, attrs, ref)
-				b.AddRelationship(discovery.RelationshipConnectsTo, ownerID, serverID, nil, workloadRef, ref)
+				mcptopology.Add(b, mcptopology.Context{
+					LocalCanonicalPrefix: "kubernetes:" + options.Inventory.ClusterID + ":" + config.Namespace,
+					SourceSurface:        discovery.SourceKubernetes,
+					Source:               "configmap",
+				}, ownerID, server, workloadRef, ref)
 			}
 		}
 	}
+	return parseErrors
 }
 func selectorMatches(selector, labels map[string]string) bool {
 	if len(selector) == 0 {

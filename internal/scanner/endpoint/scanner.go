@@ -19,6 +19,7 @@ import (
 	"github.com/barrikadelabs/barrikade-lens/internal/detector"
 	"github.com/barrikadelabs/barrikade-lens/internal/scanner/builder"
 	"github.com/barrikadelabs/barrikade-lens/internal/scanner/mcpconfig"
+	"github.com/barrikadelabs/barrikade-lens/internal/scanner/mcptopology"
 	"github.com/barrikadelabs/barrikade-lens/internal/scanner/skillconfig"
 	"github.com/barrikadelabs/barrikade-lens/pkg/discovery"
 	"github.com/pelletier/go-toml/v2"
@@ -952,28 +953,10 @@ func modelCacheName(layout, relative string, directory bool) (string, bool) {
 
 func addMCPServers(b *builder.Builder, options Options, signature detector.RuntimeSignature, runtimeID string, document any, ref string) {
 	for _, server := range mcpconfig.Find(document) {
-		attributes := map[string]any{"configured": true, "transport": server.Transport, "source_surface": "endpoint"}
-		canonical := "target:" + options.TargetID + ":mcp:" + strings.ToLower(options.Username) + ":" + signature.ID + ":" + server.Name
-		if server.URL != "" {
-			sanitized, err := discovery.SanitizeURL(server.URL)
-			if err != nil {
-				continue
-			}
-			attributes["endpoint"] = sanitized
-			attributes["host"] = discovery.URLHost(sanitized)
-			canonical = "target:" + options.TargetID + ":mcp-url:" + sanitized
-		}
-		if server.Enabled != nil {
-			attributes["enabled"] = *server.Enabled
-		}
-		if len(server.EnvironmentKeys) > 0 {
-			attributes["environment_keys"] = server.EnvironmentKeys
-		}
-		if server.CredentialPresent {
-			attributes["credential_present"] = true
-		}
-		serverID := b.AddEntity(discovery.KindMCPServer, canonical, server.Name, attributes, ref)
-		b.AddRelationship(discovery.RelationshipConnectsTo, runtimeID, serverID, nil, ref)
+		mcptopology.Add(b, mcptopology.Context{
+			LocalCanonicalPrefix: "target:" + options.TargetID + ":" + strings.ToLower(options.Username) + ":" + signature.ID,
+			SourceSurface:        discovery.SourceEndpoint,
+		}, runtimeID, server, ref)
 	}
 }
 
