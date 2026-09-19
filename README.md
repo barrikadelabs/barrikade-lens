@@ -152,7 +152,7 @@ npm run install:local
 
 This stages the binary for the current OS and architecture, creates the local npm executable, and links `barrikade-lens` into npm's global bin directory. Afterward, both `npx barrikade-lens` and `barrikade-lens` run the checkout. Registry users do not need this step after the v2 platform packages and launcher are published.
 
-Weekly and manually triggered scale CI enforces a two-second inventory-query gate at one million current entities. Signed artifact requirements and release secrets are described in [release integrity](docs/releasing.md).
+Weekly and manually triggered scale CI enforces a two-second inventory-query gate at one million current entities and benchmarks the core graph investigation paths; see the [scale testing runbook](docs/scale-testing.md). Signed artifact requirements and release secrets are described in [release integrity](docs/releasing.md).
 
 ## License and provenance
 

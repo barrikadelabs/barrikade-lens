@@ -7,6 +7,7 @@ permissions: {contents: read}
 jobs:
   million-entity-gate:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     services:
       postgres:
         image: postgres:18-alpine
@@ -17,8 +18,22 @@ jobs:
     env:
       LENS_TEST_DATABASE_URL: postgres://lens:lens@127.0.0.1:5432/lens?sslmode=disable
       LENS_RUN_SCALE_TESTS: '1'
+      LENS_SCALE_ARTIFACT_DIR: scale-artifacts
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6
         with: {go-version: '1.26.x', cache: true}
-      - run: go test -run TestMillionEntityInventoryQueryUnderTwoSeconds -count=1 -timeout=20m ./internal/hub
+      - name: Run million-entity and tenant-isolation gates
+        shell: bash
+        run: |
+          set -o pipefail
+          mkdir -p "$LENS_SCALE_ARTIFACT_DIR"
+          go test -v -run '^(TestMillionEntityInventoryQueryUnderTwoSeconds|TestTenantRowSecurityRejectsCrossOrganizationReadsAndWrites)$' -count=1 -timeout=20m ./internal/hub 2>&1 | tee "$LENS_SCALE_ARTIFACT_DIR/test.log"
+      - name: Retain query plans and database statistics
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: million-entity-diagnostics-${{ github.run_attempt }}
+          path: scale-artifacts
+          if-no-files-found: warn
+          retention-days: 30
