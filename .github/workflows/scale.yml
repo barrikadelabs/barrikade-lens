@@ -19,6 +19,7 @@ jobs:
       LENS_TEST_DATABASE_URL: postgres://lens:lens@127.0.0.1:5432/lens?sslmode=disable
       LENS_RUN_SCALE_TESTS: '1'
       LENS_SCALE_ARTIFACT_DIR: scale-artifacts
+      LENS_SCALE_DISPOSABLE_DATABASE: '1'
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-go@v6

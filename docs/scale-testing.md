@@ -37,6 +37,8 @@ docker stop lens-scale-postgres
 
 Fixture creation is excluded from the query timings. Each path runs twice after resetting application database connections and three times on warm connections. The first scheduled run also starts with a fresh PostgreSQL service and a newly loaded dataset; a connection reset does not claim to evict PostgreSQL or operating-system page caches.
 
+Local runs explicitly delete the fixture so a shared development database is not polluted. CI sets `LENS_SCALE_DISPOSABLE_DATABASE=1` because its PostgreSQL service container is destroyed with the job; skipping redundant million-row deletion there does not change fixture creation, measurement, or diagnostics.
+
 The inventory page and its next cursor page must each finish in under two seconds and return exactly 100 bounded results. The graph paths use the same ceiling so regressions fail early rather than becoming an untracked benchmark trend. The test verifies the full one-million-current-entity cardinality before timing anything.
 
 ## Diagnose a failure
