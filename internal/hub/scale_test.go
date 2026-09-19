@@ -54,7 +54,9 @@ func TestMillionEntityInventoryQueryUnderTwoSeconds(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO organizations(id,name) VALUES($1,'scale test'),($2,'foreign scale test')`, org, foreignOrg); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { cleanupScaleFixture(ctx, pool, org, foreignOrg) })
+	if os.Getenv("LENS_SCALE_DISPOSABLE_DATABASE") != "1" {
+		t.Cleanup(func() { cleanupScaleFixture(ctx, pool, org, foreignOrg) })
+	}
 
 	artifactDirectory := os.Getenv("LENS_SCALE_ARTIFACT_DIR")
 	if artifactDirectory == "" {
