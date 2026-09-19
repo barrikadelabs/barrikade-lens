@@ -213,7 +213,7 @@ func newScanCommand(dependencies Dependencies, organizationID, packPath *string)
 
 func newEnrollCommand(dependencies Dependencies) *cobra.Command {
 	var hubURL, configPath string
-	var installService bool
+	var installService, enrollmentCodeStdin bool
 	command := &cobra.Command{
 		Use: "enroll [code]", Short: "Enroll this endpoint with a Lens Hub", Args: cobra.MaximumNArgs(1),
 		RunE: func(command *cobra.Command, args []string) error {
@@ -230,11 +230,23 @@ func newEnrollCommand(dependencies Dependencies) *cobra.Command {
 					return nil
 				}
 			}
+			if enrollmentCodeStdin && len(args) > 0 {
+				return fmt.Errorf("the enrollment code must be supplied either as an argument or with --enrollment-code-stdin, not both")
+			}
 			code := ""
 			if len(args) == 1 {
 				code = args[0]
 			}
-			if code == "" {
+			if enrollmentCodeStdin {
+				data, readErr := io.ReadAll(io.LimitReader(command.InOrStdin(), 4097))
+				if readErr != nil {
+					return fmt.Errorf("read enrollment code from stdin: %w", readErr)
+				}
+				if len(data) > 4096 {
+					return fmt.Errorf("enrollment code from stdin is too long")
+				}
+				code = strings.TrimSpace(string(data))
+			} else if code == "" {
 				code = os.Getenv("BARRIKADE_LENS_ENROLLMENT_CODE")
 			}
 			if code == "" {
@@ -248,7 +260,7 @@ func newEnrollCommand(dependencies Dependencies) *cobra.Command {
 			}
 			cfg, err := hubclient.New(Version).Enroll(command.Context(), hubURL, code, configPath)
 			if err != nil {
-				return err
+				return errors.New(strings.ReplaceAll(err.Error(), code, "[redacted]"))
 			}
 			if err := lensconfig.Save(configPath, cfg); err != nil {
 				return err
@@ -287,6 +299,7 @@ func newEnrollCommand(dependencies Dependencies) *cobra.Command {
 	command.Flags().StringVar(&hubURL, "hub", "", "Lens Hub base URL")
 	command.Flags().StringVar(&configPath, "config", "", "managed collector configuration path")
 	command.Flags().BoolVar(&installService, "install", false, "install and start the managed collector after enrollment")
+	command.Flags().BoolVar(&enrollmentCodeStdin, "enrollment-code-stdin", false, "read the bootstrap enrollment code from standard input without exposing it in process arguments")
 	return command
 }
 

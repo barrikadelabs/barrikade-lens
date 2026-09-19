@@ -90,6 +90,129 @@ jobs:
           npm init -y >/dev/null
           npm install --ignore-scripts ./packages/*.tgz
           ./node_modules/.bin/barrikade-lens doctor
+  macos-package-smoke:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with: {go-version: '1.26.x'}
+      - name: Build and install universal package without interaction
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          GOOS=darwin GOARCH=arm64 CGO_ENABLED=0 go build -o dist/lens-arm64 ./cmd/barrikade-lens
+          GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 go build -o dist/lens-amd64 ./cmd/barrikade-lens
+          packaging/macos/build-pkg.sh 0.0.0 dist/lens-arm64 dist/lens-amd64 dist/barrikade-lens.pkg
+          sudo installer -pkg dist/barrikade-lens.pkg -target /
+          test -x /usr/local/bin/barrikade-lens
+          lipo -archs /usr/local/bin/barrikade-lens | grep -q arm64
+          lipo -archs /usr/local/bin/barrikade-lens | grep -q x86_64
+          test "$(stat -f '%Lp' '/Library/Application Support/Barrikade/Lens')" = 700
+      - name: Preserve state on reinstall and normal uninstall
+        shell: bash
+        run: |
+          set -euo pipefail
+          state='/Library/Application Support/Barrikade/Lens'
+          printf '%s\n' package-smoke | sudo tee "$state/identity.json" >/dev/null
+          sudo chmod 600 "$state/identity.json"
+          sudo installer -pkg dist/barrikade-lens.pkg -target /
+          test "$(sudo cat "$state/identity.json")" = package-smoke
+          cp /usr/local/share/barrikade-lens/full-cleanup.sh "$RUNNER_TEMP/full-cleanup.sh"
+          sudo "$RUNNER_TEMP/full-cleanup.sh"
+          test ! -e /usr/local/bin/barrikade-lens
+          test "$(sudo cat "$state/identity.json")" = package-smoke
+          sudo "$RUNNER_TEMP/full-cleanup.sh" --purge-state
+          test ! -e "$state"
+  windows-package-smoke:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with: {go-version: '1.26.x'}
+      - name: Install WiX
+        shell: pwsh
+        run: dotnet tool install --global wix --version 4.0.6
+      - name: Build and install MSI without interaction
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          New-Item -ItemType Directory -Force dist | Out-Null
+          $env:GOOS = 'windows'; $env:GOARCH = 'amd64'; $env:CGO_ENABLED = '0'
+          go build -o dist/barrikade-lens.exe ./cmd/barrikade-lens
+          ./packaging/windows/build-msi.ps1 -Version 0.0.0 -Architecture x64 -Binary "$pwd/dist/barrikade-lens.exe" -Output "$pwd/dist/barrikade-lens.msi"
+          $msi = (Resolve-Path "$pwd/dist/barrikade-lens.msi").Path
+          $install = Start-Process msiexec.exe -Wait -PassThru -ArgumentList "/i `"$msi`" /qn /norestart"
+          if ($install.ExitCode -notin @(0, 3010)) { throw "silent MSI install failed with $($install.ExitCode)" }
+          if (-not (Test-Path "$env:ProgramFiles\Barrikade Lens\barrikade-lens.exe")) { throw 'binary was not installed' }
+          if (-not (Get-Service BarrikadeLens -ErrorAction SilentlyContinue)) { throw 'service was not registered' }
+          $state = "$env:ProgramData\Barrikade\Lens"
+          $acl = Get-Acl $state
+          if (-not $acl.AreAccessRulesProtected) { throw 'state directory inherited an unprotected ACL' }
+          $unexpected = $acl.Access | Where-Object { $_.IdentityReference -notmatch 'SYSTEM|Administrators' }
+          if ($unexpected) { throw "state directory grants access to $($unexpected.IdentityReference -join ', ')" }
+      - name: Preserve state on repair and normal uninstall
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $state = "$env:ProgramData\Barrikade\Lens"
+          Set-Content -NoNewline -Encoding ascii -Path "$state\identity.json" -Value package-smoke
+          Copy-Item "$env:ProgramFiles\Barrikade Lens\full-cleanup.ps1" "$env:RUNNER_TEMP\full-cleanup.ps1"
+          $msi = (Resolve-Path "$pwd/dist/barrikade-lens.msi").Path
+          $repair = Start-Process msiexec.exe -Wait -PassThru -ArgumentList "/fa `"$msi`" /qn /norestart"
+          if ($repair.ExitCode -notin @(0, 3010)) { throw "silent MSI repair failed with $($repair.ExitCode)" }
+          if ((Get-Content -Raw "$state\identity.json") -ne 'package-smoke') { throw 'repair replaced machine identity' }
+          $uninstall = Start-Process msiexec.exe -Wait -PassThru -ArgumentList "/x `"$msi`" /qn /norestart"
+          if ($uninstall.ExitCode -notin @(0, 3010)) { throw "silent MSI uninstall failed with $($uninstall.ExitCode)" }
+          if (Test-Path "$env:ProgramFiles\Barrikade Lens\barrikade-lens.exe") { throw 'binary remained after uninstall' }
+          if ((Get-Content -Raw "$state\identity.json") -ne 'package-smoke') { throw 'uninstall removed machine identity' }
+          & "$env:RUNNER_TEMP\full-cleanup.ps1" -Confirm:$false
+          if (Test-Path $state) { throw 'full cleanup preserved machine state' }
+  linux-package-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with: {go-version: '1.26.x'}
+      - name: Install Syft
+        uses: anchore/sbom-action/download-syft@v0
+        with:
+          syft-version: v1.44.0
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: v2.17.0
+          args: release --snapshot --clean --skip=sign
+      - name: Exercise noninteractive deb install, reinstall, and uninstall
+        shell: bash
+        run: |
+          set -euo pipefail
+          package=$(find dist -name '*_linux_amd64.deb' -print -quit)
+          test -n "$package"
+          sudo env DEBIAN_FRONTEND=noninteractive dpkg -i "$package"
+          test -x /usr/bin/barrikade-lens
+          test -f /usr/lib/systemd/system/barrikade-lens.service
+          test "$(stat -c '%a' /etc/barrikade-lens)" = 700
+          test "$(stat -c '%a' /var/lib/barrikade-lens)" = 700
+          printf '%s\n' package-smoke | sudo tee /etc/barrikade-lens/identity.json >/dev/null
+          sudo env DEBIAN_FRONTEND=noninteractive dpkg -i "$package"
+          test "$(sudo cat /etc/barrikade-lens/identity.json)" = package-smoke
+          sudo env DEBIAN_FRONTEND=noninteractive dpkg -r barrikade-lens
+          test "$(sudo cat /etc/barrikade-lens/identity.json)" = package-smoke
+          sudo rm -rf /etc/barrikade-lens /var/lib/barrikade-lens /var/log/barrikade-lens
+          test ! -e /etc/barrikade-lens
+      - name: Exercise noninteractive rpm install
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$(find dist -name '*_linux_amd64.rpm' -print -quit)"
+          docker run --rm -v "$PWD/dist:/dist:ro" rockylinux:9 bash -ec '
+            dnf install -y /dist/*_linux_amd64.rpm
+            test -x /usr/bin/barrikade-lens
+            test -f /usr/lib/systemd/system/barrikade-lens.service
+            test "$(stat -c %a /etc/barrikade-lens)" = 700
+            test "$(stat -c %a /var/lib/barrikade-lens)" = 700
+          '
   kubernetes-rbac:
     runs-on: ubuntu-latest
     steps:

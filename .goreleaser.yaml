@@ -40,10 +40,30 @@ nfpms:
     license: Apache-2.0
     formats: [deb, rpm]
     bindir: /usr/bin
+    scripts:
+      postinstall: packaging/linux/postinstall.sh
+      preremove: packaging/linux/preremove.sh
+      postremove: packaging/linux/postremove.sh
     contents:
+      - dst: /etc/barrikade-lens
+        type: dir
+        file_info:
+          mode: 0700
+      - dst: /var/lib/barrikade-lens
+        type: dir
+        file_info:
+          mode: 0700
+      - dst: /var/log/barrikade-lens
+        type: dir
+        file_info:
+          mode: 0750
       - src: packaging/linux/barrikade-lens.service
         dst: /usr/lib/systemd/system/barrikade-lens.service
         type: config
+      - src: packaging/linux/fleet-install.sh
+        dst: /usr/share/barrikade-lens/fleet-install.sh
+        file_info:
+          mode: 0755
       - src: LICENSE
         dst: /usr/share/doc/barrikade-lens/LICENSE
       - src: NOTICE
