@@ -10,10 +10,11 @@ import (
 
 const (
 	// SchemaVersion is emitted by current collectors. Hub keeps accepting 1.1
-	// during the self-serve rollout so already-enrolled collectors do not need
-	// to upgrade in lockstep with cloud discovery.
-	SchemaVersion       = "1.2"
-	LegacySchemaVersion = "1.1"
+	// and 1.2 during the rollout so already-enrolled collectors do not need to
+	// upgrade in lockstep with relationship provenance.
+	SchemaVersion         = "1.3"
+	PreviousSchemaVersion = "1.2"
+	LegacySchemaVersion   = "1.1"
 )
 
 type SourceType string
@@ -75,6 +76,19 @@ const (
 	ConfidencePossible  Confidence = "possible"
 )
 
+// ObservationState describes what an edge actually proves. Declared means a
+// configuration or descriptor states the relationship, discovered means Lens
+// inferred it from bounded artifact metadata, and observed means Lens saw the
+// relationship on a live execution surface. It never means effectively
+// authorized.
+type ObservationState string
+
+const (
+	ObservationDeclared   ObservationState = "declared"
+	ObservationDiscovered ObservationState = "discovered"
+	ObservationObserved   ObservationState = "observed"
+)
+
 type Collector struct {
 	ID      string `json:"id"`
 	Name    string `json:"name"`
@@ -115,13 +129,16 @@ type Entity struct {
 }
 
 type Relationship struct {
-	ID           string           `json:"id"`
-	Kind         RelationshipKind `json:"kind"`
-	From         string           `json:"from"`
-	To           string           `json:"to"`
-	Attributes   map[string]any   `json:"attributes,omitempty"`
-	Confidence   Confidence       `json:"confidence"`
-	EvidenceRefs []string         `json:"evidence_refs,omitempty"`
+	ID               string           `json:"id"`
+	Kind             RelationshipKind `json:"kind"`
+	From             string           `json:"from"`
+	To               string           `json:"to"`
+	Attributes       map[string]any   `json:"attributes,omitempty"`
+	Confidence       Confidence       `json:"confidence"`
+	EvidenceRefs     []string         `json:"evidence_refs,omitempty"`
+	Surface          SourceType       `json:"surface,omitempty"`
+	ObservedAt       string           `json:"observed_at,omitempty"`
+	ObservationState ObservationState `json:"observation_state,omitempty"`
 }
 
 type Evidence struct {

@@ -121,6 +121,9 @@ export type Connection = {
   label: string;
   direction: "outgoing" | "incoming";
   confidence: Confidence;
+  surfaces: Array<"endpoint" | "repository" | "kubernetes" | "cloud">;
+  observation_states: Array<"declared" | "discovered" | "observed">;
+  observed_at: string;
   attributes: Record<string, unknown>;
   entity: { id: string; kind: string; name: string; attributes: Record<string, unknown> };
 };

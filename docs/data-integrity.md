@@ -10,6 +10,8 @@ Endpoint sources also carry an explicit reporting mode. A Quick Scan accepts exa
 
 Repository and Kubernetes identities use stable repository and cluster identifiers. Cross-surface correlation may use repository URLs, commit SHAs, image digests, workload UIDs, configuration fingerprints, and explicit labels. It never correlates by display name alone.
 
+Remote MCP servers use sanitized protocol endpoints as cross-surface identities; local stdio servers remain target-scoped. Every current relationship retains confidence, evidence references, last observation time, contributing surfaces, and whether each source declared, discovered, or observed the edge. These evidence states do not assert effective authorization.
+
 ## Fact aggregation
 
 Each source retains its current sanitized entity and relationship observation. Organization-level facts are recomputed deterministically:

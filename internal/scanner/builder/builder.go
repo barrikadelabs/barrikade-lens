@@ -81,6 +81,7 @@ func (b *Builder) AddRelationship(kind discovery.RelationshipKind, from, to stri
 		mergeAttributes(relation.Attributes, attributes)
 		relation.EvidenceRefs = union(relation.EvidenceRefs, refs)
 		relation.Confidence = b.confidence(relation.EvidenceRefs)
+		relation.ObservationState = b.observationState(relation.EvidenceRefs)
 		return id
 	}
 	if attributes == nil {
@@ -90,8 +91,28 @@ func (b *Builder) AddRelationship(kind discovery.RelationshipKind, from, to stri
 	b.Snapshot.Relationships = append(b.Snapshot.Relationships, discovery.Relationship{
 		ID: id, Kind: kind, From: from, To: to, Attributes: attributes,
 		Confidence: b.confidence(refs), EvidenceRefs: union(nil, refs),
+		Surface: b.Snapshot.SourceType, ObservedAt: b.Snapshot.ObservedAt,
+		ObservationState: b.observationState(refs),
 	})
 	return id
+}
+
+func (b *Builder) observationState(refs []string) discovery.ObservationState {
+	result := discovery.ObservationDiscovered
+	for _, ref := range refs {
+		index, ok := b.evidenceIndex[ref]
+		if !ok {
+			continue
+		}
+		method := b.Snapshot.Evidence[index].Method
+		switch method {
+		case "system", "process", "listener", "workload_uid":
+			return discovery.ObservationObserved
+		case "descriptor", "skill_descriptor", "agent_descriptor", "config_shape", "config_file", "manifest":
+			result = discovery.ObservationDeclared
+		}
+	}
+	return result
 }
 
 func (b *Builder) Error(detectorID, code, message string, retryable bool) {

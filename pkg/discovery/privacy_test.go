@@ -55,3 +55,14 @@ func TestCloudMetadataHosts(t *testing.T) {
 		}
 	}
 }
+
+func TestNormalizeRepositoryURLRemovesCredentialsAndGitSuffix(t *testing.T) {
+	for input, expected := range map[string]string{
+		"git@github.com:acme/support.git":                       "https://github.com/acme/support",
+		"https://user:pass@github.com/acme/support.git?x=never": "https://github.com/acme/support",
+	} {
+		if got := NormalizeRepositoryURL(input); got != expected {
+			t.Errorf("NormalizeRepositoryURL(%q)=%q, want %q", input, got, expected)
+		}
+	}
+}
