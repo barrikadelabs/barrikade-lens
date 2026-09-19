@@ -30,7 +30,7 @@ func (s *Server) evidenceForEntity(ctx context.Context, organizationID, entityID
 			eo.locator,eo.content_hash,eo.entity_ids,max(eo.observed_at) observed_at,count(*) observations,
 			row_number() OVER (PARTITION BY eo.source_id,eo.detector_id,eo.method,eo.family,COALESCE(eo.locator,'') ORDER BY max(eo.observed_at) DESC,eo.evidence_id DESC) version_rank
 		FROM evidence_observations eo
-		WHERE eo.organization_id=$1 AND $2=ANY(eo.entity_ids)
+		WHERE eo.organization_id=$1 AND eo.entity_ids @> ARRAY[$2]::text[]
 		GROUP BY eo.evidence_id,eo.source_id,eo.detector_id,eo.detector_version,eo.method,eo.family,eo.specificity,eo.locator,eo.content_hash,eo.entity_ids
 	)
 	SELECT o.evidence_id,o.source_id,o.detector_id,o.detector_version,o.method,o.family,o.specificity,o.locator,o.content_hash,o.observed_at,o.observations,

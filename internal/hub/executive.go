@@ -491,19 +491,20 @@ func (s *Server) listSystems(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "invalid_cursor", err.Error())
 		return
 	}
-	query := `WITH exposure_counts AS (
-		SELECT root_entity_id,
-			count(*) FILTER(WHERE severity='critical') AS critical,
-			count(*) FILTER(WHERE severity='high') AS high,
-			count(*) FILTER(WHERE severity='medium') AS medium,
-			count(*) FILTER(WHERE severity='low') AS low
-		FROM exposure_findings WHERE organization_id=$1 AND current=true GROUP BY root_entity_id
-	) SELECT e.id,e.kind,e.name,e.attributes,p.target_id,p.surface,p.system_type,p.product_id,p.product_category,p.discovery_state,p.network_scope,p.attributed,p.confidence,p.first_seen_at,p.last_seen_at,t.name,t.target_type,t.last_seen_at,
+	query := `SELECT e.id,e.kind,e.name,e.attributes,p.target_id,p.surface,p.system_type,p.product_id,p.product_category,p.discovery_state,p.network_scope,p.attributed,p.confidence,p.first_seen_at,p.last_seen_at,t.name,t.target_type,t.last_seen_at,
 		COALESCE(x.critical,0),COALESCE(x.high,0),COALESCE(x.medium,0),COALESCE(x.low,0),c.owner_name,c.owner_type,
 		(p.attributed OR NULLIF(btrim(COALESCE(c.owner_name,'')),'') IS NOT NULL)
 		FROM entity_posture p JOIN entities e ON e.organization_id=p.organization_id AND e.id=p.entity_id
 		LEFT JOIN discovery_targets t ON t.organization_id=p.organization_id AND t.id=p.target_id
-		LEFT JOIN exposure_counts x ON x.root_entity_id=p.entity_id
+		LEFT JOIN LATERAL (
+			SELECT
+			count(*) FILTER(WHERE severity='critical') AS critical,
+			count(*) FILTER(WHERE severity='high') AS high,
+			count(*) FILTER(WHERE severity='medium') AS medium,
+			count(*) FILTER(WHERE severity='low') AS low
+			FROM exposure_findings f
+			WHERE f.organization_id=p.organization_id AND f.root_entity_id=p.entity_id AND f.current=true
+		) x ON true
 		LEFT JOIN entity_context c ON c.organization_id=p.organization_id AND c.entity_id=p.entity_id
 		WHERE p.organization_id=$1 AND p.current=true AND p.system_role='system'`
 	args := []any{principal.OrganizationID}
