@@ -4,7 +4,7 @@ export function ExecutiveFact({ value, label, tone = "neutral", onClick }: { val
   return <button className={`executive-fact ${tone}`} onClick={onClick}><strong>{value}</strong><span>{label}</span></button>;
 }
 export function ConfidenceSummary({ data }: { data: Record<string, number> }) {
-  return <div className="confidence-summary"><span>Evidence confidence</span><div><b><i className="confirmed" />{data.confirmed ?? 0} confirmed</b><b><i className="likely" />{data.likely ?? 0} likely</b><b><i className="possible" />{data.possible ?? 0} possible</b></div></div>;
+  return <div className="confidence-summary"><span>How sure Lens is</span><div><b><i className="confirmed" />{data.confirmed ?? 0} confirmed</b><b><i className="likely" />{data.likely ?? 0} likely</b><b><i className="possible" />{data.possible ?? 0} possible</b></div></div>;
 }
 
 export function StateDistribution({ values, total }: { values: Record<string, number>; total: number }) {

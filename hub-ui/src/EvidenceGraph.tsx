@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { API, type SystemDetail, type SystemItem } from "./api";
 import { captureAnalytics } from "./analytics";
+import { stateLabel, systemTypeLabel } from "./copy";
 import { buildGraph, countRelations, evidenceNodeDetail, evidenceNodeName, pretty, prioritizedEvidenceFacts, relative, relationshipCardLabel, relationshipExplanation, safeClass, type GraphNodeData, type LensNode } from "./features/evidence/graph-model";
 
 const nodeTypes = { lens: LensNodeCard, cluster: GraphClusterCard };
@@ -101,24 +102,24 @@ export function EvidenceGraphPage({ api, revision, initialSystemId = "" }: { api
     return !query || `${system.name} ${system.product_id ?? ""} ${system.system_type}`.toLowerCase().includes(query);
   });
 
-  if (loadingSystems && !systems.length && !systemSearch) return <GraphState icon={LoaderCircle} title="Building the system index" detail="Loading root systems for the evidence map." spinning />;
-  if (systemError && !systems.length) return <GraphState icon={AlertCircle} title="The graph could not be loaded" detail={systemError} />;
-  if (!systems.length && !systemSearch && !loadingSystems) return <GraphState icon={Network} title="No root systems discovered" detail="The graph becomes available when Lens discovers an autonomous agent, agent-capable tool, or model runtime." />;
+  if (loadingSystems && !systems.length && !systemSearch) return <GraphState icon={LoaderCircle} title="Loading AI tools and agents" detail="Lens is preparing the connection map." spinning />;
+  if (systemError && !systems.length) return <GraphState icon={AlertCircle} title="Lens could not load this map" detail={systemError} />;
+  if (!systems.length && !systemSearch && !loadingSystems) return <GraphState icon={Network} title="No AI tools or agents found" detail="This map becomes available after Lens finds an autonomous agent, AI agent tool, or AI model runtime." />;
 
   return <div className="evidence-map-layout">
     <aside className="panel graph-system-panel">
-      <div className="graph-panel-heading"><div><span>ROOT SYSTEMS</span><h2>Choose a system</h2><p>Searches stay server-side so large inventories remain usable.</p></div><b>{loadingSystems ? "…" : `${systems.length}${moreSystems ? "+" : ""}`}</b></div>
-      <label className="graph-system-search"><Search size={14} /><input value={systemSearch} onChange={(event) => setSystemSearch(event.target.value)} placeholder="Find a system" aria-label="Find a system" /></label>
+      <div className="graph-panel-heading"><div><span>AI INVENTORY</span><h2>Choose a tool or agent</h2><p>Search your organization’s AI inventory.</p></div><b>{loadingSystems ? "…" : `${systems.length}${moreSystems ? "+" : ""}`}</b></div>
+      <label className="graph-system-search"><Search size={14} /><input value={systemSearch} onChange={(event) => setSystemSearch(event.target.value)} placeholder="Find an AI tool or agent" aria-label="Find an AI tool or agent" /></label>
       <div className="graph-system-list">
         {visibleSystems.map((system) => <button className={selectedSystem === system.id ? "active" : ""} key={system.id} onClick={() => { captureAnalytics({ name: "lens_interaction", properties: { surface: "evidence", interaction: "open", control: "system" } }); setSelectedSystem(system.id); }} aria-pressed={selectedSystem === system.id}>
-          <KindIcon kind={system.kind} /><span><b>{system.name}</b><small>{pretty(system.system_type)} · {pretty(system.state)}</small></span><i className={`confidence-dot ${system.confidence}`} title={`${pretty(system.confidence)} evidence`} />
+          <KindIcon kind={system.kind} /><span><b>{system.name}</b><small>{systemTypeLabel(system.system_type)} · {stateLabel(system.state)}</small></span><i className={`confidence-dot ${system.confidence}`} title={`${pretty(system.confidence)} confidence`} />
         </button>)}
         {!visibleSystems.length && !loadingSystems && <p className="graph-list-empty">No systems match “{systemSearch}”.</p>}
         {systemError && <p className="graph-list-empty">{systemError}</p>}
       </div>
     </aside>
     <section className="panel graph-workspace">
-      {loadingGraph ? <GraphState icon={LoaderCircle} title="Mapping evidence" detail="Resolving connected inventory and supporting observations." spinning /> : graphError ? <GraphState icon={AlertCircle} title="This system could not be mapped" detail={graphError} /> : detail ? <SystemEvidenceMap detail={detail} /> : null}
+      {loadingGraph ? <GraphState icon={LoaderCircle} title="Building the connection map" detail="Lens is loading connected items and supporting details." spinning /> : graphError ? <GraphState icon={AlertCircle} title="Lens could not map this item" detail={graphError} /> : detail ? <SystemEvidenceMap detail={detail} /> : null}
     </section>
   </div>;
 }
@@ -152,14 +153,14 @@ function SystemEvidenceMap({ detail }: { detail: SystemDetail }) {
 
   return <div className="system-evidence-map">
     <header className="graph-titlebar">
-      <div><span>SELECTED SYSTEM</span><h2>{detail.name}</h2><p>{pretty(detail.system_type)} · {pretty(detail.state)} · {detail.target_name ?? "Unresolved target"}</p></div>
-      <div className="graph-title-facts"><GraphFact label="Connections" value={String(detail.connections.length)} /><GraphFact label="Evidence facts" value={String(detail.evidence.length)} /><GraphFact label="Network" value={pretty(detail.network_scope)} /></div>
+      <div><span>SELECTED TOOL OR AGENT</span><h2>{detail.name}</h2><p>{systemTypeLabel(detail.system_type)} · {stateLabel(detail.state)} · {detail.target_name ?? "Location unresolved"}</p></div>
+      <div className="graph-title-facts"><GraphFact label="Connected items" value={String(detail.connections.length)} /><GraphFact label="Supporting details" value={String(detail.evidence.length)} /><GraphFact label="Network" value={pretty(detail.network_scope)} /></div>
     </header>
     <div className="graph-toolbar">
-      <label><Search size={14} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter connected nodes" aria-label="Filter connected nodes" /></label>
+      <label><Search size={14} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter connected items" aria-label="Filter connected items" /></label>
       <div className="relation-filters" aria-label="Relationship filters">
         {Object.entries(relationCounts).map(([kind, count]) => <button className={hiddenKinds.has(kind) ? "muted" : "active"} onClick={() => { captureAnalytics({ name: "lens_interaction", properties: { surface: "evidence", interaction: "filter_changed" } }); toggleKind(kind); }} key={kind} aria-pressed={!hiddenKinds.has(kind)}><i className={`edge-swatch relation-${safeClass(kind)}`} />{pretty(kind)} <b>{count}</b></button>)}
-        <button className={showEvidence ? "active evidence-toggle" : "muted evidence-toggle"} onClick={() => { captureAnalytics({ name: "lens_interaction", properties: { surface: "evidence", interaction: "filter_changed", control: "evidence" } }); setShowEvidence((value) => !value); }} aria-pressed={showEvidence}><i className="edge-swatch evidence" />{showEvidence ? "Hide evidence" : "Show evidence"} <b>{detail.evidence.length}</b></button>
+        <button className={showEvidence ? "active evidence-toggle" : "muted evidence-toggle"} onClick={() => { captureAnalytics({ name: "lens_interaction", properties: { surface: "evidence", interaction: "filter_changed", control: "evidence" } }); setShowEvidence((value) => !value); }} aria-pressed={showEvidence}><i className="edge-swatch evidence" />{showEvidence ? "Hide supporting details" : "Show supporting details"} <b>{detail.evidence.length}</b></button>
       </div>
     </div>
     <div className="graph-stage">
@@ -186,8 +187,8 @@ function SystemEvidenceMap({ detail }: { detail: SystemDetail }) {
           <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="rgba(255,255,255,.11)" />
           <Controls showInteractive={false} position="bottom-left" />
         </ReactFlow>
-        <div className="graph-legend"><span><ArrowDownLeft size={12} /> Incoming</span><span><ArrowUpRight size={12} /> Outgoing</span><span><i className="legend-line dashed" /> Evidence → resource</span></div>
-        {(model.hiddenConnections > 0 || showEvidence && detail.evidence.length > model.visibleEvidence) && <div className="graph-truncation">Showing a representative neighborhood · {model.hiddenConnections > 0 ? `${model.hiddenConnections} connections hidden` : ""}{model.hiddenConnections > 0 && showEvidence && detail.evidence.length > model.visibleEvidence ? " · " : ""}{showEvidence && detail.evidence.length > model.visibleEvidence ? `${detail.evidence.length - model.visibleEvidence} evidence facts hidden` : ""}</div>}
+        <div className="graph-legend"><span><ArrowDownLeft size={12} /> Connects in</span><span><ArrowUpRight size={12} /> Connects out</span><span><i className="legend-line dashed" /> Supporting detail → item</span></div>
+        {(model.hiddenConnections > 0 || showEvidence && detail.evidence.length > model.visibleEvidence) && <div className="graph-truncation">Showing the closest connections · {model.hiddenConnections > 0 ? `${model.hiddenConnections} connections hidden` : ""}{model.hiddenConnections > 0 && showEvidence && detail.evidence.length > model.visibleEvidence ? " · " : ""}{showEvidence && detail.evidence.length > model.visibleEvidence ? `${detail.evidence.length - model.visibleEvidence} supporting details hidden` : ""}</div>}
       </div>
       <GraphInspector data={selection} />
     </div>
@@ -207,7 +208,7 @@ function LensNodeCard({ data, selected }: NodeProps<LensNode>) {
     <Handle type="source" position={Position.Bottom} id="bottom-source" isConnectable={false} />
     <span className="graph-node-icon"><Icon size={data.role === "root" ? 19 : 16} /></span>
     <span className="graph-node-copy"><b>{data.name}</b><small>{data.detail}</small></span>
-    <i className={`confidence-dot ${data.confidence}`} title={`${pretty(data.confidence)} evidence`} />
+    <i className={`confidence-dot ${data.confidence}`} title={`${pretty(data.confidence)} confidence`} />
   </article>;
 }
 
@@ -252,16 +253,16 @@ function GraphInspector({ data }: { data: GraphNodeData }) {
   const relationshipContext = data.role === "entity" ? relationshipExplanation(data) : "";
   const supportingEvidence = data.supportingEvidence ?? [];
   return <aside className="graph-inspector">
-    <div className="graph-inspector-title"><KindIcon kind={data.kind} /><span><small>{data.role === "root" ? "ROOT SYSTEM" : data.role === "evidence" ? "EVIDENCE FACT" : "CONNECTED ENTITY"}</small><b>{data.name}</b></span></div>
-    {relationshipContext && <div className="graph-relationship-summary"><span>WHY IT IS HERE</span><p>{relationshipContext}</p></div>}
+    <div className="graph-inspector-title"><KindIcon kind={data.kind} /><span><small>{data.role === "root" ? "AI TOOL OR AGENT" : data.role === "evidence" ? "SUPPORTING DETAIL" : "CONNECTED ITEM"}</small><b>{data.name}</b></span></div>
+    {relationshipContext && <div className="graph-relationship-summary"><span>WHY THIS IS LINKED</span><p>{relationshipContext}</p></div>}
     <div className="graph-inspector-facts">{facts.slice(0, 8).map(([label, value], index) => <div key={`${label}:${index}`}><span>{label}</span><b>{value}</b></div>)}</div>
-    {supportingEvidence.length ? <div className="graph-supporting-evidence"><span>SUPPORTING EVIDENCE</span>{supportingEvidence.slice(0, 4).map((finding) => <div key={`${finding.source_id}:${finding.id}`}><b>{evidenceNodeName(finding)}</b><small>{evidenceNodeDetail(finding)}</small></div>)}{supportingEvidence.length > 4 && <small>+{supportingEvidence.length - 4} more evidence facts</small>}</div> : null}
+    {supportingEvidence.length ? <div className="graph-supporting-evidence"><span>SUPPORTING DETAILS</span>{supportingEvidence.slice(0, 4).map((finding) => <div key={`${finding.source_id}:${finding.id}`}><b>{evidenceNodeName(finding)}</b><small>{evidenceNodeDetail(finding)}</small></div>)}{supportingEvidence.length > 4 && <small>+{supportingEvidence.length - 4} more details</small>}</div> : null}
     {evidence?.summary && <p className="graph-evidence-summary">{evidence.summary}</p>}
     {location && <div className="graph-locator"><span>WHERE LENS FOUND IT</span><code title={location}>{location}</code></div>}
     {visibleMatchedFacts.length ? <div className="graph-inspector-matched"><span>DISCOVERED DETAILS</span><div>{visibleMatchedFacts.map((fact) => <b key={fact.label}>{fact.label}: {fact.value}</b>)}</div>{matchedFacts.length > visibleMatchedFacts.length && <small>+{matchedFacts.length - visibleMatchedFacts.length} more in system details</small>}</div> : null}
-    {evidence?.why_it_matched && <div className="graph-evidence-explanation"><span>WHY IT MATCHED</span><p>{evidence.why_it_matched}</p></div>}
-    {evidence?.investigation_hint && <div className="graph-evidence-explanation action"><span>INVESTIGATE NEXT</span><p>{evidence.investigation_hint}</p></div>}
-    <p className="graph-inspector-note">{data.role === "evidence" ? "This observation points to the exact resource it supports. Integrity hashes remain available without replacing the finding." : data.role === "entity" ? "Arrows show the canonical relationship direction recorded by Lens." : "Select any connected node or evidence fact to inspect why it appears in this neighborhood."}</p>
+    {evidence?.why_it_matched && <div className="graph-evidence-explanation"><span>WHY THIS IS LINKED</span><p>{evidence.why_it_matched}</p></div>}
+    {evidence?.investigation_hint && <div className="graph-evidence-explanation action"><span>WHAT TO CHECK NEXT</span><p>{evidence.investigation_hint}</p></div>}
+    <p className="graph-inspector-note">{data.role === "evidence" ? "This observation points to the exact item it supports. Technical integrity hashes remain available below." : data.role === "entity" ? "Arrows show the technical relationship direction recorded by Lens." : "Select a connected item or supporting detail to see why it appears here."}</p>
   </aside>;
 }
 

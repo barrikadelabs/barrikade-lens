@@ -3,20 +3,30 @@ import { Bot, Cloud, FileSearch, LayoutDashboard, type LucideIcon } from "lucide
 export type Page = "Overview" | "Findings" | "Inventory" | "Connections" | "Changes" | "Evidence" | "Settings";
 
 export const navigation: Array<{ page: Page; icon: LucideIcon; detail: string }> = [
-  { page: "Overview", icon: LayoutDashboard, detail: "Organization posture" },
-  { page: "Findings", icon: FileSearch, detail: "Prioritized action" },
-  { page: "Inventory", icon: Bot, detail: "Known AI systems" },
-  { page: "Connections", icon: Cloud, detail: "Coverage and setup" },
+  { page: "Overview", icon: LayoutDashboard, detail: "AI activity at a glance" },
+  { page: "Findings", icon: FileSearch, detail: "What needs review" },
+  { page: "Inventory", icon: Bot, detail: "AI tools and agents" },
+  { page: "Connections", icon: Cloud, detail: "What Lens can check" },
 ];
 
+export const navigationLabel: Record<Page, string> = {
+  Overview: "Overview",
+  Findings: "Findings",
+  Inventory: "AI inventory",
+  Connections: "Coverage",
+  Changes: "Changes",
+  Evidence: "How Lens knows",
+  Settings: "Account settings",
+};
+
 export const pageCopy: Record<Page, { eyebrow: string; title: string; detail: string }> = {
-  Overview: { eyebrow: "DISCOVERY", title: "Organization AI posture", detail: "Evidence-backed visibility across connected cloud accounts, endpoints, repositories, and clusters." },
-  Findings: { eyebrow: "ATTENTION", title: "Findings", detail: "Workspace-wide priorities ranked by severity, freshness, ownership, and latest observation." },
-  Inventory: { eyebrow: "INVENTORY", title: "Organization inventory", detail: "Products grouped across the organization, with every endpoint installation and its evidence one level below." },
-  Connections: { eyebrow: "VISIBILITY", title: "Scan environment", detail: "Connect discovery sources, resume setup, and understand reporting coverage." },
-  Changes: { eyebrow: "HISTORY", title: "Changes", detail: "Material inventory changes. Routine scan refreshes are suppressed." },
-  Evidence: { eyebrow: "EVIDENCE", title: "Evidence graph", detail: "Trace a system to its capabilities, deployment surfaces, observed users, and sanitized evidence." },
-  Settings: { eyebrow: "ACCOUNT", title: "Account settings", detail: "Manage your Lens identity and workspace lifecycle." },
+  Overview: { eyebrow: "OVERVIEW", title: "Your organization’s AI activity", detail: "See which AI tools and agents Lens found, where they run, and what needs review." },
+  Findings: { eyebrow: "REVIEW", title: "Findings", detail: "Potential issues that may need review, ordered by impact and how recently Lens observed them." },
+  Inventory: { eyebrow: "AI INVENTORY", title: "AI inventory", detail: "Explore the AI tools and agents Lens found, including every installation and its supporting details." },
+  Connections: { eyebrow: "COVERAGE", title: "Coverage", detail: "Choose what Lens checks and see which connected devices, repositories, cloud accounts, and clusters are reporting." },
+  Changes: { eyebrow: "HISTORY", title: "Changes", detail: "Important changes to AI tools and agents. Routine scan updates are hidden." },
+  Evidence: { eyebrow: "SUPPORTING DETAILS", title: "How Lens knows", detail: "See how Lens connected an AI tool or agent to related software, accounts, and observations." },
+  Settings: { eyebrow: "ACCOUNT", title: "Account settings", detail: "Manage your account, workspace, and privacy preferences." },
 };
 
 export const pagePath: Record<Page, string> = { Overview: "/overview", Findings: "/findings", Inventory: "/inventory", Connections: "/connections", Changes: "/changes", Evidence: "/systems/evidence", Settings: "/settings" };

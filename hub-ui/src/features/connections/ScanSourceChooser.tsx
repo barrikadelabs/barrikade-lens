@@ -16,10 +16,10 @@ export function ScanSourceChooser({ connectors, onSelect, onCategorySelected }: 
             const enabled = sourceEnabled(source, connectors);
             const Icon = source.icon;
             return <button key={source.kind} disabled={!enabled} onClick={() => { onCategorySelected(category.id); onSelect(source); }}>
-              <Icon size={20} /><span><b>{source.title}</b><small>{source.detail}</small><em>{enabled ? "Available" : "Not enabled"}</em></span>{enabled ? <ChevronRight size={15} /> : <LockKeyhole size={14} />}
+              <Icon size={20} /><span><b>{source.title}</b><small>{source.detail}</small><em>{enabled ? "Available" : "Not available yet"}</em></span>{enabled ? <ChevronRight size={15} /> : <LockKeyhole size={14} />}
             </button>;
           })}
-          {!sources.length && <button disabled><LockKeyhole size={18} /><span><b>Coming soon</b><small>Additional read-only sources will appear here.</small><em>Not available</em></span><LockKeyhole size={14} /></button>}
+          {!sources.length && <button disabled><LockKeyhole size={18} /><span><b>Coming soon</b><small>More read-only connections will appear here.</small><em>Not available yet</em></span><LockKeyhole size={14} /></button>}
         </div>
       </section>;
     })}

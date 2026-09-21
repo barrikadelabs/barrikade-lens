@@ -2,8 +2,34 @@ package hub
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 )
+
+func TestFindingCopyIsPlainAndPreservesUncertainty(t *testing.T) {
+	tests := []struct {
+		name, title, explanation string
+		uncertainty              []string
+	}{
+		{"external credential", externalCredentialTitle, externalCredentialExplanation, []string{"did not read", "confirm what it can access"}},
+		{"sensitive public service", sensitivePublicTitle, sensitivePublicExplanation, []string{"did not observe", "service being used"}},
+		{"state-changing API", stateChangingAPITitle, stateChangingAPIExplanation, []string{"did not confirm", "observe the API being used"}},
+		{"missing owner", missingOwnerTitle, missingOwnerExplanation, []string{"does not count as an owner"}},
+	}
+	wantTitles := []string{"External service connection uses a credential", "Sensitive AI use can connect to a public service", "Connected API may allow changes", "No owner assigned"}
+	for index, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if test.title != wantTitles[index] {
+				t.Fatalf("title=%q, want %q", test.title, wantTitles[index])
+			}
+			for _, phrase := range test.uncertainty {
+				if !strings.Contains(test.explanation, phrase) {
+					t.Fatalf("explanation %q does not preserve uncertainty phrase %q", test.explanation, phrase)
+				}
+			}
+		})
+	}
+}
 
 func TestCatalogOperationClassificationAndSecurityInheritance(t *testing.T) {
 	document := map[string]any{

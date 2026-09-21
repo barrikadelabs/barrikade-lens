@@ -7,6 +7,7 @@ import {
 import type { Connection } from "./api";
 import { captureAnalytics } from "./analytics";
 import barrikadeLogoMark from "./assets/barrikade-logo-mark.svg";
+import { confidenceLabel, freshnessLabel, stateLabel, systemTypeLabel } from "./copy";
 
 const kindIcons: Record<string, LucideIcon> = {
   endpoint: Monitor, repository: GitBranch, cluster: Container, workload: Container, agent: Bot,
@@ -21,7 +22,7 @@ export function CopyBlock({ value }: { value: string }) {
 }
 
 export function FilterBar({ search, setSearch, hideSearch, children }: { search?: string; setSearch?: (value: string) => void; hideSearch?: boolean; children: ReactNode }) {
-  return <section className={hideSearch ? "filter-bar filters-only" : "filter-bar"}>{!hideSearch && <label className="search"><Search size={16} /><input value={search} onChange={(event) => setSearch?.(event.target.value)} placeholder="Search discovered systems" /></label>}<div className="filters">{children}</div></section>;
+  return <section className={hideSearch ? "filter-bar filters-only" : "filter-bar"}>{!hideSearch && <label className="search"><Search size={16} /><input value={search} onChange={(event) => setSearch?.(event.target.value)} placeholder="Search AI tools and agents" /></label>}<div className="filters">{children}</div></section>;
 }
 
 export function Select({ label, value = "", onChange, options }: { label: string; value?: string; onChange: (value: string) => void; options: Record<string, string> }) {
@@ -33,14 +34,14 @@ export function Identity({ kind, name, detail }: { kind: string; name: string; d
   return <span className="identity"><i className={`entity-icon ${kind}`}><Icon size={17} /></i><span><b>{name}</b><small>{detail}</small></span></span>;
 }
 
-export function TypePill({ value }: { value: string }) { return <span className={`type-pill ${value}`}>{pretty(value)}</span>; }
-export function StatePill({ state }: { state: string }) { return <span className={`state-pill ${state}`}><i />{pretty(state)}</span>; }
-export function ConfidencePill({ value }: { value: string }) { return <span className={`confidence-pill ${value}`}><i />{pretty(value)}</span>; }
-export function Freshness({ value, partial }: { value: string; partial?: boolean }) { return <span className={`freshness ${value}`}><i />{pretty(value)}{partial && <small>Partial scan</small>}</span>; }
+export function TypePill({ value }: { value: string }) { return <span className={`type-pill ${value}`}>{systemTypeLabel(value)}</span>; }
+export function StatePill({ state }: { state: string }) { return <span className={`state-pill ${state}`}><i />{stateLabel(state)}</span>; }
+export function ConfidencePill({ value }: { value: string }) { return <span className={`confidence-pill ${value}`}><i />{confidenceLabel(value)}</span>; }
+export function Freshness({ value, partial }: { value: string; partial?: boolean }) { return <span className={`freshness ${value}`}><i />{freshnessLabel(value)}{partial && <small>Some data is missing</small>}</span>; }
 export function Fact({ label, value }: { label: string; value: string }) { return <div><span>{label}</span><b>{value}</b></div>; }
 
 export function ConnectionRow({ item }: { item: Connection }) {
-  return <div className="connection-row"><Identity kind={item.entity.kind} name={item.entity.name} detail={item.label === "observed_user" ? "Observed user—not authoritative owner" : pretty(item.relationship_kind)} /><ConfidencePill value={item.confidence} /></div>;
+  return <div className="connection-row"><Identity kind={item.entity.kind} name={item.entity.name} detail={item.label === "observed_user" ? "Observed account — not an assigned owner" : pretty(item.relationship_kind)} /><ConfidencePill value={item.confidence} /></div>;
 }
 
 export function PanelHeading({ title, detail, count, action }: { title: string; detail: string; count?: number; action?: ReactNode }) {
@@ -56,10 +57,10 @@ export function Drawer({ children, onClose }: { children: ReactNode; onClose: ()
     document.addEventListener("keydown", key);
     return () => { document.removeEventListener("keydown", key); restore.current?.focus(); };
   }, [onClose]);
-  return <div className="drawer-overlay" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><aside className="drawer" role="dialog" aria-modal="true" aria-label="System details" tabIndex={-1} ref={ref}><button className="drawer-close" aria-label="Close system details" onClick={onClose}><X size={18} /></button><div className="drawer-body">{children}</div></aside></div>;
+  return <div className="drawer-overlay" onMouseDown={(event) => { if (event.currentTarget === event.target) onClose(); }}><aside className="drawer" role="dialog" aria-modal="true" aria-label="AI tool or agent details" tabIndex={-1} ref={ref}><button className="drawer-close" aria-label="Close details" onClick={onClose}><X size={18} /></button><div className="drawer-body">{children}</div></aside></div>;
 }
 
-export function Loading() { return <div className="loading"><Radar size={25} /><span>Resolving discovery posture…</span></div>; }
+export function Loading() { return <div className="loading"><Radar size={25} /><span>Loading your AI inventory…</span></div>; }
 export function InlineLoading() { return <div className="inline-loading"><RefreshCw size={14} /> Loading…</div>; }
 export function InlineError({ text }: { text: string }) { return <div className="inline-error"><AlertCircle size={15} />{text}</div>; }
 export function Failure({ error, retry }: { error: string; retry: () => void }) { return <div className="failure"><AlertCircle size={24} /><h2>Lens could not load this view</h2><p>{error}</p><button className="button subtle" onClick={retry}>Try again</button></div>; }
