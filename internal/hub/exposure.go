@@ -54,6 +54,17 @@ type exposureFinding struct {
 	Bases                                       []string
 }
 
+const (
+	externalCredentialTitle       = "External service connection uses a credential"
+	externalCredentialExplanation = "This AI tool or agent is set up to connect to an external service using a credential. Lens did not read the credential or confirm what it can access."
+	sensitivePublicTitle          = "Sensitive AI use can connect to a public service"
+	sensitivePublicExplanation    = "This AI tool or agent is marked as handling sensitive data and is set up to connect to a public address. Lens did not observe data being transferred or the service being used."
+	stateChangingAPITitle         = "Connected API may allow changes"
+	stateChangingAPIExplanation   = "This connection uses a credential and points to an API that includes actions to create, update, or delete data. Lens did not confirm the credential's permissions or observe the API being used."
+	missingOwnerTitle             = "No owner assigned"
+	missingOwnerExplanation       = "No person or team is assigned to this AI tool or agent. A device account observed using it does not count as an owner."
+)
+
 type ExposureWorker struct {
 	Pool     *pgxpool.Pool
 	Logger   *slog.Logger
@@ -158,19 +169,19 @@ func recomputeOrganizationExposures(ctx context.Context, tx pgx.Tx, orgID string
 				if running {
 					severity = "high"
 				}
-				findings = append(findings, newFinding(root.id, destination.ID, "credentialed_external_connector", severity, "Credentialed external connector", "A configured external connection has credential presence. Lens observed configuration only; it did not read the credential value or verify authorization.", "Confirm the destination, credential owner, effective scope, and whether this connector is still required.", path, []string{"observed"}))
+				findings = append(findings, newFinding(root.id, destination.ID, "credentialed_external_connector", severity, externalCredentialTitle, externalCredentialExplanation, "Confirm the destination, who owns the credential, what it can access, and whether the connection is still needed.", path, []string{"observed"}))
 			}
 			if rootContext.Sensitivity == "confidential" || rootContext.Sensitivity == "restricted" {
 				severity := "high"
 				if rootContext.Sensitivity == "restricted" || containsAny(rootContext.DataCategories, "health", "payment", "credentials") {
 					severity = "critical"
 				}
-				recommendation := "Confirm the destination trust boundary and validate that the data classification is appropriate for this connection."
+				recommendation := "Confirm who operates the destination and whether this connection is appropriate for the data handled by this AI tool or agent."
 				if destinationContext.TrustBoundary == "" {
 					severity = lowerSeverity(severity)
-					recommendation = "Confirm whether this public-network destination is internal, a partner, or third party, then validate the data path."
+					recommendation = "Confirm whether the public destination belongs to your organization, a partner, or another third party, then review what data the connection could carry."
 				}
-				findings = append(findings, newFinding(root.id, destination.ID, "sensitive_public_destination", severity, "Sensitive system can reach a public destination", "Operator-supplied sensitivity is combined with an observed configured path to a public-network destination; data transfer or tool invocation was not observed.", recommendation, path, []string{"observed", "operator_context"}))
+				findings = append(findings, newFinding(root.id, destination.ID, "sensitive_public_destination", severity, sensitivePublicTitle, sensitivePublicExplanation, recommendation, path, []string{"observed", "operator_context"}))
 			}
 			if destination.Credential && destination.Catalog != nil {
 				hasState, hasDelete := false, false
@@ -188,7 +199,7 @@ func recomputeOrganizationExposures(ctx context.Context, tx pgx.Tx, orgID string
 						severity = "high"
 					}
 					catalogPath := append(append([]map[string]any{}, path...), map[string]any{"entity_id": destination.Catalog.EntityID, "name": destination.Catalog.Name, "kind": "api_service", "edge": "catalog_potential", "basis": "catalog_potential"})
-					findings = append(findings, newFinding(root.id, destination.ID, "state_changing_api_potential", severity, "Linked API advertises state-changing operations", "A credential-backed connector is linked to a reviewed or uniquely matched API catalogue entry that advertises non-read operations. Effective credential scope and actual invocation were not verified.", "Review the representative operations and independently confirm the credential's effective scopes before changing configuration.", catalogPath, []string{"observed", "catalog_potential"}))
+					findings = append(findings, newFinding(root.id, destination.ID, "state_changing_api_potential", severity, stateChangingAPITitle, stateChangingAPIExplanation, "Review the listed API actions and confirm exactly what the credential can do before changing the connection.", catalogPath, []string{"observed", "catalog_potential"}))
 				}
 			}
 		}
@@ -201,7 +212,7 @@ func recomputeOrganizationExposures(ctx context.Context, tx pgx.Tx, orgID string
 			if running && hasExternal {
 				severity = "medium"
 			}
-			findings = append(findings, newFinding(root.id, "", "missing_owner", severity, "System has no authoritative owner", "No operator owner or authoritative ownership relationship is recorded. An observed operating-system user is not treated as ownership.", "Assign a person or team responsible for reviewing this system and its external connections.", []map[string]any{{"entity_id": root.id, "name": root.name, "kind": "system", "basis": "observed"}}, []string{"observed", "operator_context"}))
+			findings = append(findings, newFinding(root.id, "", "missing_owner", severity, missingOwnerTitle, missingOwnerExplanation, "Assign a person or team to review this AI tool or agent and any external connections.", []map[string]any{{"entity_id": root.id, "name": root.name, "kind": "system", "basis": "observed"}}, []string{"observed", "operator_context"}))
 		}
 	}
 	ids := []string{}

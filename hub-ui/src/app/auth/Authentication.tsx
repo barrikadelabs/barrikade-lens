@@ -61,7 +61,7 @@ export function ClerkApplication({ config }: { config: AuthConfig }) {
   if (!isLoaded) return <Loading />;
   if (!isSignedIn) return <ManagedSignIn />;
   if (error) return <Failure error={error} retry={() => { setError(""); setBootstrapped(""); }} />;
-  if (!organization && bootstrapped === "needs-workspace") return <main className="signin"><section className="signin-story"><Brand /><div className="signin-copy"><span className="product-kicker"><Radar size={14} /> Set up Lens</span><h1>Name your security workspace.</h1><p>This name identifies the organization whose endpoint footprint Lens will assess.</p></div></section><section className="signin-access"><form className="access-card" onSubmit={(event) => { event.preventDefault(); const value = workspaceName.trim(); if (!value) return; setBootstrapped("creating"); Promise.resolve(memberships.createOrganization?.({ name: value })).then((created) => created && memberships.setActive?.({ organization: created.id })).catch((reason) => { setError(String(reason)); setBootstrapped("needs-workspace"); }); }}><p className="eyebrow">WORKSPACE</p><h2>Organization name</h2><label>Name<input value={workspaceName} maxLength={128} required autoFocus onChange={(event) => setWorkspaceName(event.target.value)} placeholder="Acme Security" /></label><button className="button primary full">Create workspace <ArrowRight size={16} /></button></form></section></main>;
+  if (!organization && bootstrapped === "needs-workspace") return <main className="signin"><section className="signin-story"><Brand /><div className="signin-copy"><span className="product-kicker"><Radar size={14} /> Set up Lens</span><h1>Name your workspace.</h1><p>Use the name of the organization whose AI tools and agents Lens will check.</p></div></section><section className="signin-access"><form className="access-card" onSubmit={(event) => { event.preventDefault(); const value = workspaceName.trim(); if (!value) return; setBootstrapped("creating"); Promise.resolve(memberships.createOrganization?.({ name: value })).then((created) => created && memberships.setActive?.({ organization: created.id })).catch((reason) => { setError(String(reason)); setBootstrapped("needs-workspace"); }); }}><p className="eyebrow">WORKSPACE</p><h2>Organization name</h2><label>Name<input value={workspaceName} maxLength={128} required autoFocus onChange={(event) => setWorkspaceName(event.target.value)} placeholder="Acme Security" /></label><button className="button primary full">Create workspace <ArrowRight size={16} /></button></form></section></main>;
   if (!organization || bootstrapped !== organization.id) return <Loading />;
   const organizationControl = <OrganizationSwitcher hidePersonal organizationProfileMode="modal" afterCreateOrganizationUrl="/" afterSelectOrganizationUrl="/" />;
   const userControl = <UserButton userProfileMode="modal" />;
@@ -77,7 +77,7 @@ function ManagedSignIn() {
   }, []);
   const appearance = { variables: { colorPrimary: "#ff6b00", colorBackground: "#131313", colorText: "#ffffff", colorInputBackground: "#0c0c0c", colorInputText: "#ffffff" } };
   return <main className="signin managed-signin">
-    <section className="signin-story"><Brand /><div className="signin-copy"><span className="product-kicker"><Radar size={14} /> Autonomous agent discovery</span><h1>Bring the agent footprint into focus.</h1><p>Start free, connect the environments you choose, and see evidence-backed results without a score or write access.</p></div></section>
+    <section className="signin-story"><Brand /><div className="signin-copy"><span className="product-kicker"><Radar size={14} /> AI tool and agent discovery</span><h1>See where AI is being used.</h1><p>Lens shows which AI tools and agents are present, where they run, and what needs review. It never changes your systems.</p></div></section>
     <section className="signin-access"><div className="managed-auth"><div className="managed-auth-tabs"><button className={!signUp ? "active" : ""} onClick={() => { location.hash = "sign-in"; setSignUp(false); }}>Sign in</button><button className={signUp ? "active" : ""} onClick={() => { location.hash = "sign-up"; setSignUp(true); }}>Create account</button></div>{signUp ? <ClerkSignUp routing="hash" signInUrl="#sign-in" appearance={appearance} /> : <ClerkSignIn routing="hash" signUpUrl="#sign-up" appearance={appearance} />}<p className="auth-legal">{signUp ? <>By creating an account, you agree to the <a href="/terms">design partner terms</a> and acknowledge the <a href="/privacy">Lens privacy notice</a>.</> : <>Managed Lens is governed by the <a href="/terms">design partner terms</a> and <a href="/privacy">privacy notice</a>.</>}</p></div></section>
   </main>;
 }
@@ -102,14 +102,14 @@ function LegacySignIn({ config, onToken, authError }: { config: AuthConfig; onTo
     <section className="signin-story">
       <Brand />
       <div className="signin-copy">
-        <span className="product-kicker"><Radar size={14} /> Autonomous agent discovery</span>
-        <h1>Bring the agent footprint into focus.</h1>
-        <p>Lens gives security and platform leaders a factual map of autonomous systems, where they run, what they connect to, and the evidence behind every conclusion.</p>
+        <span className="product-kicker"><Radar size={14} /> AI tool and agent discovery</span>
+        <h1>See where AI is being used.</h1>
+        <p>Lens shows security and platform teams which AI tools and agents are present, where they run, what they connect to, and how Lens found them.</p>
       </div>
     </section>
     <section className="signin-access"><div className="access-card">
-      <p className="eyebrow">LENS HUB</p><h2>Open your discovery plane</h2>
-      <p className="muted">No scores. No enforcement. Just trustworthy organization-wide discovery posture.</p>
+      <p className="eyebrow">LENS</p><h2>Sign in to Lens</h2>
+      <p className="muted">Read-only visibility across your organization. No scores, enforcement, or automatic changes.</p>
       {config?.enabled && <button className="button primary full" onClick={beginOIDC}>Continue with organization SSO <ArrowRight size={16} /></button>}
       {config?.development_bootstrap && <form onSubmit={(event) => { event.preventDefault(); if (value.trim()) onToken(value.trim()); }}>
         <label>Local bootstrap token<input type="password" value={value} onChange={(event) => setValue(event.target.value)} autoFocus={!config?.enabled} /></label>

@@ -4,7 +4,7 @@ import { Activity, ChevronDown, ChevronRight, Download, LogOut, Menu, RefreshCw,
 import { API, authConfig, type AuthConfig } from "../../api";
 import { captureAnalytics, configureAnalytics, semanticPage } from "../../analytics";
 import { Brand, Loading, useRemote } from "../../ui";
-import { pageCopy, pageForPath, pagePath, navigation } from "../navigation";
+import { navigationLabel, pageCopy, pageForPath, pagePath, navigation } from "../navigation";
 import { OverviewPage } from "../../features/overview/OverviewPage";
 import { FindingsPage } from "../../features/findings/FindingsPage";
 import { SystemsPage } from "../../features/inventory/SystemsPage";
@@ -34,7 +34,7 @@ export function Shell({ api, signOut, organizationControl, userControl, selfServ
       <div className="sidebar-brand"><Brand /></div>
       <nav className="main-nav">
         {navigation.filter((item) => (item.page !== "Findings" || exposureEnabled) && (item.page !== "Connections" || selfServe)).map(({ page: item, icon: Icon, detail }) => <button key={item} className={page === item ? "active" : ""} onClick={() => { captureAnalytics({ name: "lens_interaction", properties: { surface: "navigation", interaction: "open", control: "navigation" } }); navigate(pagePath[item]); setMenuOpen(false); }}>
-          <Icon size={17} /><span><b>{item}</b><small>{detail}</small></span>{page === item && <ChevronRight size={14} />}
+          <Icon size={17} /><span><b>{navigationLabel[item]}</b><small>{detail}</small></span>{page === item && <ChevronRight size={14} />}
         </button>)}
       </nav>
       <div className="sidebar-footer">

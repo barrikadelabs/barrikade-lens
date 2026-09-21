@@ -22,12 +22,12 @@ export const sourceCategories: Array<{ id: SourceCategory; title: string; detail
 ];
 
 export const environmentCatalog: ConnectionSource[] = [
-  { kind: "github_repository", category: "code_ci", title: "GitHub", detail: "Scan repositories through the GitHub App", identifier: "owner/repository (optional)", icon: GitBranch, connector: "github" },
+  { kind: "github_repository", category: "code_ci", title: "GitHub", detail: "Check selected repositories through the GitHub App", identifier: "owner/repository (optional)", icon: GitBranch, connector: "github" },
   { kind: "endpoint", category: "employee_devices", title: "Employee devices", detail: "Install once or deploy across your company", identifier: "", icon: Monitor, connector: "endpoint" },
   { kind: "aws_account", category: "cloud_infrastructure", title: "AWS", detail: "Bedrock, AgentCore, and SageMaker", identifier: "12-digit account ID", icon: Cloud, connector: "aws" },
   { kind: "azure_subscription", category: "cloud_infrastructure", title: "Azure", detail: "Foundry, Azure AI, and Azure ML", identifier: "Subscription ID", icon: Cloud, connector: "azure" },
   { kind: "gcp_project", category: "cloud_infrastructure", title: "Google Cloud", detail: "Vertex AI and Agent Registry", identifier: "Project ID", icon: Cloud, connector: "gcp" },
-  { kind: "kubernetes_cluster", category: "cloud_infrastructure", title: "Kubernetes", detail: "Read-only cluster collector", identifier: "Optional cluster reference", icon: Container, connector: "kubernetes" },
+  { kind: "kubernetes_cluster", category: "cloud_infrastructure", title: "Kubernetes", detail: "Check a cluster without making changes", identifier: "Optional cluster reference", icon: Container, connector: "kubernetes" },
 ];
 
 export function sourceEnabled(source: ConnectionSource, connectors: Record<string, boolean>): boolean {

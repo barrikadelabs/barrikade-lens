@@ -34,8 +34,8 @@ func (s *Server) environmentSetupInstructions(kind, provider, externalID, displa
 		return map[string]any{
 			"method": "cloudformation", "template": string(templateJSON), "external_id": externalIDValue,
 			"expected_role_arn": fmt.Sprintf("arn:aws:iam::%s:role/BarrikadeLensDiscovery", externalID),
-			"what_lens_reads":   []string{"Bedrock agents, aliases, action-group and knowledge-base references, and guardrails", "AgentCore runtimes, endpoints, and gateways", "SageMaker endpoint and model references", "Linked IAM role names and network exposure metadata"},
-			"excluded":          []string{"Prompts and model inputs or outputs", "Secret values", "Invocation APIs", "Write operations"}, "verify_path": verifyPath,
+			"what_lens_reads":   []string{"Bedrock agents, aliases, action groups, knowledge-base links, and guardrails", "AgentCore runtimes, endpoints, and gateways", "SageMaker endpoints and model links", "Names of linked IAM roles and network access settings"},
+			"excluded":          []string{"Prompts and model inputs or outputs", "Secret values", "Model invocation", "Write access"}, "verify_path": verifyPath,
 		}
 	case "azure_subscription":
 		roleName := "Barrikade Lens AI Inventory Reader"
@@ -85,8 +85,8 @@ resource lensAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
 			"method": "azure_bicep", "subscription_id": externalID, "application_id": s.config.AzureApplicationID,
 			"template":        bicep,
 			"commands":        []string{fmt.Sprintf("az account set --subscription %s", shellQuote(externalID)), fmt.Sprintf("lensPrincipalId=$(az ad sp create --id %s --query id -o tsv)", shellQuote(s.config.AzureApplicationID)), "az deployment sub create --location eastus --template-file lens.bicep --parameters lensPrincipalId=$lensPrincipalId"},
-			"what_lens_reads": []string{"Foundry accounts, projects, agents, and preview-labeled agent applications", "Azure AI Services and Azure OpenAI deployments", "Azure ML online endpoints", "Linked identities and network exposure metadata"},
-			"excluded":        []string{"Prompts and model inputs or outputs", "Secret values", "Inference APIs", "Write operations"}, "verify_path": verifyPath,
+			"what_lens_reads": []string{"Foundry accounts, projects, agents, and preview agent applications", "Azure AI Services and Azure OpenAI deployments", "Azure ML online endpoints", "Names of linked identities and network access settings"},
+			"excluded":        []string{"Prompts and model inputs or outputs", "Secret values", "Model inference", "Write access"}, "verify_path": verifyPath,
 		}
 	case "gcp_project":
 		workloadAudience, _ := configuration["workload_identity_audience"].(string)
@@ -132,8 +132,8 @@ output "lens_workload_identity_audience" {
 		return map[string]any{
 			"method": "terraform", "project_id": externalID, "template": terraform,
 			"commands":        []string{"terraform init", "terraform apply"},
-			"what_lens_reads": []string{"Vertex AI Agent Engine reasoning engines", "Preview-labeled Agent Registry endpoints", "Vertex endpoints and model references", "Linked RAG corpora, workload identities, and network exposure metadata"},
-			"excluded":        []string{"Prompts and model inputs or outputs", "Secret values", "Prediction APIs", "Write operations"}, "verify_path": verifyPath,
+			"what_lens_reads": []string{"Vertex AI Agent Engine reasoning engines", "Preview Agent Registry endpoints", "Vertex endpoints and model links", "Names of linked RAG corpora, workload identities, and network access settings"},
+			"excluded":        []string{"Prompts and model inputs or outputs", "Secret values", "Model prediction calls", "Write access"}, "verify_path": verifyPath,
 		}
 	case "endpoint":
 		hub := strings.TrimSuffix(s.config.PublicURL, "/")
@@ -148,8 +148,8 @@ output "lens_workload_identity_audience" {
 					"macos": endpointQuickScanCommand("macos", token, hub), "linux": endpointQuickScanCommand("linux", token, hub), "windows": endpointQuickScanCommand("windows", token, hub),
 				},
 				"prerequisites":   []string{"Node.js 18 or newer"},
-				"what_lens_reads": []string{"Installed and running AI tools and runtimes", "Local configuration metadata and network listeners"},
-				"excluded":        []string{"Prompt and conversation contents", "Secret values", "Source file bodies", "Write access", "Background service installation"},
+				"what_lens_reads": []string{"Names and versions of installed or running AI tools", "Whether local AI services are available over the network", "Relevant configuration names and file locations, but not file contents"},
+				"excluded":        []string{"Prompts and conversations", "Secret values", "Source and configuration file contents", "Write access", "Background service installation"},
 			}
 		}
 		return map[string]any{
@@ -160,17 +160,17 @@ output "lens_workload_identity_audience" {
 				"windows": endpointInstallCommand("windows", token, hub),
 			},
 			"prerequisites":   []string{"Node.js 18 or newer", "On Windows, approve the automatic administrator prompt when shown"},
-			"what_lens_reads": []string{"Installed and running AI tools and runtimes", "Local configuration metadata and network listeners"},
-			"excluded":        []string{"Prompt and conversation contents", "Secret values", "Source file bodies", "Write access"},
+			"what_lens_reads": []string{"Names and versions of installed or running AI tools", "Whether local AI services are available over the network", "Relevant configuration names and file locations, but not file contents"},
+			"excluded":        []string{"Prompts and conversations", "Secret values", "Source and configuration file contents", "Write access"},
 		}
 	case "github_repository":
-		return map[string]any{"method": "github_app", "install_url": "https://github.com/apps/" + url.PathEscape(s.config.GitHubAppSlug) + "/installations/new?state=" + url.QueryEscape(token), "select_repositories": true, "what_lens_reads": []string{"Selected repository metadata", "Detector-relevant configuration files"}, "excluded": []string{"Secret values", "Prompts and model inputs or outputs", "Write access", "Repository administration"}}
+		return map[string]any{"method": "github_app", "install_url": "https://github.com/apps/" + url.PathEscape(s.config.GitHubAppSlug) + "/installations/new?state=" + url.QueryEscape(token), "select_repositories": true, "what_lens_reads": []string{"Details about selected repositories", "Configuration files relevant to AI tools and agents"}, "excluded": []string{"Secret values", "Prompts and model inputs or outputs", "Write access", "Repository administration"}}
 	case "kubernetes_cluster":
 		return map[string]any{
 			"method": "helm", "enrollment_code": token,
 			"command":         fmt.Sprintf("helm upgrade --install lens-k8s oci://ghcr.io/barrikadelabs/charts/lens-k8s --namespace lens-system --create-namespace --set hubURL=%s --set enrollmentCode=%s --set clusterName=%s", shellQuote(strings.TrimSuffix(s.config.PublicURL, "/")), shellQuote(token), shellQuote(displayName)),
-			"what_lens_reads": []string{"Workloads, Services, Ingresses, ConfigMaps, namespaces, and CRD definitions"},
-			"excluded":        []string{"Kubernetes Secrets", "Pod exec", "Workload mutation", "Application data"},
+			"what_lens_reads": []string{"Kubernetes workloads, Services, Ingresses, ConfigMaps, namespaces, and custom resource definitions"},
+			"excluded":        []string{"Kubernetes Secrets", "Commands inside Pods", "Write access or workload changes", "Application data"},
 		}
 	default:
 		return map[string]any{"method": provider}

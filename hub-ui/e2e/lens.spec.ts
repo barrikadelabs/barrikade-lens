@@ -24,11 +24,11 @@ test("delegated endpoint setup selects a platform before issuing a command", asy
   }}));
   await page.goto("/install#token=handoff-token");
   await expect(page).toHaveURL(/\/install$/);
-  const generate = page.getByRole("button", { name: "Generate single-use command" });
+  const generate = page.getByRole("button", { name: "Create single-use command" });
   await expect(generate).toBeDisabled();
   await page.getByRole("button", { name: "Linux" }).click();
   await generate.click();
-  await expect(page.getByRole("heading", { name: "Install for Finance laptop" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Install Lens on Finance laptop" })).toBeVisible();
   await expect(page.getByText(/barrikade-lens@2\.0\.0/)).toBeVisible();
 });
 
@@ -48,11 +48,11 @@ test("CISO overview makes an unassessed workspace actionable without navigation 
     executive_summary: { coverage_state: "unassessed", systems: { known: 0, fresh: 0, stale: 0, fresh_by_type: {}, stale_by_type: {} }, findings: { fresh: 0, stale: 0, fresh_by_severity: {}, stale_by_severity: {} }, effective_ownership: { owned: 0, unowned: 0, unassigned_high_priority_findings: 0 }, top_findings: [] },
   }}));
   await page.goto("/overview");
-  await expect(page.getByRole("heading", { name: "Let’s map your AI environment" })).toBeVisible();
-  await expect(page.getByRole("button", { name: /Start scan/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Connect your first location" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Add a connection/ })).toBeVisible();
   const primary = page.locator(".main-nav button");
   await expect(primary).toHaveCount(4);
-  await expect(primary).toHaveText([/Overview/, /Findings/, /Inventory/, /Connections/]);
+  await expect(primary).toHaveText([/Overview/, /Findings/, /AI inventory/, /Coverage/]);
   await page.getByRole("button", { name: "24h" }).click();
   await expect(page).toHaveURL(/\/overview\?window=24h$/);
   await page.reload();
@@ -82,19 +82,19 @@ test("environment-first onboarding is gated, keyboard accessible, responsive, an
   });
 
   await page.goto("/connections/new");
-  const dialog = page.getByRole("dialog", { name: "Scan environment" });
+  const dialog = page.getByRole("dialog", { name: "Add a connection" });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByRole("heading", { name: "Code & CI" })).toBeVisible();
   await expect(dialog.getByRole("heading", { name: "Employee devices" })).toBeVisible();
   await expect(dialog.getByRole("heading", { name: "Cloud & infrastructure" })).toBeVisible();
   await expect(dialog.getByRole("heading", { name: "SaaS & identity" })).toBeVisible();
-  await expect(dialog.getByRole("button", { name: /GitHub.*Not enabled/ })).toBeDisabled();
-  await expect(dialog.getByRole("button", { name: /AWS.*Not enabled/ })).toBeDisabled();
+  await expect(dialog.getByRole("button", { name: /GitHub.*Not available yet/ })).toBeDisabled();
+  await expect(dialog.getByRole("button", { name: /AWS.*Not available yet/ })).toBeDisabled();
 
   const employeeDevices = dialog.getByRole("button", { name: /Employee devices.*Available/ });
   await employeeDevices.focus();
   await page.keyboard.press("Enter");
-  const continuousMonitoring = dialog.getByRole("button", { name: /Continuous monitoring/ });
+  const continuousMonitoring = dialog.getByRole("button", { name: /Keep results up to date/ });
   await expect(continuousMonitoring).toBeVisible();
   await continuousMonitoring.focus();
   await page.keyboard.press("Enter");
@@ -140,8 +140,8 @@ test("a resumable setup closes into live device status after enrollment", async 
 
   await page.goto("/connections/environment-1");
   await expect(page).toHaveURL(/\/connections$/);
-  await expect(page.getByRole("dialog", { name: "Scan environment" })).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "1 connected sources" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Add a connection" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "1 connected locations" })).toBeVisible();
 });
 
 test("device fleet keeps identity, policy, lifecycle, and admin controls operational", async ({ page }) => {
@@ -171,7 +171,7 @@ test("device fleet keeps identity, policy, lifecycle, and admin controls operati
   });
 
   await page.goto("/connections/devices");
-  await expect(page.getByRole("heading", { name: "Device fleet" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Managed devices" })).toBeVisible();
   await expect(page.getByText("Engineering laptops").first()).toBeVisible();
   await expect(page.getByText("Reporting", { exact: true }).last()).toBeVisible();
   await expect(page.getByText("duplicate hostname")).toBeVisible();
@@ -182,8 +182,8 @@ test("device fleet keeps identity, policy, lifecycle, and admin controls operati
   expect(requests[0]).toEqual({ method: "PATCH", body: { name: "Ishaan's laptop" } });
 
   page.once("dialog", (dialog) => dialog.accept());
-  await page.getByTitle("Revoke device").click();
-  await expect(page.getByText("Revoked", { exact: true }).last()).toBeVisible();
+  await page.getByTitle("Remove scanner access").click();
+  await expect(page.getByText("Access removed", { exact: true }).last()).toBeVisible();
   expect(requests[1]).toEqual({ method: "DELETE" });
 });
 
@@ -194,9 +194,9 @@ test("viewers can inspect coverage but cannot start an environment scan", async 
   await page.route("**/v1/targets?*", async (route) => route.fulfill({ json: { items: [], limit: 50 } }));
   await page.goto("/connections/new");
   await expect(page).toHaveURL(/\/connections$/);
-  await expect(page.getByText("Ask a workspace owner or admin to start an environment scan.")).toBeVisible();
+  await expect(page.getByText("Ask a workspace owner or admin to add a connection.")).toBeVisible();
   await expect(page.getByRole("button", { name: "Start scan" })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "Scan environment" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Add a connection" })).toHaveCount(0);
 });
 
 test("finding route, filters, reload, and accessible dialog state are durable", async ({ page }) => {

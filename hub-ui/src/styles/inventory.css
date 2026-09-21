@@ -97,6 +97,9 @@ button.product-inventory-row:hover { color: white; background: var(--surface-hov
 .analytics-preference input { margin-top:3px; accent-color:var(--orange); }
 .analytics-preference span { display:grid; gap:5px; }
 .analytics-preference small { color:var(--text-3); line-height:1.55; max-width:68ch; }
+.analytics-details { color:var(--text-3); font-size:.78rem; line-height:1.55; }
+.analytics-details summary { color:var(--text-2); cursor:pointer; font-weight:650; }
+.analytics-details p { max-width:72ch; margin:10px 0 0; }
 .settings-panel a,.auth-legal a,.legal-page a,.sidebar-legal a { color:var(--orange); text-decoration:none; }
 .settings-panel a:hover,.auth-legal a:hover,.legal-page a:hover,.sidebar-legal a:hover { text-decoration:underline; }
 .auth-legal { max-width:34rem; margin:12px auto 0; color:var(--text-4); font-size:9px; line-height:1.55; text-align:center; }

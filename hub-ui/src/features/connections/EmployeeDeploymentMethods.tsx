@@ -3,9 +3,9 @@ import type { DeploymentMethod } from "./connection-options";
 
 const methods: Array<{ id: DeploymentMethod; title: string; detail: string; icon: typeof Laptop }> = [
   { id: "this_computer", title: "Install on this computer", detail: "Start with the device you are using now", icon: Laptop },
-  { id: "company", title: "Deploy across my company", detail: "Create a reusable rollout path for your fleet", icon: Building2 },
+  { id: "company", title: "Install across my company", detail: "Create a reusable setup path for managed devices", icon: Building2 },
   { id: "command_line", title: "Command line", detail: "Generate a short-lived installation command", icon: TerminalSquare },
-  { id: "mdm", title: "Device management / MDM", detail: "Prepare instructions for Jamf, Intune, or another MDM", icon: Network },
+  { id: "mdm", title: "Device management (MDM)", detail: "Prepare instructions for Jamf, Intune, or another device manager", icon: Network },
 ];
 
 export function EmployeeDeploymentMethods({ selected, onSelect }: { selected?: DeploymentMethod; onSelect: (method: DeploymentMethod) => void }) {

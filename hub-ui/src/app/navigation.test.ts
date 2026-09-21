@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { pageForPath, pagePath } from "./navigation";
+import { navigationLabel, pageForPath, pagePath } from "./navigation";
 
 describe("Hub navigation", () => {
   it.each([
@@ -17,5 +17,14 @@ describe("Hub navigation", () => {
 
   it("keeps every page addressable by the shell", () => {
     expect(Object.keys(pagePath)).toEqual(["Overview", "Findings", "Inventory", "Connections", "Changes", "Evidence", "Settings"]);
+  });
+
+  it("uses plain-language labels without changing internal page keys", () => {
+    expect(navigationLabel).toMatchObject({
+      Overview: "Overview",
+      Findings: "Findings",
+      Inventory: "AI inventory",
+      Connections: "Coverage",
+    });
   });
 });

@@ -12,11 +12,11 @@ describe("delegated endpoint setup", () => {
     }), { status: 200, headers: { "Content-Type": "application/json" } }));
     render(<App />);
     expect(location.hash).toBe("");
-    const generate = screen.getByRole("button", { name: /generate single-use command/i });
+    const generate = screen.getByRole("button", { name: /create single-use command/i });
     expect(generate).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Linux" }));
     fireEvent.click(generate);
-    await screen.findByText("Install for CISO laptop");
+    await screen.findByText("Install Lens on CISO laptop");
     expect(fetchMock).toHaveBeenCalledWith("/v1/public/endpoint-handoffs/resolve", expect.objectContaining({ method: "POST", body: JSON.stringify({ token: "secret-handoff", platform: "linux" }) }));
   });
 });
