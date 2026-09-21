@@ -17,11 +17,18 @@ import (
 var migrationFiles embed.FS
 
 func Open(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
+	return OpenWithMaxConns(ctx, databaseURL, 20)
+}
+
+func OpenWithMaxConns(ctx context.Context, databaseURL string, maxConns int32) (*pgxpool.Pool, error) {
+	if maxConns < 1 {
+		return nil, fmt.Errorf("database max connections must be at least 1")
+	}
 	config, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {
 		return nil, err
 	}
-	config.MaxConns = 20
+	config.MaxConns = maxConns
 	pool, err := pgxpool.NewWithConfig(ctx, config)
 	if err != nil {
 		return nil, err

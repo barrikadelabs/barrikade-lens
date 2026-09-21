@@ -45,6 +45,26 @@ and are exposed to the Container App through the `lens-clerk-secret-key` and
 `lens-clerk-webhook-secret` secret references. Never put either secret in
 GitHub or the repository.
 
+## Database rollout safety
+
+Azure Database for PostgreSQL is limited to 50 connections in the pilot
+environment, and the Container App can scale to two replicas. Production sets
+`LENS_DATABASE_MAX_CONNS=8`, limiting the shared pool to 16 connections at
+steady-state and retaining headroom for migrations, monitoring, and the brief
+old/new revision overlap during deployment. If separate
+`LENS_WEB_DATABASE_URL` and `LENS_WORKER_DATABASE_URL` pools are configured,
+recalculate the total as the per-pool cap multiplied by the number of distinct
+URLs, replicas, and overlapping revisions.
+
+Startup migrations run before `/readyz` succeeds while the previous Container
+Apps revision can still receive traffic. Every migration must therefore accept
+writes from the immediately preceding Hub version. Additive columns need
+defaults or nullable compatibility semantics; tightening constraints belongs in
+a later release after the old writer can no longer run. Migration 0021 derives
+a missing relationship surface from its source type for this reason. Deploy the
+new Hub before rolling out schema-1.3 collectors, and verify rollback before
+removing any compatibility behavior.
+
 Deployments are serialized through the `azure-pilot` concurrency group. A
 failed CI run never starts a deployment. The workflow can also be started
 manually from GitHub Actions; a manual run deploys the commit containing the

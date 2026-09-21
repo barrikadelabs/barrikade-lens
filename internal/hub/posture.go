@@ -51,9 +51,11 @@ type aggregateRelationship struct {
 }
 
 func aggregateRelationshipObservations(ctx context.Context, tx pgx.Tx, organizationID, relationshipID string) (aggregateRelationship, error) {
-	rows, err := tx.Query(ctx, `SELECT COALESCE(observation_kind,''),COALESCE(from_entity,''),COALESCE(to_entity,''),attributes,COALESCE(confidence,'possible'),surface,observation_state
-		FROM source_relationships WHERE organization_id=$1 AND relationship_id=$2 AND current=true
-		ORDER BY CASE COALESCE(confidence,'possible') WHEN 'confirmed' THEN 3 WHEN 'likely' THEN 2 ELSE 1 END DESC,last_seen_at DESC,source_id`, organizationID, relationshipID)
+	rows, err := tx.Query(ctx, `SELECT COALESCE(sr.observation_kind,''),COALESCE(sr.from_entity,''),COALESCE(sr.to_entity,''),sr.attributes,COALESCE(sr.confidence,'possible'),COALESCE(sr.surface,s.source_type),COALESCE(sr.observation_state,'discovered')
+		FROM source_relationships sr
+		JOIN sources s ON s.organization_id=sr.organization_id AND s.id=sr.source_id
+		WHERE sr.organization_id=$1 AND sr.relationship_id=$2 AND sr.current=true
+		ORDER BY CASE COALESCE(sr.confidence,'possible') WHEN 'confirmed' THEN 3 WHEN 'likely' THEN 2 ELSE 1 END DESC,sr.last_seen_at DESC,sr.source_id`, organizationID, relationshipID)
 	if err != nil {
 		return aggregateRelationship{}, err
 	}

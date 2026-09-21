@@ -103,6 +103,60 @@ func insertTestSource(ctx context.Context, pool *pgxpool.Pool, organizationID, s
 	return err
 }
 
+func TestRelationshipProvenanceMigrationAcceptsPreviousWriter(t *testing.T) {
+	ctx, pool := integrationPool(t)
+	org := "relationship-compat-" + uuid.NewString()
+	sourceID := "source:" + uuid.NewString()
+	fromID := "entity:" + uuid.NewString()
+	toID := "entity:" + uuid.NewString()
+	relationshipID := "relationship:" + uuid.NewString()
+	if _, err := pool.Exec(ctx, `INSERT INTO organizations(id,name) VALUES($1,'relationship compatibility test')`, org); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM organizations WHERE id=$1`, org) })
+	if err := insertTestSource(ctx, pool, org, sourceID, "endpoint", "legacy writer"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO entities(organization_id,id,kind,name,attributes,confidence,provenance,current,stale,first_seen_at,last_seen_at)
+		VALUES($1,$2,'agent','From','{}','confirmed','{}',true,false,now(),now()),
+		      ($1,$3,'tool','To','{}','confirmed','{}',true,false,now(),now())`, org, fromID, toID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO relationships(organization_id,id,kind,from_entity,to_entity,attributes,confidence,current,stale,first_seen_at,last_seen_at)
+		VALUES($1,$2,'uses',$3,$4,'{}','confirmed',true,false,now(),now())`, org, relationshipID, fromID, toID); err != nil {
+		t.Fatal(err)
+	}
+
+	// This is the column list used before migration 0021. It must remain valid
+	// while Azure keeps the previous Container Apps revision live and on rollback.
+	if _, err := pool.Exec(ctx, `INSERT INTO source_relationships(organization_id,source_id,relationship_id,last_seen_at,last_seen_sequence,consecutive_full_misses,current,stale,observation_kind,from_entity,to_entity,attributes,confidence,material_digest)
+		VALUES($1,$2,$3,now(),1,0,true,false,'uses',$4,$5,'{"legacy":true}','confirmed','legacy-digest')`, org, sourceID, relationshipID, fromID, toID); err != nil {
+		t.Fatalf("previous relationship writer was rejected after migration 0021: %v", err)
+	}
+	var surface *string
+	var state string
+	var observedAt time.Time
+	if err := pool.QueryRow(ctx, `SELECT surface,observation_state,observed_at FROM source_relationships WHERE organization_id=$1 AND source_id=$2 AND relationship_id=$3`, org, sourceID, relationshipID).Scan(&surface, &state, &observedAt); err != nil {
+		t.Fatal(err)
+	}
+	if surface != nil || state != "discovered" || observedAt.IsZero() {
+		t.Fatalf("unexpected compatibility defaults: surface=%v state=%q observed_at=%v", surface, state, observedAt)
+	}
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(ctx)
+	aggregated, err := aggregateRelationshipObservations(ctx, tx, org, relationshipID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(aggregated.Surfaces) != 1 || aggregated.Surfaces[0] != "endpoint" || len(aggregated.ObservationStates) != 1 || aggregated.ObservationStates[0] != "discovered" {
+		t.Fatalf("legacy observation was not normalized: surfaces=%v states=%v", aggregated.Surfaces, aggregated.ObservationStates)
+	}
+}
+
 type fixtureCatalogProvider struct{}
 
 func (fixtureCatalogProvider) ID() string          { return "fixture-catalog" }

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -31,6 +32,7 @@ func main() {
 func run() error {
 	listen := flag.String("listen", env("LENS_LISTEN", ":8080"), "HTTP listen address")
 	databaseURL := flag.String("database-url", os.Getenv("LENS_DATABASE_URL"), "PostgreSQL connection URL")
+	databaseMaxConns := flag.Int("database-max-conns", envInt("LENS_DATABASE_MAX_CONNS", 20), "maximum PostgreSQL connections per distinct pool")
 	webDatabaseURL := flag.String("web-database-url", os.Getenv("LENS_WEB_DATABASE_URL"), "optional PostgreSQL URL for the RLS-constrained web role")
 	workerDatabaseURL := flag.String("worker-database-url", os.Getenv("LENS_WORKER_DATABASE_URL"), "optional PostgreSQL URL for a login granted the lens_worker role")
 	publicURL := flag.String("public-url", env("LENS_PUBLIC_URL", "http://localhost:8080"), "public Hub base URL")
@@ -85,12 +87,15 @@ func run() error {
 	if *databaseURL == "" {
 		return fmt.Errorf("--database-url or LENS_DATABASE_URL is required")
 	}
+	if *databaseMaxConns < 1 || *databaseMaxConns > 1000 {
+		return fmt.Errorf("--database-max-conns or LENS_DATABASE_MAX_CONNS must be between 1 and 1000")
+	}
 	if len(*jwtSecret) < 32 {
 		return fmt.Errorf("--jwt-secret or LENS_JWT_SECRET must contain at least 32 bytes")
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	adminPool, err := hub.Open(ctx, *databaseURL)
+	adminPool, err := hub.OpenWithMaxConns(ctx, *databaseURL, int32(*databaseMaxConns))
 	if err != nil {
 		return err
 	}
@@ -103,7 +108,7 @@ func run() error {
 	}
 	webPool := adminPool
 	if *webDatabaseURL != "" && *webDatabaseURL != *databaseURL {
-		webPool, err = hub.Open(ctx, *webDatabaseURL)
+		webPool, err = hub.OpenWithMaxConns(ctx, *webDatabaseURL, int32(*databaseMaxConns))
 		if err != nil {
 			return fmt.Errorf("open web database pool: %w", err)
 		}
@@ -111,7 +116,7 @@ func run() error {
 	}
 	workerPool := adminPool
 	if *workerDatabaseURL != "" && *workerDatabaseURL != *databaseURL {
-		workerPool, err = hub.Open(ctx, *workerDatabaseURL)
+		workerPool, err = hub.OpenWithMaxConns(ctx, *workerDatabaseURL, int32(*databaseMaxConns))
 		if err != nil {
 			return fmt.Errorf("open worker database pool: %w", err)
 		}
@@ -241,4 +246,16 @@ func env(key, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func envInt(key string, fallback int) int {
+	value := os.Getenv(key)
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return 0
+	}
+	return parsed
 }
