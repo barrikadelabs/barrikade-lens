@@ -212,7 +212,7 @@ func (s *Server) listRelationships(w http.ResponseWriter, r *http.Request) {
 	}
 	kind := r.URL.Query().Get("kind")
 	entity := r.URL.Query().Get("entity_id")
-	query := `SELECT r.id,r.kind,r.from_entity,r.to_entity,r.attributes,r.confidence,r.current,r.stale,r.first_seen_at,r.last_seen_at,source.name,target.name FROM relationships r JOIN entities source ON source.organization_id=r.organization_id AND source.id=r.from_entity JOIN entities target ON target.organization_id=r.organization_id AND target.id=r.to_entity WHERE r.organization_id=$1 AND r.current=true`
+	query := `SELECT r.id,r.kind,r.from_entity,r.to_entity,r.attributes,r.confidence,r.surfaces,r.observation_states,r.current,r.stale,r.first_seen_at,r.last_seen_at,source.name,target.name FROM relationships r JOIN entities source ON source.organization_id=r.organization_id AND source.id=r.from_entity JOIN entities target ON target.organization_id=r.organization_id AND target.id=r.to_entity WHERE r.organization_id=$1 AND r.current=true`
 	args := []any{principal.OrganizationID}
 	index := 2
 	if kind != "" {
@@ -252,16 +252,17 @@ func (s *Server) listRelationships(w http.ResponseWriter, r *http.Request) {
 	var next pageCursor
 	for rows.Next() {
 		var id, kind, from, to, confidence, sourceName, targetName string
+		var surfaces, observationStates []string
 		var attributes []byte
 		var current, stale bool
 		var first, last time.Time
-		if err := rows.Scan(&id, &kind, &from, &to, &attributes, &confidence, &current, &stale, &first, &last, &sourceName, &targetName); err != nil {
+		if err := rows.Scan(&id, &kind, &from, &to, &attributes, &confidence, &surfaces, &observationStates, &current, &stale, &first, &last, &sourceName, &targetName); err != nil {
 			writeError(w, 500, "database_error", "Could not read relationships")
 			return
 		}
 		var attrs map[string]any
 		_ = json.Unmarshal(attributes, &attrs)
-		items = append(items, map[string]any{"id": id, "kind": kind, "from": from, "to": to, "from_name": sourceName, "to_name": targetName, "attributes": attrs, "confidence": confidence, "current": current, "stale": stale, "first_seen_at": first, "last_seen_at": last})
+		items = append(items, map[string]any{"id": id, "kind": kind, "from": from, "to": to, "from_name": sourceName, "to_name": targetName, "attributes": attrs, "confidence": confidence, "surfaces": surfaces, "observation_states": observationStates, "observed_at": last, "current": current, "stale": stale, "first_seen_at": first, "last_seen_at": last})
 		next = pageCursor{Sort: "last_seen", Value: last.Format(time.RFC3339Nano), ID: id}
 	}
 	response := map[string]any{"items": items, "limit": limit}

@@ -662,15 +662,17 @@ func (s *Server) getSystem(w http.ResponseWriter, r *http.Request) {
 	}
 	result["effective_ownership"] = map[string]any{"owned": attributed || strings.TrimSpace(contextValue.OwnerName) != "", "basis": ownershipSource, "owner_name": contextValue.OwnerName, "owner_type": contextValue.OwnerType}
 
-	rows, err := s.db(r.Context()).Query(r.Context(), `SELECT r.id,r.kind,r.from_entity,r.to_entity,r.attributes,r.confidence,e.id,e.kind,e.name,e.attributes
+	rows, err := s.db(r.Context()).Query(r.Context(), `SELECT r.id,r.kind,r.from_entity,r.to_entity,r.attributes,r.confidence,r.surfaces,r.observation_states,r.last_seen_at,e.id,e.kind,e.name,e.attributes
 		FROM relationships r JOIN entities e ON e.organization_id=r.organization_id AND e.id=CASE WHEN r.from_entity=$2 THEN r.to_entity ELSE r.from_entity END
 		WHERE r.organization_id=$1 AND r.current=true AND (r.from_entity=$2 OR r.to_entity=$2) ORDER BY r.kind,e.name LIMIT 500`, principal.OrganizationID, id)
 	connections := []map[string]any{}
 	if err == nil {
 		for rows.Next() {
 			var relationID, relationKind, from, to, relationConfidence, connectedID, connectedKind, connectedName string
+			var surfaces, observationStates []string
+			var relationshipObservedAt time.Time
 			var relationAttributes, connectedAttributes []byte
-			if rows.Scan(&relationID, &relationKind, &from, &to, &relationAttributes, &relationConfidence, &connectedID, &connectedKind, &connectedName, &connectedAttributes) == nil {
+			if rows.Scan(&relationID, &relationKind, &from, &to, &relationAttributes, &relationConfidence, &surfaces, &observationStates, &relationshipObservedAt, &connectedID, &connectedKind, &connectedName, &connectedAttributes) == nil {
 				label := relationKind
 				if relationKind == "owned_by" {
 					attrs := jsonObject(relationAttributes)
@@ -678,7 +680,7 @@ func (s *Server) getSystem(w http.ResponseWriter, r *http.Request) {
 						label = "observed_user"
 					}
 				}
-				connections = append(connections, map[string]any{"relationship_id": relationID, "relationship_kind": relationKind, "label": label, "direction": map[bool]string{true: "outgoing", false: "incoming"}[from == id], "confidence": relationConfidence, "attributes": jsonObject(relationAttributes), "entity": map[string]any{"id": connectedID, "kind": connectedKind, "name": connectedName, "attributes": jsonObject(connectedAttributes)}})
+				connections = append(connections, map[string]any{"relationship_id": relationID, "relationship_kind": relationKind, "label": label, "direction": map[bool]string{true: "outgoing", false: "incoming"}[from == id], "confidence": relationConfidence, "surfaces": surfaces, "observation_states": observationStates, "observed_at": relationshipObservedAt, "attributes": jsonObject(relationAttributes), "entity": map[string]any{"id": connectedID, "kind": connectedKind, "name": connectedName, "attributes": jsonObject(connectedAttributes)}})
 			}
 		}
 		rows.Close()

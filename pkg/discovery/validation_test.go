@@ -59,6 +59,36 @@ func TestSnapshotValidationAcceptsPresenceFacts(t *testing.T) {
 	}
 }
 
+func TestSnapshot13RequiresRelationshipProvenance(t *testing.T) {
+	s := validSnapshot()
+	secondID := StableID("org-test", KindMCPServer, "test-server")
+	s.Entities = append(s.Entities, Entity{ID: secondID, Kind: KindMCPServer, Name: "Test MCP", Confidence: ConfidenceConfirmed})
+	s.Relationships = []Relationship{{
+		ID:   RelationshipID("org-test", RelationshipConnectsTo, s.Entities[0].ID, secondID),
+		Kind: RelationshipConnectsTo, From: s.Entities[0].ID, To: secondID, Confidence: ConfidenceConfirmed,
+	}}
+	if err := s.Validate(); err == nil || !strings.Contains(err.Error(), "surface") {
+		t.Fatalf("missing relationship provenance was accepted: %v", err)
+	}
+	s.Relationships[0].Surface = SourceEndpoint
+	s.Relationships[0].ObservedAt = s.ObservedAt
+	s.Relationships[0].ObservationState = ObservationDeclared
+	if err := s.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLegacySnapshotsRemainAcceptedWithoutRelationshipProvenance(t *testing.T) {
+	s := validSnapshot()
+	s.SchemaVersion = PreviousSchemaVersion
+	secondID := StableID("org-test", KindMCPServer, "test-server")
+	s.Entities = append(s.Entities, Entity{ID: secondID, Kind: KindMCPServer, Name: "Test MCP", Confidence: ConfidenceConfirmed})
+	s.Relationships = []Relationship{{ID: RelationshipID("org-test", RelationshipConnectsTo, s.Entities[0].ID, secondID), Kind: RelationshipConnectsTo, From: s.Entities[0].ID, To: secondID, Confidence: ConfidenceConfirmed}}
+	if err := s.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestStableIDsAreOrganizationScoped(t *testing.T) {
 	a := StableID("org-a", KindAgent, "repo:example/agent")
 	b := StableID("org-a", KindAgent, "repo:example/agent")

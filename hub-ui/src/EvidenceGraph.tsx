@@ -235,11 +235,14 @@ function GraphInspector({ data }: { data: GraphNodeData }) {
     );
   } else {
     const connections = data.connections ?? [];
-    facts.push(
-      ["Entity type", pretty(data.kind)],
-      ["Relationship", relationshipCardLabel(connections, data.kind)],
-      ["Direction", connections[0]?.direction === "incoming" ? "Into system" : "Out from system"],
-      ["Evidence", pretty(data.confidence)],
+		facts.push(
+			["Entity type", pretty(data.kind)],
+			["Relationship", relationshipCardLabel(connections, data.kind)],
+			["Direction", connections[0]?.direction === "incoming" ? "Into system" : "Out from system"],
+			["Observed as", [...new Set(connections.flatMap((connection) => connection.observation_states ?? []))].map(pretty).join(", ") || "Unknown"],
+			["Surfaces", [...new Set(connections.flatMap((connection) => connection.surfaces ?? []))].map(pretty).join(", ") || "Unknown"],
+			["Last observed", connections[0]?.observed_at ? relative(connections[0].observed_at) : "Unknown"],
+			["Evidence", pretty(data.confidence)],
     );
   }
   const evidence = data.evidence;

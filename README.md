@@ -100,7 +100,7 @@ flowchart LR
 - Go powers the detector engine, collectors, CLI/TUI, Kubernetes controller, Hub API, and PostgreSQL workers.
 - TypeScript powers the no-download npm launcher and React Hub UI.
 - PostgreSQL stores relational entities/edges plus JSONB attributes and is also the horizontally scalable job queue. There is no graph database or external queue.
-- The canonical contract is [Discovery Snapshot 1.1](api/schema/discovery-snapshot-v1.json); [OpenAPI](api/openapi.yaml) describes the Hub.
+- The canonical contract is [Discovery Snapshot 1.3](api/schema/discovery-snapshot-v1.json); [OpenAPI](api/openapi.yaml) describes the Hub. Relationship semantics are documented in [evidence-backed capability topology](docs/evidence-topology.md).
 - Detector signatures are declarative, checksummed YAML with no executable code.
 - Catalog enrichment happens only at Hub. The bundled adapter reads a compact OAK-compatible manifest and lazily fetches only uniquely or manually linked documents. Catalogue operations are always labelled as potential—not evidence of grants or invocation.
 - `LENS_EXPOSURE_ENABLED` gates the Exposure Map, context APIs, and finding worker. The local pilot compose setup enables it; Helm leaves it disabled until pilot acceptance.
@@ -123,7 +123,7 @@ flowchart LR
 
 Lens accepts useful organizational identity—hostnames, OS users, repository/workload names, relative repository paths, and sanitized endpoint hosts—but rejects private content. Absolute paths become organization-salted hashes. URLs lose userinfo, query strings, and fragments. Configuration bodies, prompts, environment values, credentials, secret values, and full command arguments are forbidden by validation and property tests.
 
-Read [privacy and evidence](docs/privacy.md), [managed analytics](docs/posthog-analytics.md), [privacy operations](docs/privacy-operations.md), [data integrity and executive posture](docs/data-integrity.md), [architecture](docs/architecture.md), and the [threat model](docs/threat-model.md) before extending a detector.
+Read [privacy and evidence](docs/privacy.md), [managed analytics](docs/posthog-analytics.md), [privacy operations](docs/privacy-operations.md), [data integrity and executive posture](docs/data-integrity.md), [architecture](docs/architecture.md), [Kubernetes discovery operations](docs/kubernetes-discovery.md), and the [threat model](docs/threat-model.md) before extending a detector.
 
 Detector contributors should also read [detector packs and detection-quality rules](docs/detector-packs.md). Lens favors validated open formats and independent evidence over filename or product-name guesses: agent instructions are not agents, framework imports do not manufacture agents, supporting runtimes stay separate, and malformed descriptors are excluded from inventory.
 

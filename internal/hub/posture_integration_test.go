@@ -82,6 +82,51 @@ func TestProductProjectionRetainsInstallationsAndObservedUsersAcrossTargets(t *t
 	}
 }
 
+func TestRelationshipProvenanceConvergesAcrossSurfaces(t *testing.T) {
+	ctx, pool := integrationPool(t)
+	orgID := "relationship-provenance-" + uuid.NewString()
+	if _, err := pool.Exec(ctx, `INSERT INTO organizations(id,name) VALUES($1,'relationship provenance test')`, orgID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM organizations WHERE id=$1`, orgID) })
+	sources := []struct {
+		id      string
+		surface discovery.SourceType
+		state   discovery.ObservationState
+	}{
+		{"endpoint:" + uuid.NewString(), discovery.SourceEndpoint, discovery.ObservationDeclared},
+		{"repository:" + uuid.NewString(), discovery.SourceRepository, discovery.ObservationDiscovered},
+	}
+	serverID := discovery.StableID(orgID, discovery.KindMCPServer, "mcp-endpoint:https://api.example.test/mcp")
+	destinationID := discovery.StableID(orgID, discovery.KindAPIService, "api-host:api.example.test")
+	relationshipID := discovery.RelationshipID(orgID, discovery.RelationshipConnectsTo, serverID, destinationID)
+	for index, source := range sources {
+		if err := insertTestSource(ctx, pool, orgID, source.id, string(source.surface), source.id); err != nil {
+			t.Fatal(err)
+		}
+		snapshot := discovery.NewSnapshot(orgID, source.id, source.surface, discovery.Collector{ID: "test", Name: "test", Version: "3", Mode: "test"})
+		snapshot.Sequence = uint64(index + 1)
+		snapshot.Entities = []discovery.Entity{
+			{ID: serverID, Kind: discovery.KindMCPServer, CanonicalKey: "mcp-endpoint:https://api.example.test/mcp", Name: "CRM", Confidence: discovery.ConfidenceConfirmed},
+			{ID: destinationID, Kind: discovery.KindAPIService, CanonicalKey: "api-host:api.example.test", Name: "api.example.test", Confidence: discovery.ConfidenceConfirmed},
+		}
+		snapshot.Relationships = []discovery.Relationship{{
+			ID: relationshipID, Kind: discovery.RelationshipConnectsTo, From: serverID, To: destinationID,
+			Confidence: discovery.ConfidenceConfirmed, Surface: source.surface, ObservedAt: snapshot.ObservedAt, ObservationState: source.state,
+		}}
+		if err := applyTestSnapshot(ctx, pool, snapshot); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var surfaces, states []string
+	if err := pool.QueryRow(ctx, `SELECT surfaces,observation_states FROM relationships WHERE organization_id=$1 AND id=$2`, orgID, relationshipID).Scan(&surfaces, &states); err != nil {
+		t.Fatal(err)
+	}
+	if len(surfaces) != 2 || surfaces[0] != "endpoint" || surfaces[1] != "repository" || len(states) != 2 || states[0] != "declared" || states[1] != "discovered" {
+		t.Fatalf("relationship provenance did not converge: surfaces=%v states=%v", surfaces, states)
+	}
+}
+
 func TestRuntimeHelperMigrationBackfillsExistingPosture(t *testing.T) {
 	ctx, pool := integrationPool(t)
 	orgID := "helper-backfill-" + uuid.NewString()

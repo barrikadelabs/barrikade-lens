@@ -41,33 +41,41 @@ type changeMetadata struct {
 }
 
 type aggregateRelationship struct {
-	Kind       string
-	From       string
-	To         string
-	Attributes map[string]any
-	Confidence string
+	Kind              string
+	From              string
+	To                string
+	Attributes        map[string]any
+	Confidence        string
+	Surfaces          []string
+	ObservationStates []string
 }
 
 func aggregateRelationshipObservations(ctx context.Context, tx pgx.Tx, organizationID, relationshipID string) (aggregateRelationship, error) {
-	rows, err := tx.Query(ctx, `SELECT COALESCE(observation_kind,''),COALESCE(from_entity,''),COALESCE(to_entity,''),attributes,COALESCE(confidence,'possible')
-		FROM source_relationships WHERE organization_id=$1 AND relationship_id=$2 AND current=true
-		ORDER BY CASE COALESCE(confidence,'possible') WHEN 'confirmed' THEN 3 WHEN 'likely' THEN 2 ELSE 1 END DESC,last_seen_at DESC,source_id`, organizationID, relationshipID)
+	rows, err := tx.Query(ctx, `SELECT COALESCE(sr.observation_kind,''),COALESCE(sr.from_entity,''),COALESCE(sr.to_entity,''),sr.attributes,COALESCE(sr.confidence,'possible'),COALESCE(sr.surface,s.source_type),COALESCE(sr.observation_state,'discovered')
+		FROM source_relationships sr
+		JOIN sources s ON s.organization_id=sr.organization_id AND s.id=sr.source_id
+		WHERE sr.organization_id=$1 AND sr.relationship_id=$2 AND sr.current=true
+		ORDER BY CASE COALESCE(sr.confidence,'possible') WHEN 'confirmed' THEN 3 WHEN 'likely' THEN 2 ELSE 1 END DESC,sr.last_seen_at DESC,sr.source_id`, organizationID, relationshipID)
 	if err != nil {
 		return aggregateRelationship{}, err
 	}
 	defer rows.Close()
 	var result aggregateRelationship
+	surfaces := map[string]struct{}{}
+	states := map[string]struct{}{}
 	first := true
 	for rows.Next() {
-		var kind, from, to, confidence string
+		var kind, from, to, confidence, surface, observationState string
 		var encoded []byte
-		if err := rows.Scan(&kind, &from, &to, &encoded, &confidence); err != nil {
+		if err := rows.Scan(&kind, &from, &to, &encoded, &confidence, &surface, &observationState); err != nil {
 			return aggregateRelationship{}, err
 		}
 		attributes := map[string]any{}
 		if err := json.Unmarshal(encoded, &attributes); err != nil {
 			return aggregateRelationship{}, err
 		}
+		surfaces[surface] = struct{}{}
+		states[observationState] = struct{}{}
 		if first {
 			result = aggregateRelationship{Kind: kind, From: from, To: to, Attributes: attributes, Confidence: confidence}
 			first = false
@@ -96,6 +104,14 @@ func aggregateRelationshipObservations(ctx context.Context, tx pgx.Tx, organizat
 	if first {
 		return aggregateRelationship{}, pgx.ErrNoRows
 	}
+	for value := range surfaces {
+		result.Surfaces = append(result.Surfaces, value)
+	}
+	for value := range states {
+		result.ObservationStates = append(result.ObservationStates, value)
+	}
+	sort.Strings(result.Surfaces)
+	sort.Strings(result.ObservationStates)
 	return result, nil
 }
 
@@ -347,7 +363,7 @@ func recomputeRelationshipFromCurrentObservations(ctx context.Context, tx pgx.Tx
 		return false, err
 	}
 	attributes, _ := json.Marshal(aggregated.Attributes)
-	_, err = tx.Exec(ctx, `UPDATE relationships r SET kind=$3,from_entity=$4,to_entity=$5,attributes=$6,confidence=$7,current=true,stale=NOT EXISTS(SELECT 1 FROM source_relationships sr WHERE sr.organization_id=r.organization_id AND sr.relationship_id=r.id AND sr.current AND NOT sr.stale),last_seen_at=(SELECT max(last_seen_at) FROM source_relationships sr WHERE sr.organization_id=r.organization_id AND sr.relationship_id=r.id AND sr.current) WHERE organization_id=$1 AND id=$2`, organizationID, relationshipID, aggregated.Kind, aggregated.From, aggregated.To, attributes, aggregated.Confidence)
+	_, err = tx.Exec(ctx, `UPDATE relationships r SET kind=$3,from_entity=$4,to_entity=$5,attributes=$6,confidence=$7,surfaces=$8,observation_states=$9,current=true,stale=NOT EXISTS(SELECT 1 FROM source_relationships sr WHERE sr.organization_id=r.organization_id AND sr.relationship_id=r.id AND sr.current AND NOT sr.stale),last_seen_at=(SELECT max(last_seen_at) FROM source_relationships sr WHERE sr.organization_id=r.organization_id AND sr.relationship_id=r.id AND sr.current) WHERE organization_id=$1 AND id=$2`, organizationID, relationshipID, aggregated.Kind, aggregated.From, aggregated.To, attributes, aggregated.Confidence, aggregated.Surfaces, aggregated.ObservationStates)
 	return true, err
 }
 

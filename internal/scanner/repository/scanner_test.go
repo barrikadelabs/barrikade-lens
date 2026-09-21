@@ -315,10 +315,40 @@ func TestOperationalArtifactsDoNotManufactureGenericAgent(t *testing.T) {
 	if kinds[discovery.KindAgent] != 0 {
 		t.Fatalf("operational artifacts manufactured an agent: %#v", kinds)
 	}
-	for _, kind := range []discovery.EntityKind{discovery.KindAPIService, discovery.KindWorkload, discovery.KindMCPServer} {
-		if kinds[kind] != 1 {
-			t.Fatalf("expected one %s entity, got %#v", kind, kinds)
+	if kinds[discovery.KindAPIService] != 2 || kinds[discovery.KindWorkload] != 1 || kinds[discovery.KindMCPServer] != 1 {
+		t.Fatalf("expected the declared API and the directly evidenced MCP destination, got %#v", kinds)
+	}
+}
+
+func TestRepositoryBuildsAgentMCPToolDestinationTopology(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root, "agents/support-agent.yaml", "name: Support Agent\nmodel: example\nmcp_servers: [crm]\n")
+	writeFixture(t, root, ".mcp.json", `{"mcpServers":{"crm":{"url":"https://api.example.test/mcp","tools":[{"name":"search_records","description":"private instructions"},"update_record"]}}}`)
+	writeFixture(t, root, "openapi.yaml", "openapi: 3.1.0\ninfo:\n  title: CRM API\nservers:\n  - url: https://api.example.test/v1\npaths: {}\n")
+	snapshot, err := Scan(context.Background(), Options{OrganizationID: "org", Root: root, RepositoryURL: "https://github.com/acme/support"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kinds := map[discovery.EntityKind]int{}
+	relationKinds := map[discovery.RelationshipKind]int{}
+	for _, entity := range snapshot.Entities {
+		kinds[entity.Kind]++
+	}
+	for _, relationship := range snapshot.Relationships {
+		relationKinds[relationship.Kind]++
+		if relationship.Surface != discovery.SourceRepository || relationship.ObservedAt == "" || relationship.ObservationState == "" || len(relationship.EvidenceRefs) == 0 {
+			t.Fatalf("relationship provenance was incomplete: %#v", relationship)
 		}
+	}
+	if kinds[discovery.KindAgent] != 1 || kinds[discovery.KindMCPServer] != 1 || kinds[discovery.KindTool] != 2 || kinds[discovery.KindAPIService] != 1 {
+		t.Fatalf("topology entities did not converge: %#v", kinds)
+	}
+	if relationKinds[discovery.RelationshipConnectsTo] < 2 || relationKinds[discovery.RelationshipProvides] != 2 {
+		t.Fatalf("topology edges were incomplete: %#v", relationKinds)
+	}
+	encoded, _ := json.Marshal(snapshot)
+	if strings.Contains(string(encoded), "private instructions") {
+		t.Fatal("tool description leaked into topology")
 	}
 }
 

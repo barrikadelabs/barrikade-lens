@@ -51,3 +51,42 @@ func TestFindSupportsArrayServerDeclarations(t *testing.T) {
 		t.Fatalf("array declaration was not recognized: %#v", servers)
 	}
 }
+
+func TestFindExtractsOnlyBoundedDeclaredToolNames(t *testing.T) {
+	document := map[string]any{"mcpServers": map[string]any{"catalog": map[string]any{
+		"url": "https://catalog.example.test/mcp",
+		"tools": []any{
+			map[string]any{"name": "search_records", "description": "private instructions", "inputSchema": map[string]any{"secret": "never"}},
+			"get_record",
+		},
+		"disabledTools": []any{"delete_record"},
+	}}}
+	servers := Find(document)
+	if len(servers) != 1 || len(servers[0].Tools) != 3 {
+		t.Fatalf("declared tools were not normalized: %#v", servers)
+	}
+	states := map[string]*bool{}
+	for _, tool := range servers[0].Tools {
+		states[tool.Name] = tool.Enabled
+	}
+	if states["delete_record"] == nil || *states["delete_record"] {
+		t.Fatalf("disabled tool state was lost: %#v", servers[0].Tools)
+	}
+	if _, leaked := states["private instructions"]; leaked {
+		t.Fatal("tool description entered capability inventory")
+	}
+}
+
+func TestFindCoversClaudeCodexCursorAndRemoteTransports(t *testing.T) {
+	fixtures := []map[string]any{
+		{"mcpServers": map[string]any{"claude-files": map[string]any{"command": "npx"}}},
+		{"mcp_servers": map[string]any{"codex-docs": map[string]any{"command": "uvx"}}},
+		{"mcp": map[string]any{"servers": map[string]any{"cursor-api": map[string]any{"url": "https://example.test/sse", "type": "sse"}}}},
+		{"servers": map[string]any{"remote": map[string]any{"url": "https://example.test/mcp", "transport": "streamable-http"}}},
+	}
+	for index, fixture := range fixtures {
+		if servers := Find(fixture); len(servers) != 1 {
+			t.Errorf("fixture %d was not recognized: %#v", index, servers)
+		}
+	}
+}

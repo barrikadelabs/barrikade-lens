@@ -35,6 +35,34 @@ func SanitizeURL(raw string) (string, error) {
 	return u.String(), nil
 }
 
+// NormalizeRepositoryURL returns a credential-free repository identity shared
+// by repository and deployment collectors. Display names are intentionally not
+// part of this correlation key.
+func NormalizeRepositoryURL(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	if strings.HasPrefix(raw, "git@") {
+		parts := strings.SplitN(strings.TrimPrefix(raw, "git@"), ":", 2)
+		if len(parts) == 2 {
+			raw = "https://" + parts[0] + "/" + parts[1]
+		}
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	u.User = nil
+	u.RawQuery = ""
+	u.Fragment = ""
+	u.Path = strings.TrimSuffix(u.Path, ".git")
+	if u.Scheme != "http" && u.Scheme != "https" && u.Scheme != "ssh" {
+		return ""
+	}
+	return u.String()
+}
+
 func URLHost(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil {

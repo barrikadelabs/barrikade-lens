@@ -2,6 +2,7 @@ package kubernetes
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -112,5 +113,91 @@ func TestImageMatchingUsesRepositoryBoundaries(t *testing.T) {
 		if got := imageMatches(test.image, test.expected); got != test.match {
 			t.Errorf("imageMatches(%q,%q)=%v, want %v", test.image, test.expected, got, test.match)
 		}
+	}
+}
+
+func TestKubernetesCorrelatesWorkloadToRepositoryUsingExplicitMetadata(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	inventory := Inventory{ClusterID: "cluster", ClusterName: "test", Workloads: []Workload{{
+		UID: "worker", Namespace: "agents", Kind: "Deployment", Name: "worker",
+		Labels: map[string]string{
+			"barrikade.ai/agent":                "true",
+			"org.opencontainers.image.source":   "git@github.com:acme/support.git",
+			"org.opencontainers.image.revision": strings.Repeat("b", 40),
+		},
+		Images: []string{"registry.example/support@" + digest}, Running: true,
+	}}}
+	snapshot, err := Scan(Options{OrganizationID: "org", Full: true, Inventory: inventory})
+	if err != nil {
+		t.Fatal(err)
+	}
+	repositoryID := discovery.StableID("org", discovery.KindRepository, "https://github.com/acme/support")
+	foundRepository, foundRelationship, foundDigest := false, false, false
+	for _, entity := range snapshot.Entities {
+		if entity.ID == repositoryID && entity.Kind == discovery.KindRepository {
+			foundRepository = true
+		}
+		if entity.Kind == discovery.KindWorkload {
+			for _, value := range entity.Attributes["image_digests"].([]string) {
+				foundDigest = foundDigest || value == digest
+			}
+		}
+	}
+	for _, relationship := range snapshot.Relationships {
+		if relationship.Kind == discovery.RelationshipDefinedIn && relationship.To == repositoryID && relationship.Attributes["correlation_basis"] == "explicit_repository_label" {
+			foundRelationship = true
+		}
+	}
+	if !foundRepository || !foundRelationship || !foundDigest {
+		t.Fatalf("cross-surface correlation was incomplete: repository=%v relationship=%v digest=%v", foundRepository, foundRelationship, foundDigest)
+	}
+}
+
+func TestKubernetesReportsDeniedAndParseFailureCoverage(t *testing.T) {
+	inventory := Inventory{
+		ClusterID: "cluster", ClusterName: "test",
+		Workloads:      []Workload{{UID: "worker", Namespace: "agents", Kind: "Deployment", Name: "worker", ConfigMapRefs: []string{"mcp"}}},
+		ConfigMaps:     map[string]ConfigMap{"agents/mcp": {Namespace: "agents", Name: "mcp", Data: map[string]string{"mcp.json": "{broken"}}},
+		ResourceErrors: []ResourceError{{Resource: "customresourcedefinitions", Denied: true}},
+	}
+	snapshot, err := Scan(Options{OrganizationID: "org", Full: true, Inventory: inventory})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !snapshot.Coverage.Partial || snapshot.Coverage.DetectorsFailed < 2 || snapshot.Coverage.LocationsDenied != 1 {
+		t.Fatalf("partial coverage was not explicit: %#v", snapshot.Coverage)
+	}
+	codes := map[string]bool{}
+	for _, scanError := range snapshot.Errors {
+		codes[scanError.Code] = true
+	}
+	if !codes["referenced_configmap_parse_failed"] || !codes["kubernetes_resource_denied"] {
+		t.Fatalf("safe failure codes missing: %s", fmt.Sprint(codes))
+	}
+}
+
+func TestServiceIngressChainKeepsEvidence(t *testing.T) {
+	inventory := Inventory{ClusterID: "cluster", ClusterName: "test",
+		Workloads: []Workload{{UID: "worker", Namespace: "agents", Kind: "Deployment", Name: "worker", Labels: map[string]string{"app": "worker"}}},
+		Services: []Service{
+			{UID: "service", Namespace: "agents", Kind: "Service", Name: "worker", Selector: map[string]string{"app": "worker"}},
+			{UID: "ingress", Namespace: "agents", Kind: "Ingress", Name: "public", Hosts: []string{"agents.example.test"}, Backends: []string{"worker"}},
+		},
+	}
+	snapshot, err := Scan(Options{OrganizationID: "org", Full: true, Inventory: inventory})
+	if err != nil {
+		t.Fatal(err)
+	}
+	exposes := 0
+	for _, relationship := range snapshot.Relationships {
+		if relationship.Kind == discovery.RelationshipExposes {
+			exposes++
+			if len(relationship.EvidenceRefs) == 0 {
+				t.Fatalf("exposure edge has no evidence: %#v", relationship)
+			}
+		}
+	}
+	if exposes != 2 {
+		t.Fatalf("expected workload→service→ingress chain, got %d exposure edges", exposes)
 	}
 }

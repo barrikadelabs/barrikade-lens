@@ -7,16 +7,17 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/barrikadelabs/barrikade-lens/internal/detector"
 	"github.com/barrikadelabs/barrikade-lens/internal/scanner/builder"
 	"github.com/barrikadelabs/barrikade-lens/internal/scanner/mcpconfig"
+	"github.com/barrikadelabs/barrikade-lens/internal/scanner/mcptopology"
 	"github.com/barrikadelabs/barrikade-lens/internal/scanner/skillconfig"
 	"github.com/barrikadelabs/barrikade-lens/pkg/discovery"
 	"gopkg.in/yaml.v3"
@@ -81,7 +82,7 @@ func Scan(ctx context.Context, options Options) (discovery.Snapshot, error) {
 	if options.RepositoryURL == "" {
 		options.RepositoryURL = gitOutput(ctx, root, "config", "--get", "remote.origin.url")
 	}
-	options.RepositoryURL = normalizeRepositoryURL(options.RepositoryURL)
+	options.RepositoryURL = discovery.NormalizeRepositoryURL(options.RepositoryURL)
 	if options.CommitSHA == "" {
 		options.CommitSHA = gitOutput(ctx, root, "rev-parse", "HEAD")
 	}
@@ -117,6 +118,7 @@ func Scan(ctx context.Context, options Options) (discovery.Snapshot, error) {
 	state := scanState{
 		options: options, builder: b, repositoryID: repositoryID, repositoryCanonical: canonical,
 		frameworks: map[string]string{}, frameworkRefs: map[string]string{}, agentIDs: map[string]string{},
+		mcpIDs: map[string]string{}, mcpRefs: map[string]string{}, agentMCPNames: map[string][]string{}, agentRefs: map[string]string{},
 	}
 	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -150,6 +152,7 @@ func Scan(ctx context.Context, options Options) (discovery.Snapshot, error) {
 	if err != nil {
 		return discovery.Snapshot{}, err
 	}
+	state.linkDeclaredMCPReferences()
 	b.Snapshot.Coverage.DetectorsRun = len(options.Pack.Frameworks) + 5
 	return b.Finish()
 }
@@ -162,6 +165,10 @@ type scanState struct {
 	frameworks          map[string]string
 	frameworkRefs       map[string]string
 	agentIDs            map[string]string
+	mcpIDs              map[string]string
+	mcpRefs             map[string]string
+	agentMCPNames       map[string][]string
+	agentRefs           map[string]string
 	files               int
 }
 
@@ -445,6 +452,8 @@ func (s *scanState) detectAgent(locator string, data []byte, ref string) {
 	}
 	id := s.builder.AddEntity(discovery.KindAgent, "target:"+s.options.TargetID+":agent:"+locator, name, map[string]any{"defined": true, "descriptor": locator, "source_surface": "repository"}, ref)
 	s.agentIDs[id] = id
+	s.agentRefs[id] = ref
+	s.agentMCPNames[id] = declaredMCPReferences(document)
 	s.builder.AddRelationship(discovery.RelationshipDefinedIn, id, s.repositoryID, nil, ref)
 	for signatureID, frameworkID := range s.frameworks {
 		s.builder.AddRelationship(discovery.RelationshipUses, id, frameworkID, map[string]any{"source_surface": "repository"}, ref, s.frameworkRefs[signatureID])
@@ -537,27 +546,75 @@ func (s *scanState) detectMCP(locator string, data []byte, ref string) {
 		return
 	}
 	for _, server := range mcpconfig.Find(document) {
-		attributes := map[string]any{"configured": true, "transport": server.Transport, "descriptor": locator, "source_surface": "repository"}
-		canonical := "target:" + s.options.TargetID + ":mcp:" + strings.ToLower(server.Name)
-		if server.URL != "" {
-			if sanitized, sanitizeErr := discovery.SanitizeURL(server.URL); sanitizeErr == nil {
-				attributes["endpoint"] = sanitized
-				attributes["host"] = discovery.URLHost(sanitized)
-				canonical = "target:" + s.options.TargetID + ":mcp-url:" + sanitized
+		result := mcptopology.Add(s.builder, mcptopology.Context{
+			LocalCanonicalPrefix: "target:" + s.options.TargetID,
+			SourceSurface:        discovery.SourceRepository,
+			Descriptor:           locator,
+		}, "", server, ref)
+		s.mcpIDs[strings.ToLower(server.Name)] = result.ServerID
+		s.mcpRefs[strings.ToLower(server.Name)] = ref
+		s.builder.AddRelationship(discovery.RelationshipConfiguredBy, result.ServerID, s.repositoryID, map[string]any{"capability_state": "declared"}, ref)
+	}
+}
+
+func (s *scanState) linkDeclaredMCPReferences() {
+	for agentID, names := range s.agentMCPNames {
+		for _, name := range names {
+			serverID := s.mcpIDs[strings.ToLower(name)]
+			if serverID == "" {
+				continue
+			}
+			s.builder.AddRelationship(discovery.RelationshipConnectsTo, agentID, serverID, map[string]any{"capability_state": "declared", "correlation_basis": "explicit_mcp_reference"}, s.agentRefs[agentID], s.mcpRefs[strings.ToLower(name)])
+		}
+	}
+}
+
+func declaredMCPReferences(document map[string]any) []string {
+	if nested, ok := document["agent"].(map[string]any); ok {
+		document = nested
+	}
+	values := map[string]struct{}{}
+	var addValue func(any)
+	addValue = func(value any) {
+		switch typed := value.(type) {
+		case string:
+			name := strings.TrimSpace(typed)
+			if strings.HasPrefix(name, "mcp__") {
+				name = strings.SplitN(strings.TrimPrefix(name, "mcp__"), "__", 2)[0]
+			}
+			if name != "" && len(name) <= 200 && !strings.ContainsAny(name, "\r\n\x00") {
+				values[strings.ToLower(name)] = struct{}{}
+			}
+		case []any:
+			for _, item := range typed {
+				addValue(item)
+			}
+		case map[string]any:
+			for name := range typed {
+				addValue(name)
 			}
 		}
-		if server.Enabled != nil {
-			attributes["enabled"] = *server.Enabled
-		}
-		if len(server.EnvironmentKeys) > 0 {
-			attributes["environment_keys"] = server.EnvironmentKeys
-		}
-		if server.CredentialPresent {
-			attributes["credential_present"] = true
-		}
-		id := s.builder.AddEntity(discovery.KindMCPServer, canonical, server.Name, attributes, ref)
-		s.builder.AddRelationship(discovery.RelationshipConfiguredBy, id, s.repositoryID, nil, ref)
 	}
+	for key, value := range document {
+		switch normalizeDocumentKey(key) {
+		case "mcp", "mcpserver", "mcpservers":
+			addValue(value)
+		case "tools", "allowedtools":
+			if list, ok := value.([]any); ok {
+				for _, item := range list {
+					if name, ok := item.(string); ok && strings.HasPrefix(name, "mcp__") {
+						addValue(name)
+					}
+				}
+			}
+		}
+	}
+	result := make([]string, 0, len(values))
+	for value := range values {
+		result = append(result, value)
+	}
+	sort.Strings(result)
+	return result
 }
 
 func (s *scanState) detectOpenAPI(locator string, data []byte, ref string) {
@@ -1008,31 +1065,6 @@ func validCommit(value string) bool {
 		}
 	}
 	return true
-}
-
-func normalizeRepositoryURL(raw string) string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return ""
-	}
-	if strings.HasPrefix(raw, "git@") {
-		parts := strings.SplitN(strings.TrimPrefix(raw, "git@"), ":", 2)
-		if len(parts) == 2 {
-			raw = "https://" + parts[0] + "/" + parts[1]
-		}
-	}
-	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" {
-		return ""
-	}
-	u.User = nil
-	u.RawQuery = ""
-	u.Fragment = ""
-	u.Path = strings.TrimSuffix(u.Path, ".git")
-	if u.Scheme != "http" && u.Scheme != "https" && u.Scheme != "ssh" {
-		return ""
-	}
-	return u.String()
 }
 
 func gitOutput(ctx context.Context, root string, args ...string) string {
