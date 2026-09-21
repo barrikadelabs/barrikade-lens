@@ -145,7 +145,7 @@ func TestExposureVerticalSliceAndContextRBAC(t *testing.T) {
 	request.Header.Set("Authorization", "Bearer exposure-admin")
 	response = httptest.NewRecorder()
 	server.Handler().ServeHTTP(response, request)
-	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "catalog_potential") || !strings.Contains(strings.ToLower(response.Body.String()), "effective credential scope") {
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "catalog_potential") || !strings.Contains(strings.ToLower(response.Body.String()), "did not confirm the credential's permissions") {
 		t.Fatalf("unexpected exposure map response %d: %s", response.Code, response.Body.String())
 	}
 }
