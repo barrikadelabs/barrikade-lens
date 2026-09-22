@@ -47,8 +47,16 @@ func TestSystemsDefaultToFreshIdentityAndEvidenceIsActionable(t *testing.T) {
 	if _, err := pool.Exec(ctx, `INSERT INTO evidence_observations(organization_id,snapshot_id,evidence_id,source_id,entity_ids,detector_id,detector_version,method,family,specificity,locator,content_hash,observed_at) VALUES
 		($1,$2,'ev-1',$3,ARRAY[$4],'runtime.claude','2','config_shape','configuration','high',$5,$6,now()-interval '1 minute'),
 		($1,$7,'ev-2',$3,ARRAY[$4],'runtime.claude','2','config_shape','configuration','high',$5,$6,now()),
-		($1,$8,'ev-skill',$3,ARRAY[$4,$9],'claude.skills','2','skill_descriptor','skill','high','sha256:skill-path','sha256:skill-content',now())`, orgID, uuid.New(), freshTarget, freshEntity, pathReference, contentHash, uuid.New(), uuid.New(), skillEntity); err != nil {
+		($1,$8,'ev-2',$3,ARRAY[$4],'runtime.claude','2','config_shape','configuration','high',$5,$6,now()+interval '1 second'),
+		($1,$9,'ev-skill',$3,ARRAY[$4,$10],'claude.skills','2','skill_descriptor','skill','high','sha256:skill-path','sha256:skill-content',now())`, orgID, uuid.New(), freshTarget, freshEntity, pathReference, contentHash, uuid.New(), uuid.New(), uuid.New(), skillEntity); err != nil {
 		t.Fatal(err)
+	}
+	var projectedEvidence, projectedObservations int
+	if err := pool.QueryRow(ctx, `SELECT count(*),COALESCE(max(observations) FILTER(WHERE method='config_shape'),0) FROM current_evidence_observations WHERE organization_id=$1 AND entity_ids @> ARRAY[$2]::text[]`, orgID, freshEntity).Scan(&projectedEvidence, &projectedObservations); err != nil {
+		t.Fatal(err)
+	}
+	if projectedEvidence != 2 || projectedObservations != 2 {
+		t.Fatalf("current evidence projection did not collapse history: rows=%d observations=%d", projectedEvidence, projectedObservations)
 	}
 
 	server, err := NewServer(ctx, Config{Pool: pool, JWTSecret: []byte("0123456789012345678901234567890123456789"), DevAdminToken: "evidence-admin", DefaultOrganizationID: orgID})
@@ -92,6 +100,9 @@ func TestSystemsDefaultToFreshIdentityAndEvidenceIsActionable(t *testing.T) {
 	}
 	if finding == nil || skillFinding == nil {
 		t.Fatalf("expected configuration and skill findings: %v", evidence)
+	}
+	if finding["observations"] != float64(2) {
+		t.Fatalf("expected repeated current evidence to retain its observation count: %v", finding)
 	}
 	for _, field := range []string{"title", "summary", "location", "why_it_matched", "investigation_hint", "matched_facts", "integrity"} {
 		if finding[field] == nil || finding[field] == "" {

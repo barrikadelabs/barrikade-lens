@@ -324,7 +324,7 @@ func cleanupScaleFixture(ctx context.Context, pool *pgxpool.Pool, organizations 
 	// cascade makes PostgreSQL revisit the same million-row foreign-key graph
 	// through several parents and can take longer than the benchmark itself.
 	for _, table := range []string{
-		"evidence_observations", "changes", "exposure_findings",
+		"current_evidence_observations", "evidence_observations", "changes", "exposure_findings",
 		"entity_context_history", "entity_context", "catalog_link_overrides", "data_quality_conflicts",
 		"source_relationships", "relationships", "source_entities", "entity_posture", "entities",
 	} {
@@ -419,8 +419,9 @@ func (d *scaleDiagnostics) write(t *testing.T) {
 		UNION ALL SELECT 'relationships.current='||count(*) FROM relationships WHERE organization_id=$1 AND current=true
 		UNION ALL SELECT 'changes='||count(*) FROM changes WHERE organization_id=$1
 		UNION ALL SELECT 'evidence_observations='||count(*) FROM evidence_observations WHERE organization_id=$1
+		UNION ALL SELECT 'current_evidence_observations='||count(*) FROM current_evidence_observations WHERE organization_id=$1
 		UNION ALL SELECT 'sources='||count(*) FROM sources WHERE organization_id=$1`, d.organization)
-	d.writeQueryArtifact(t, "postgres-statistics.txt", `SELECT relname||' live='||n_live_tup||' dead='||n_dead_tup||' analyzed='||COALESCE(last_analyze::text,'never') FROM pg_stat_user_tables WHERE relname=ANY($1) ORDER BY relname`, []string{"entities", "entity_posture", "relationships", "changes", "evidence_observations"})
+	d.writeQueryArtifact(t, "postgres-statistics.txt", `SELECT relname||' live='||n_live_tup||' dead='||n_dead_tup||' analyzed='||COALESCE(last_analyze::text,'never') FROM pg_stat_user_tables WHERE relname=ANY($1) ORDER BY relname`, []string{"entities", "entity_posture", "relationships", "changes", "evidence_observations", "current_evidence_observations"})
 
 	plans := []struct {
 		name, query string
@@ -439,11 +440,9 @@ func (d *scaleDiagnostics) write(t *testing.T) {
 			LEFT JOIN entity_posture ep ON ep.organization_id=c.organization_id AND ep.entity_id=c.entity_id
 			WHERE c.organization_id=$1 AND c.changed_at>=$2 ORDER BY c.changed_at DESC,c.id DESC LIMIT 100`, args: []any{d.organization, time.Now().UTC().Add(-7 * 24 * time.Hour)}},
 		{name: "evidence-lookup-plan.txt", query: `EXPLAIN (ANALYZE,BUFFERS,VERBOSE,FORMAT TEXT)
-			WITH observations AS (SELECT eo.evidence_id,eo.source_id,eo.detector_id,eo.method,eo.family,eo.locator,eo.entity_ids,max(eo.observed_at) observed_at,
-			row_number() OVER (PARTITION BY eo.source_id,eo.detector_id,eo.method,eo.family,COALESCE(eo.locator,'') ORDER BY max(eo.observed_at) DESC,eo.evidence_id DESC) version_rank
-			FROM evidence_observations eo WHERE eo.organization_id=$1 AND eo.entity_ids @> ARRAY[$2]::text[]
-			GROUP BY eo.evidence_id,eo.source_id,eo.detector_id,eo.method,eo.family,eo.locator,eo.entity_ids)
-			SELECT * FROM observations WHERE version_rank=1 ORDER BY observed_at DESC,evidence_id DESC LIMIT 250`, args: []any{d.organization, scaleSelectedEntity}},
+			SELECT * FROM current_evidence_observations
+			WHERE organization_id=$1 AND entity_ids @> ARRAY[$2]::text[] AND expires_at>=now()
+			ORDER BY observed_at DESC,evidence_id DESC LIMIT 250`, args: []any{d.organization, scaleSelectedEntity}},
 	}
 	for _, plan := range plans {
 		d.writeQueryArtifact(t, plan.name, plan.query, plan.args...)
