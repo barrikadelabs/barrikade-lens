@@ -74,3 +74,25 @@ func TestProfilesUnderExcludesSharedAndSymlinkedProfiles(t *testing.T) {
 		t.Fatalf("unexpected profiles: %#v", profiles)
 	}
 }
+
+func TestManagedCollectorRunLockRejectsDuplicateProcess(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	first, err := acquireRunLock(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer first.Close()
+	if _, err = acquireRunLock(configPath); err == nil {
+		t.Fatal("duplicate collector acquired the same configuration lock")
+	}
+	if err = first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	second, err := acquireRunLock(configPath)
+	if err != nil {
+		t.Fatalf("collector lock was not released: %v", err)
+	}
+	if err = second.Close(); err != nil {
+		t.Fatal(err)
+	}
+}

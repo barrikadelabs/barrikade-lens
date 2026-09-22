@@ -157,6 +157,7 @@ func (c *Client) Upload(ctx context.Context, configPath string, cfg *lensconfig.
 
 func (c *Client) refresh(ctx context.Context, base, configPath string, cfg *lensconfig.Config) error {
 	var response struct {
+		HubURL               string `json:"hub_url"`
 		AccessToken          string `json:"access_token"`
 		AccessTokenExpiresAt string `json:"access_token_expires_at"`
 		RefreshToken         string `json:"refresh_token"`
@@ -165,9 +166,14 @@ func (c *Client) refresh(ctx context.Context, base, configPath string, cfg *lens
 		return err
 	}
 	if response.AccessToken == "" || response.RefreshToken == "" {
-		return fmt.Errorf("Hub returned incomplete rotated credentials")
+		return fmt.Errorf("Hub returned incomplete refreshed credentials")
 	}
 	cfg.AccessToken, cfg.AccessTokenExpiresAt, cfg.RefreshToken = response.AccessToken, response.AccessTokenExpiresAt, response.RefreshToken
+	if response.HubURL != "" {
+		if validated, validateErr := validateHubURL(response.HubURL); validateErr == nil {
+			cfg.HubURL = validated
+		}
+	}
 	return lensconfig.Save(configPath, *cfg)
 }
 

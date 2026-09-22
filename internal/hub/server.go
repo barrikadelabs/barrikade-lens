@@ -639,7 +639,7 @@ func (s *Server) exchangeEnrollment(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 500, "internal_error", "Could not issue credentials")
 			return
 		}
-		_, err = tx.Exec(r.Context(), `INSERT INTO collector_refresh_tokens(token_hash,organization_id,source_id,scopes,expires_at) VALUES($1,$2,$3,$4,$5)`, tokenHash(refresh), orgID, sourceID, scopes, time.Now().UTC().Add(90*24*time.Hour))
+		_, err = tx.Exec(r.Context(), `INSERT INTO collector_refresh_tokens(token_hash,organization_id,source_id,scopes,expires_at) VALUES($1,$2,$3,$4,NULL)`, tokenHash(refresh), orgID, sourceID, scopes)
 		if err != nil {
 			writeError(w, 500, "database_error", "Could not issue credentials")
 			return
@@ -690,22 +690,12 @@ func (s *Server) rotateCollectorToken(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback(r.Context())
 	var orgID, sourceID string
 	var scopes []string
-	var expires time.Time
-	err = tx.QueryRow(r.Context(), `DELETE FROM collector_refresh_tokens WHERE token_hash=$1 RETURNING organization_id,source_id,scopes,expires_at`, tokenHash(request.RefreshToken)).Scan(&orgID, &sourceID, &scopes, &expires)
-	if errors.Is(err, pgx.ErrNoRows) || err == nil && time.Now().After(expires) {
-		writeError(w, 401, "invalid_refresh_token", "Refresh token is invalid or expired")
+	var expires *time.Time
+	err = tx.QueryRow(r.Context(), `SELECT organization_id,source_id,scopes,expires_at FROM collector_refresh_tokens WHERE token_hash=$1 FOR UPDATE`, tokenHash(request.RefreshToken)).Scan(&orgID, &sourceID, &scopes, &expires)
+	if errors.Is(err, pgx.ErrNoRows) || err == nil && expires != nil && time.Now().After(*expires) {
+		writeError(w, 401, "invalid_refresh_token", "Refresh token is invalid or revoked")
 		return
 	}
-	if err != nil {
-		writeError(w, 500, "database_error", "Could not rotate token")
-		return
-	}
-	refresh, err := randomToken(32)
-	if err != nil {
-		writeError(w, 500, "internal_error", "Could not rotate token")
-		return
-	}
-	_, err = tx.Exec(r.Context(), `INSERT INTO collector_refresh_tokens(token_hash,organization_id,source_id,scopes,expires_at) VALUES($1,$2,$3,$4,$5)`, tokenHash(refresh), orgID, sourceID, scopes, time.Now().UTC().Add(90*24*time.Hour))
 	if err != nil {
 		writeError(w, 500, "database_error", "Could not rotate token")
 		return
@@ -719,7 +709,7 @@ func (s *Server) rotateCollectorToken(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 500, "internal_error", "Could not sign access token")
 		return
 	}
-	writeJSON(w, 200, map[string]any{"access_token": access, "access_token_expires_at": accessExpiry.Format(time.RFC3339), "refresh_token": refresh})
+	writeJSON(w, 200, map[string]any{"hub_url": s.config.PublicURL, "access_token": access, "access_token_expires_at": accessExpiry.Format(time.RFC3339), "refresh_token": request.RefreshToken})
 }
 
 func (s *Server) submitSnapshot(w http.ResponseWriter, r *http.Request) {

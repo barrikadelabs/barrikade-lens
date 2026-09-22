@@ -64,6 +64,8 @@ Run these journeys on clean macOS, Windows, and Linux machines:
 8. Confirm Overview totals open matching filtered lists, the highest-priority finding opens its evidence detail, and direct links survive reload and browser back.
 9. Test dialogs with keyboard-only input: named dialog, initial focus, contained Tab order, Escape close, and focus restoration.
 10. Confirm a sole owner cannot delete their identity before transferring ownership or deleting the workspace.
+11. Refresh the same managed installation credential repeatedly, including after dropping a successful response, and confirm it remains usable until explicit device or connection revocation.
+12. Re-run installation after both user-scoped and system-scoped setup attempts and confirm exactly one background collector remains registered and only one process can use a collector configuration.
 
 Run `go test -race ./...`, `go vet ./...`, the UI unit and Playwright suites, OpenAPI lint, production builds, Helm lint, and `govulncheck -mode=binary` for `barrikade-lens`, `lens-hub`, and `lens-k8s`. Public signup remains closed until all gates pass.
 

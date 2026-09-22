@@ -76,7 +76,7 @@ Provider rollout flags are `LENS_AWS_CONNECTOR_ENABLED`, `LENS_AZURE_CONNECTOR_E
 
 ## Operations and launch gates
 
-Cloud environments scan immediately after verification, daily with deterministic per-environment jitter, and on coalesced manual requests. PostgreSQL is the queue. Disconnect revokes the source, collector refresh credentials, queued jobs, and the current inventory projection immediately; retained observations purge after 90 days.
+Cloud environments scan immediately after verification, daily with deterministic per-environment jitter, and on coalesced manual requests. PostgreSQL is the queue. Disconnect revokes the source, any collector installation credentials, queued jobs, and the current inventory projection immediately; retained observations purge after 90 days.
 
 The first successful or partial scan creates a deferred `first_scan_completed` outbox event for owners. It is visible in-app; no delivery worker sends email until a transactional provider is intentionally selected.
 
