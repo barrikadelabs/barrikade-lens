@@ -17,8 +17,9 @@
 .fleet-policies strong { color: white; font: 700 16px var(--mono); }
 .fleet-policies small { color: var(--text-4); font: 7px var(--mono); }
 .fleet-policies > button > small { grid-column: 1/-1; }
-.fleet-row { display: grid; min-width: 1080px; width: 100%; min-height: 62px; padding: 9px 16px; grid-template-columns: minmax(235px,1.25fr) 125px minmax(145px,.8fr) 125px 88px 95px 130px; gap: 12px; align-items: center; border: 0; border-bottom: 1px solid var(--line-soft); color: var(--text-3); font-size: 9px; }
-.fleet-lifecycle { display: grid; width: max-content; grid-template-columns: 5px auto; gap: 4px 5px; align-items: center; color: var(--text-3); font: 700 8px var(--mono); }
+.fleet-row { display: grid; min-width: 1130px; width: 100%; min-height: 62px; padding: 9px 16px; grid-template-columns: minmax(220px,1.15fr) 175px minmax(145px,.8fr) 125px 88px 95px 130px; gap: 12px; align-items: center; border: 0; border-bottom: 1px solid var(--line-soft); color: var(--text-3); font-size: 9px; }
+.fleet-row > * { min-width: 0; }
+.fleet-lifecycle { display: grid; width: max-content; max-width: 100%; grid-template-columns: 5px auto; gap: 4px 5px; align-items: center; overflow: hidden; color: var(--text-3); font: 700 8px var(--mono); text-overflow: ellipsis; white-space: nowrap; }
 .fleet-lifecycle i { width: 5px; height: 5px; border-radius: 50%; background: var(--text-4); }
 .fleet-lifecycle small { grid-column: 2; color: var(--text-4); font-size: 7px; }
 .fleet-lifecycle.reporting { color: var(--green); }

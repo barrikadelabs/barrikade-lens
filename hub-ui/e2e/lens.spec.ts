@@ -207,6 +207,33 @@ test("a routed stale installation still opens How Lens knows", async ({ page }) 
   await expect(page.getByText("No AI tools or agents found")).toHaveCount(0);
 });
 
+test("long installation labels stay inside their inventory columns", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await authenticateDevelopment(page);
+  await page.route("**/v1/overview?*", async (route) => route.fulfill({ json: {
+    window: "7d", generated_at: new Date().toISOString(), coverage: [], footprint: { system_types: {}, states: {}, surfaces: {} },
+    attention: {}, changes: [], data_quality: { confidence: {}, confidence_note: "", coverage_note: "" },
+  } }));
+  await page.route("**/v1/systems?*", async (route) => route.fulfill({ json: { items: [{
+    id: "system-long-copy", kind: "runtime", name: "LM Studio", attributes: {}, target_id: "target-1",
+    target_name: "Ishaans-MacBook-Pro-2.local", target_freshness: "stale", surface: "endpoint",
+    system_type: "model_runtime", state: "residual", network_scope: "none", attributed: false,
+    confidence: "possible", first_seen_at: new Date().toISOString(), last_seen_at: new Date().toISOString(),
+  }], limit: 50 } }));
+
+  await page.goto("/inventory?view=installations&freshness=all");
+  const row = page.getByRole("button", { name: /LM Studio.*AI model runtime.*Leftover files/ });
+  await expect(row).toBeVisible();
+  const typeBounds = await row.locator(".type-pill").boundingBox();
+  const statusBounds = await row.locator(".state-pill").boundingBox();
+  const locationBounds = await row.locator(".stacked").first().boundingBox();
+  expect(typeBounds && statusBounds && locationBounds).toBeTruthy();
+  expect(typeBounds!.x + typeBounds!.width).toBeLessThanOrEqual(statusBounds!.x);
+  expect(statusBounds!.x + statusBounds!.width).toBeLessThanOrEqual(locationBounds!.x);
+  await expect(row.locator(".type-pill")).toHaveText("AI model runtime");
+  await expect(row.locator(".state-pill")).toHaveText("Leftover files");
+});
+
 test("viewers can inspect coverage but cannot start an environment scan", async ({ page }) => {
   await authenticateDevelopment(page, { role: "viewer" });
   await page.route("**/v1/environments", async (route) => route.fulfill({ json: { items: [] } }));

@@ -13,10 +13,12 @@
 .table-summary b { color: white; }
 .table-scroll { overflow-x: auto; }
 .table-head { min-height: 36px !important; color: var(--text-4) !important; font: 700 7px var(--mono) !important; text-transform: uppercase; letter-spacing: .07em; }
-.system-row { display: grid; min-width: 990px; width: 100%; min-height: 60px; padding: 9px 16px; grid-template-columns: minmax(230px,1.25fr) 135px 105px minmax(150px,.75fr) 100px 85px 15px; gap: 12px; align-items: center; border: 0; border-bottom: 1px solid var(--line-soft); color: var(--text-3); text-align: left; background: none; font-size: 9px; }
+.system-row { display: grid; min-width: 1090px; width: 100%; min-height: 60px; padding: 9px 16px; grid-template-columns: minmax(220px,1.15fr) 145px 135px minmax(235px,.9fr) 125px 105px 14px; gap: 12px; align-items: center; border: 0; border-bottom: 1px solid var(--line-soft); color: var(--text-3); text-align: left; background: none; font-size: 9px; }
+.system-row > * { min-width: 0; }
 button.system-row:hover, button.inventory-row:hover, button.target-row:hover { color: white; background: var(--surface-hover); }
 .inventory-row { display: grid; min-width: 980px; width: 100%; min-height: 58px; padding: 9px 16px; grid-template-columns: minmax(235px,1.3fr) 115px 100px 100px 90px 90px 15px; gap: 12px; align-items: center; border: 0; border-bottom: 1px solid var(--line-soft); color: var(--text-3); text-align: left; background: none; font-size: 9px; }
-.target-row { display: grid; min-width: 900px; width: 100%; min-height: 59px; padding: 9px 16px; grid-template-columns: minmax(235px,1.2fr) 95px 120px 105px minmax(120px,.7fr) 15px; gap: 12px; align-items: center; border: 0; border-bottom: 1px solid var(--line-soft); color: var(--text-3); text-align: left; background: none; font-size: 9px; }
+.target-row { display: grid; min-width: 960px; width: 100%; min-height: 59px; padding: 9px 16px; grid-template-columns: minmax(220px,1.1fr) 105px 175px 120px minmax(145px,.7fr) 14px; gap: 12px; align-items: center; border: 0; border-bottom: 1px solid var(--line-soft); color: var(--text-3); text-align: left; background: none; font-size: 9px; }
+.target-row > * { min-width: 0; }
 .identity { display: flex; min-width: 0; align-items: center; gap: 9px; }
 .identity > span { display: grid; min-width: 0; gap: 3px; }
 .identity b { overflow: hidden; color: white; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
@@ -32,7 +34,7 @@ button.system-row:hover, button.inventory-row:hover, button.target-row:hover { c
 .type-pill, .kind-label { display: inline-flex; width: max-content; max-width: 100%; padding: 4px 6px; overflow: hidden; border: 1px solid var(--line); border-radius: 5px; color: var(--text-3); font: 700 7px var(--mono); text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
 .type-pill.autonomous_agent { border-color: rgba(255,107,0,.22); color: var(--orange); background: var(--orange-soft); }
 .type-pill.model_runtime { border-color: rgba(90,184,247,.2); color: var(--blue); background: var(--blue-soft); }
-.state-pill, .confidence-pill, .freshness { display: inline-flex; width: max-content; padding: 4px 6px; align-items: center; gap: 5px; border: 1px solid var(--line); border-radius: 20px; color: var(--text-3); font: 700 7px var(--mono); text-transform: capitalize; }
+.state-pill, .confidence-pill, .freshness { display: inline-flex; width: max-content; max-width: 100%; padding: 4px 6px; align-items: center; gap: 5px; overflow: hidden; border: 1px solid var(--line); border-radius: 20px; color: var(--text-3); font: 700 7px var(--mono); text-overflow: ellipsis; text-transform: capitalize; white-space: nowrap; }
 .state-pill i, .confidence-pill i, .freshness i { width: 5px; height: 5px; border-radius: 50%; background: var(--text-4); }
 .state-pill.running, .confidence-pill.confirmed, .freshness.fresh { border-color: rgba(57,223,118,.18); color: var(--green); background: var(--green-soft); }
 .state-pill.running i, .confidence-pill.confirmed i, .freshness.fresh i { background: var(--green); }
