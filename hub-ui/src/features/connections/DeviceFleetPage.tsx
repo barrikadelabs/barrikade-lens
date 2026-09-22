@@ -7,7 +7,7 @@ import { Empty, Failure, FilterBar, Identity, InlineError, InlineLoading, Select
 const statusOptions = {
   "": "All device statuses",
   reporting: "Reporting",
-  stale_offline: "Not reporting",
+  stale_offline: "Not reporting recently",
   never_scanned: "Never scanned",
   partial: "Some data is missing",
   failed: "Scan failed",
@@ -55,7 +55,7 @@ export function DeviceFleetPage({ api, revision }: { api: API; revision: number 
     ["Installed", summary.enrolled, "all known installations"],
     ["Checked", summary.scanned, "completed at least one scan"],
     ["Reporting", summary.reporting, "seen in the last hour"],
-    ["Not reporting", summary.stale_offline, "not seen recently"],
+    ["Not reporting recently", summary.stale_offline, "not seen recently"],
     ["Missing data", summary.partial, "latest scan was incomplete"],
     ["Failed", summary.failed, "no complete scan yet"],
     ["Access removed", summary.revoked, "scanner access was removed"],
@@ -71,7 +71,7 @@ export function DeviceFleetPage({ api, revision }: { api: API; revision: number 
     {result?.policies.length ? <section className="fleet-policies">
       {result.policies.map((policy) => <button key={policy.id} className={policyID === policy.id ? "active" : ""} onClick={() => updateFilter(setPolicyID, policyID === policy.id ? "" : policy.id)}><span><b>{policy.name}</b><small>{pretty(policy.status)}</small></span><strong>{policy.enrolled_count}{policy.expected_device_count === null ? "" : ` / ${policy.expected_device_count}`}</strong><small>{policy.remaining_count} enrollment slots remaining</small></button>)}
     </section> : null}
-    <FilterBar search={search} setSearch={(value) => updateFilter(setSearch, value)}>
+    <FilterBar search={search} setSearch={(value) => updateFilter(setSearch, value)} searchPlaceholder="Search devices">
       <Select label="Device status" value={status} onChange={(value) => updateFilter(setStatus, value)} options={statusOptions} />
       <Select label="Deployment group" value={policyID} onChange={(value) => updateFilter(setPolicyID, value)} options={policyOptions} />
     </FilterBar>

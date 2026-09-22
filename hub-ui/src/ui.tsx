@@ -21,8 +21,8 @@ export function CopyBlock({ value }: { value: string }) {
   return <div className="install-command"><code>{value}</code><button onClick={() => navigator.clipboard.writeText(value).then(() => { captureAnalytics({ name: "lens_interaction", properties: { surface: "setup", interaction: "command_copied" } }); setCopied(true); window.setTimeout(() => setCopied(false), 1500); })}><Copy size={15} />{copied ? "Copied" : "Copy"}</button></div>;
 }
 
-export function FilterBar({ search, setSearch, hideSearch, children }: { search?: string; setSearch?: (value: string) => void; hideSearch?: boolean; children: ReactNode }) {
-  return <section className={hideSearch ? "filter-bar filters-only" : "filter-bar"}>{!hideSearch && <label className="search"><Search size={16} /><input value={search} onChange={(event) => setSearch?.(event.target.value)} placeholder="Search AI tools and agents" /></label>}<div className="filters">{children}</div></section>;
+export function FilterBar({ search, setSearch, searchPlaceholder = "Search AI tools and agents", hideSearch, children }: { search?: string; setSearch?: (value: string) => void; searchPlaceholder?: string; hideSearch?: boolean; children: ReactNode }) {
+  return <section className={hideSearch ? "filter-bar filters-only" : "filter-bar"}>{!hideSearch && <label className="search"><Search size={16} /><input value={search} onChange={(event) => setSearch?.(event.target.value)} placeholder={searchPlaceholder} aria-label={searchPlaceholder} /></label>}<div className="filters">{children}</div></section>;
 }
 
 export function Select({ label, value = "", onChange, options }: { label: string; value?: string; onChange: (value: string) => void; options: Record<string, string> }) {

@@ -59,6 +59,52 @@ export const connectionStatusLabels: Record<string, string> = {
   disconnected: "Disconnected",
 };
 
+export const changeCategoryLabels: Record<string, string> = {
+  state: "Status",
+  network_scope: "Network access",
+  attribution: "Owner",
+  capability: "Connections",
+  confidence: "Confidence",
+  identity: "Identity",
+  freshness: "Last report",
+  metadata: "Details",
+};
+
+export const changeSummaryLabels: Record<string, string> = {
+  "Attribution evidence added": "Owner information added",
+  "Attribution evidence removed": "Owner information removed",
+  "Capability connection added": "Connection added",
+  "Capability connection removed": "Connection removed",
+  "Deployment link added": "Installation link added",
+  "Deployment link removed": "Installation link removed",
+  "Discovery facts changed": "Details changed",
+  "Discovery inventory changed": "Inventory changed",
+  "Exposure added": "Network access added",
+  "Exposure removed": "Network access removed",
+  "Network exposure changed": "Network access changed",
+  "Runs on added": "Location link added",
+  "Runs on removed": "Location link removed",
+  "System discovered": "AI tool or agent found",
+  "System is stale": "Not reporting recently",
+  "System removed from current inventory": "No longer in current inventory",
+};
+
+export const changeFieldLabels: Record<string, string> = {
+  current: "In current inventory",
+  installed: "Installed",
+  installation_methods: "How it was found",
+  running_at_scan: "Running when checked",
+  network_scope: "Network access",
+  attributed: "Owner assigned",
+};
+
+const changeValueLabels: Record<string, string> = {
+  executable_path: "Installed command",
+  ide_extension: "Editor extension",
+  ide_extension_manifest: "Editor extension details",
+  config_file: "Configuration file",
+};
+
 export function plainLabel(value: string): string {
   return value.replace(/[._-]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
@@ -69,3 +115,36 @@ export function confidenceLabel(value: string): string { return confidenceLabels
 export function freshnessLabel(value: string): string { return freshnessLabels[value] ?? plainLabel(value); }
 export function locationTypeLabel(value: string): string { return locationTypeLabels[value] ?? plainLabel(value); }
 export function connectionStatusLabel(value: string): string { return connectionStatusLabels[value] ?? plainLabel(value); }
+export function changeCategoryLabel(value: string): string { return changeCategoryLabels[value] ?? plainLabel(value); }
+export function changeSummaryLabel(value: string): string {
+  if (changeSummaryLabels[value]) return changeSummaryLabels[value];
+  const states: Record<string, string> = {
+    Cached: stateLabels.cached,
+    Configured: stateLabels.configured,
+    Defined: stateLabels.defined,
+    Deployed: stateLabels.deployed,
+    Installed: stateLabels.installed,
+    Residual: stateLabels.residual,
+    Running: stateLabels.running,
+  };
+  const transition = value.split(" → ");
+  return transition.length === 2 && states[transition[0]] && states[transition[1]]
+    ? `${states[transition[0]]} → ${states[transition[1]]}`
+    : value;
+}
+export function changeFieldLabel(value: string): string {
+  const key = value.replace(/^attributes\./, "");
+  return changeFieldLabels[key] ?? plainLabel(key);
+}
+export function changeValueLabel(path: string, value: unknown): string {
+  const key = path.replace(/^attributes\./, "");
+  if (value === undefined || value === null || value === "") return "Not observed";
+  if (Array.isArray(value)) return value.map((item) => changeValueLabel(key, item)).join(", ");
+  if (typeof value === "boolean") {
+    if (key === "running_at_scan") return value ? "Running" : "Not running";
+    if (key === "current") return value ? "Included" : "Not included";
+    return value ? "Yes" : "No";
+  }
+  if (typeof value === "object") return "More details available";
+  return changeValueLabels[String(value)] ?? String(value);
+}

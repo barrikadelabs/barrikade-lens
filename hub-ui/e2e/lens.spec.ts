@@ -96,6 +96,8 @@ test("environment-first onboarding is gated, keyboard accessible, responsive, an
   await page.keyboard.press("Enter");
   const continuousMonitoring = dialog.getByRole("button", { name: /Keep results up to date/ });
   await expect(continuousMonitoring).toBeVisible();
+  await expect(dialog.getByRole("group", { name: "Device reporting option" })).toBeVisible();
+  await expect(dialog.getByRole("radio")).toHaveCount(0);
   await continuousMonitoring.focus();
   await page.keyboard.press("Enter");
   await expect(dialog.getByRole("radio", { name: /Install on this computer/ })).toBeVisible();
@@ -141,7 +143,7 @@ test("a resumable setup closes into live device status after enrollment", async 
   await page.goto("/connections/environment-1");
   await expect(page).toHaveURL(/\/connections$/);
   await expect(page.getByRole("dialog", { name: "Add a connection" })).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "1 connected locations" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "1 active connection" })).toBeVisible();
 });
 
 test("device fleet keeps identity, policy, lifecycle, and admin controls operational", async ({ page }) => {
@@ -172,6 +174,7 @@ test("device fleet keeps identity, policy, lifecycle, and admin controls operati
 
   await page.goto("/connections/devices");
   await expect(page.getByRole("heading", { name: "Managed devices" })).toBeVisible();
+  await expect(page.getByPlaceholder("Search devices")).toBeVisible();
   await expect(page.getByText("Engineering laptops").first()).toBeVisible();
   await expect(page.getByText("Reporting", { exact: true }).last()).toBeVisible();
   await expect(page.getByText("duplicate hostname")).toBeVisible();
@@ -185,6 +188,23 @@ test("device fleet keeps identity, policy, lifecycle, and admin controls operati
   await page.getByTitle("Remove scanner access").click();
   await expect(page.getByText("Access removed", { exact: true }).last()).toBeVisible();
   expect(requests[1]).toEqual({ method: "DELETE" });
+});
+
+test("a routed stale installation still opens How Lens knows", async ({ page }) => {
+  await authenticateDevelopment(page);
+  const system = {
+    id: "system-stale", kind: "runtime", name: "Older AI tool", attributes: {}, target_id: "target-1", target_name: "Laptop",
+    target_freshness: "stale", surface: "endpoint", system_type: "agent_tool", state: "installed", network_scope: "none",
+    attributed: false, confidence: "possible", first_seen_at: new Date().toISOString(), last_seen_at: new Date().toISOString(),
+    connections: [], evidence: [],
+  };
+  await page.route("**/v1/systems/system-stale", async (route) => route.fulfill({ json: system }));
+  await page.route("**/v1/systems?*", async (route) => route.fulfill({ json: { items: [], limit: 100 } }));
+
+  await page.goto("/systems/system-stale/evidence");
+  await expect(page.getByRole("heading", { name: "Older AI tool" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /Older AI tool/ })).toBeVisible();
+  await expect(page.getByText("No AI tools or agents found")).toHaveCount(0);
 });
 
 test("viewers can inspect coverage but cannot start an environment scan", async ({ page }) => {

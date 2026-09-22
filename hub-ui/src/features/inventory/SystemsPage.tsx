@@ -114,7 +114,7 @@ export function SystemsPage({ api, revision }: { api: API; revision: number }) {
         <Select label="Type" value={filters.system_type} onChange={(value) => update("system_type", value)} options={{ "": "All tools and agents", autonomous_agent: "Autonomous agents", agent_tool: "AI agent tools", model_runtime: "AI model runtimes" }} />
         <Select label="Status" value={filters.state} onChange={(value) => update("state", value)} options={{ "": "Any status", running: "Running now", deployed: "Deployed", defined: "Found in code", configured: "Set up", installed: "Installed", residual: "Leftover files", cached: "Downloaded" }} />
         <Select label="Confidence" value={filters.confidence} onChange={(value) => update("confidence", value)} options={{ "": "Any confidence", confirmed: "Confirmed", likely: "Likely", possible: "Possible" }} />
-        <Select label="Ownership" value={filters.owner_status} onChange={(value) => update("owner_status", value)} options={{ "": "Any owner", owned: "Owned", unowned: "Owner missing" }} />
+        <Select label="Ownership" value={filters.owner_status} onChange={(value) => update("owner_status", value)} options={{ "": "Any owner", owned: "Owned", unowned: "No owner assigned" }} />
         <Select label="Network access" value={filters.network_scope} onChange={(value) => update("network_scope", value)} options={{ "": "Any network access", external: "Public internet", network: "Local network", loopback: "This device only", none: "No network access", unknown: "Unknown" }} />
         <Select label="Last report" value={filters.freshness} onChange={(value) => update("freshness", value)} options={{ fresh: "Up to date", stale: "Not reporting recently", all: "All installations" }} />
       </FilterBar>
