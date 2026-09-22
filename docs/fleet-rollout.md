@@ -2,7 +2,7 @@
 
 Use the signed native package for managed fleets. Node.js is not required. The Hub Coverage page creates an endpoint-scoped fleet profile with an expiry and maximum use count; every code created from that profile is a bootstrap secret. Inject it only at deployment time. Never put it in a pkg, MSI, deb, rpm, golden image, response file, or command-line log.
 
-The package contains no tenant data. On first enrollment, Lens creates a different Ed25519 installation identity for each machine, exchanges the bootstrap code for that machine's rotating collector credentials, uploads an initial snapshot, and then starts the service. A failed attempt returns a nonsecret exit status and can be retried with a fresh code. The retained installation identity proves that a retry is the same endpoint, so it does not create a duplicate target.
+The package contains no tenant data. On first enrollment, Lens creates a different Ed25519 installation identity for each machine, exchanges the bootstrap code for that machine's revocable installation credential, uploads an initial snapshot, and then starts the service. A failed attempt returns a nonsecret exit status and can be retried with a fresh code. The retained installation identity proves that a retry is the same endpoint, so it does not create a duplicate target.
 
 The supported package baselines are:
 
@@ -78,7 +78,7 @@ sudo rm -rf /etc/barrikade-lens /var/lib/barrikade-lens /var/log/barrikade-lens
 
 - Never clone `/Library/Application Support/Barrikade/Lens`, `%ProgramData%\Barrikade\Lens`, or `/etc/barrikade-lens` into a golden image. Enroll after the machine receives its durable device identity.
 - Treat bootstrap codes as one-time, short-lived credentials. Remove them from MDM variables after the rollout window, and revoke unused profiles in Hub.
-- Collector access tokens last 15 minutes. Refresh credentials rotate at use, and source revocation invalidates refresh credentials immediately. Hub checks source state on every snapshot, including requests with a previously issued access token.
+- Collector access tokens last 15 minutes. The protected installation credential has no timer-based expiry and is stable across retries; source revocation invalidates it immediately. Hub checks source state on every snapshot, including requests with a previously issued access token.
 - Normal uninstall deliberately preserves identity and configuration. Use the documented full-cleanup path only for decommissioning; it is destructive and requires a new endpoint enrollment afterward.
 
 The npm launcher and direct signed binaries remain available for developer evaluation and one-off pilots. Fleet deployments should use the native packages so the installed runtime has no Node.js dependency.

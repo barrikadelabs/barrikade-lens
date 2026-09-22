@@ -75,12 +75,29 @@ func Save(path string, value Config) error {
 	if err != nil {
 		return err
 	}
-	temporary := path + ".tmp"
-	if err := os.WriteFile(temporary, append(data, '\n'), 0o600); err != nil {
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".config-*.tmp")
+	if err != nil {
 		return err
 	}
-	if err := protectFile(temporary); err != nil {
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	if err := temporary.Chmod(0o600); err != nil {
+		temporary.Close()
 		return err
 	}
-	return os.Rename(temporary, path)
+	if _, err := temporary.Write(append(data, '\n')); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Sync(); err != nil {
+		temporary.Close()
+		return err
+	}
+	if err := temporary.Close(); err != nil {
+		return err
+	}
+	if err := protectFile(temporaryPath); err != nil {
+		return err
+	}
+	return os.Rename(temporaryPath, path)
 }

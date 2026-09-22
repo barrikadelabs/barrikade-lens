@@ -109,6 +109,11 @@ func (r Runner) RunOnce(ctx context.Context) error {
 }
 
 func (r Runner) Run(ctx context.Context) error {
+	lock, err := acquireRunLock(r.ConfigPath)
+	if err != nil {
+		return fmt.Errorf("start managed collector: %w", err)
+	}
+	defer lock.Close()
 	cfg, err := lensconfig.Load(r.ConfigPath)
 	if err != nil {
 		return fmt.Errorf("load managed collector configuration: %w", err)

@@ -290,7 +290,7 @@ func (a *Authenticator) issueRefreshToken(ctx context.Context, orgID, sourceID s
 	if err != nil {
 		return "", err
 	}
-	_, err = a.Pool.Exec(ctx, `INSERT INTO collector_refresh_tokens(token_hash,organization_id,source_id,scopes,expires_at) VALUES($1,$2,$3,$4,$5)`, tokenHash(raw), orgID, sourceID, scopes, time.Now().UTC().Add(90*24*time.Hour))
+	_, err = a.Pool.Exec(ctx, `INSERT INTO collector_refresh_tokens(token_hash,organization_id,source_id,scopes,expires_at) VALUES($1,$2,$3,$4,NULL)`, tokenHash(raw), orgID, sourceID, scopes)
 	return raw, err
 }
 

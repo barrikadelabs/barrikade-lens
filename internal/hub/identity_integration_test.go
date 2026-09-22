@@ -186,6 +186,46 @@ func TestPersistentIdentityReenrollmentReusesTargetAndSource(t *testing.T) {
 	}
 }
 
+func TestManagedCollectorCredentialRemainsStableUntilRevocation(t *testing.T) {
+	server, orgID := newIdentityTestServer(t)
+	state, err := identity.LoadOrCreate(filepath.Join(t.TempDir(), "identity.json"), "http://lens.test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	createTestEnrollmentCode(t, server, orgID, "PERSISTENT-CODE", 1)
+	response, enrolled := exchangeTestIdentity(t, server, state, "PERSISTENT-CODE", "persistent.local")
+	if response.Code != http.StatusOK || enrolled.RefreshToken == "" {
+		t.Fatalf("enrollment returned %d: %s", response.Code, response.Body.String())
+	}
+	var expiresAt *time.Time
+	if err = server.config.Pool.QueryRow(t.Context(), `SELECT expires_at FROM collector_refresh_tokens WHERE organization_id=$1 AND source_id=$2`, orgID, enrolled.SourceID).Scan(&expiresAt); err != nil {
+		t.Fatal(err)
+	}
+	if expiresAt != nil {
+		t.Fatalf("managed collector credential unexpectedly expires at %s", expiresAt)
+	}
+	for attempt := range 2 {
+		body, _ := json.Marshal(map[string]string{"refresh_token": enrolled.RefreshToken})
+		request := httptest.NewRequest(http.MethodPost, "/v1/collector/token", bytes.NewReader(body))
+		refreshed := httptest.NewRecorder()
+		server.Handler().ServeHTTP(refreshed, request)
+		if refreshed.Code != http.StatusOK {
+			t.Fatalf("credential reuse %d returned %d: %s", attempt+1, refreshed.Code, refreshed.Body.String())
+		}
+		var result struct {
+			HubURL       string `json:"hub_url"`
+			RefreshToken string `json:"refresh_token"`
+			AccessToken  string `json:"access_token"`
+		}
+		if err = json.Unmarshal(refreshed.Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		if result.RefreshToken != enrolled.RefreshToken || result.AccessToken == "" || result.HubURL != "http://lens.test" {
+			t.Fatalf("credential changed during access-token refresh: %+v", result)
+		}
+	}
+}
+
 func TestSameHostnameDifferentIdentitiesRemainDistinct(t *testing.T) {
 	server, orgID := newIdentityTestServer(t)
 	firstIdentity, _ := identity.LoadOrCreate(filepath.Join(t.TempDir(), "identity.json"), "http://lens.test")

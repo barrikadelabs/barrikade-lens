@@ -18,7 +18,7 @@ helm upgrade --install lens-k8s deploy/helm/lens-k8s \
 
 The controller derives stable cluster identity from the `kube-system` namespace
 UID unless `clusterID` is supplied. A persistent volume holds the enrolled
-collector identity and rotated refresh credential. No database edit is required.
+collector identity and revocable installation credential. No database edit is required.
 Use `existingSecret` instead of inline values when a secret manager provisions a
 bootstrap `config.json`.
 
@@ -51,7 +51,7 @@ when present. Workloads correlate to a repository only through the explicit
 optional `org.opencontainers.image.revision` label records a commit. Display
 names are never correlation keys.
 
-## Upgrade, credential rotation, and uninstall
+## Upgrade, credential revocation, and uninstall
 
 Use `helm upgrade` with an immutable image tag. The Deployment uses `Recreate`
 because the state volume is single-writer. The persistent configuration is
@@ -59,7 +59,7 @@ forward compatible within snapshot 1.x; a collector that finds an older config
 version stops with an explicit re-enrollment error rather than inventing a new
 cluster identity.
 
-Collector access and refresh credentials can be revoked from Lens. A revoked
+Collector access tokens and installation credentials can be revoked from Lens. A revoked
 collector cannot refresh or upload. To rotate bootstrap configuration supplied
 through `existingSecret`, update the Secret and restart the Deployment.
 

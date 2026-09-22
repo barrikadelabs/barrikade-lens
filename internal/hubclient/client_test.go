@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	lensconfig "github.com/barrikadelabs/barrikade-lens/internal/config"
 	"github.com/barrikadelabs/barrikade-lens/pkg/discovery"
 )
 
@@ -86,5 +87,55 @@ func TestDoJSONRejectsUnsafeHubErrorText(t *testing.T) {
 	err := New("test").doJSON(context.Background(), http.MethodPost, server.URL, "", map[string]string{}, nil)
 	if err == nil || err.Error() != "Hub request failed with HTTP 500" || strings.Contains(err.Error(), "terminal") {
 		t.Fatalf("unsafe response was surfaced: %v", err)
+	}
+}
+
+func TestUploadReusesPersistentCredentialAndStoresCanonicalHub(t *testing.T) {
+	refreshes, uploads := 0, 0
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/v1/discovery/snapshots":
+			uploads++
+			if request.Header.Get("Authorization") != "Bearer fresh-access" {
+				writer.WriteHeader(http.StatusUnauthorized)
+				_, _ = writer.Write([]byte(`{"error":{"code":"invalid_token","message":"Access token expired"}}`))
+				return
+			}
+			writer.WriteHeader(http.StatusAccepted)
+			_, _ = writer.Write([]byte(`{"id":"job","status":"pending"}`))
+		case "/v1/collector/token":
+			refreshes++
+			var payload map[string]string
+			if err := json.NewDecoder(request.Body).Decode(&payload); err != nil || payload["refresh_token"] != "persistent-installation" {
+				t.Fatalf("unexpected refresh payload: %v err=%v", payload, err)
+			}
+			_, _ = writer.Write([]byte(`{"hub_url":"` + server.URL + `","access_token":"fresh-access","access_token_expires_at":"2099-01-01T00:00:00Z","refresh_token":"persistent-installation"}`))
+		default:
+			http.NotFound(writer, request)
+		}
+	}))
+	defer server.Close()
+
+	configPath := filepath.Join(t.TempDir(), "config.json")
+	cfg := lensconfig.Config{ConfigVersion: 2, HubURL: server.URL, OrganizationID: "org", SourceID: "source", TargetID: "target", AccessToken: "expired-access", RefreshToken: "persistent-installation"}
+	if err := lensconfig.Save(configPath, cfg); err != nil {
+		t.Fatal(err)
+	}
+	snapshot := discovery.NewSnapshot("org", "source", discovery.SourceEndpoint, discovery.Collector{ID: "test", Name: "test", Version: "test", Mode: "managed"})
+	snapshot.TargetID = "target"
+	if _, err := New("test").Upload(context.Background(), configPath, &cfg, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if refreshes != 1 || uploads != 2 || cfg.RefreshToken != "persistent-installation" || cfg.HubURL != server.URL {
+		t.Fatalf("unexpected refresh state refreshes=%d uploads=%d cfg=%+v", refreshes, uploads, cfg)
+	}
+	stored, err := lensconfig.Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.AccessToken != "fresh-access" || stored.RefreshToken != "persistent-installation" || stored.HubURL != server.URL {
+		t.Fatalf("refreshed configuration was not stored: %+v", stored)
 	}
 }

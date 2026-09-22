@@ -65,9 +65,9 @@ paths:
       requestBody: {required: true, content: {application/json: {schema: {type: object, additionalProperties: false, required: [confirmation], properties: {confirmation: {type: string}}}}}}
       responses: {'204': {description: Workspace permanently deleted}, '403': {description: Owner role required}}
   /v1/enrollment/exchange:
-    post: {security: [], operationId: enrollCollector, requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/Enrollment'}}}}, responses: {'200': {description: Source-scoped rotating collector credentials}}}
+    post: {security: [], operationId: enrollCollector, requestBody: {required: true, content: {application/json: {schema: {$ref: '#/components/schemas/Enrollment'}}}}, responses: {'200': {description: Source-scoped short-lived access token and revocable installation credential}}}
   /v1/collector/token:
-    post: {security: [], operationId: rotateCollectorToken, requestBody: {required: true, content: {application/json: {schema: {type: object, additionalProperties: false, required: [refresh_token], properties: {refresh_token: {type: string}}}}}}, responses: {'200': {description: Rotated access and refresh credentials}}}
+    post: {security: [], operationId: rotateCollectorToken, requestBody: {required: true, content: {application/json: {schema: {type: object, additionalProperties: false, required: [refresh_token], properties: {refresh_token: {type: string, description: Stable installation credential retained until explicit source revocation}}}}}}, responses: {'200': {description: New short-lived access token plus the unchanged installation credential and canonical Hub URL}}}
   /v1/collector/quick-scan/failed:
     post: {operationId: reportQuickScanFailure, description: Records an allowlisted lifecycle failure category without discovery data., requestBody: {required: true, content: {application/json: {schema: {type: object, additionalProperties: false, required: [failure], properties: {failure: {enum: [discovery, upload, interrupted]}}}}}}, responses: {'204': {description: Failure lifecycle event recorded}, '409': {description: Credential does not belong to an active Quick Scan}}}
   /v1/admin/enrollment-codes:
@@ -324,7 +324,7 @@ components:
       type: object
       additionalProperties: false
       required: [code, platform, architecture, collector_version, identity_public_key, identity_proof]
-      properties: {code: {type: string}, source_type: {enum: [endpoint, repository, kubernetes]}, enrollment_mode: {enum: [quick_scan, continuous], default: continuous, description: Quick Scan receives only a short-lived access token; continuous enrollment also receives rotating collector credentials.}, hostname: {type: string}, target_identity: {type: string, description: Stable cluster UID or owner/repository identity for non-endpoint collectors}, display_name: {type: string}, platform: {type: string}, architecture: {type: string}, collector_version: {type: string}, identity_public_key: {type: string, description: Base64url-encoded Ed25519 public key}, identity_proof: {type: string, description: Ed25519 signature over the type-aware enrollment request}}
+      properties: {code: {type: string}, source_type: {enum: [endpoint, repository, kubernetes]}, enrollment_mode: {enum: [quick_scan, continuous], default: continuous, description: Quick Scan receives only a short-lived access token; continuous enrollment also receives a stable credential that remains valid until explicit revocation.}, hostname: {type: string}, target_identity: {type: string, description: Stable cluster UID or owner/repository identity for non-endpoint collectors}, display_name: {type: string}, platform: {type: string}, architecture: {type: string}, collector_version: {type: string}, identity_public_key: {type: string, description: Base64url-encoded Ed25519 public key}, identity_proof: {type: string, description: Ed25519 signature over the type-aware enrollment request}}
     DeploymentPolicyRequest:
       type: object
       additionalProperties: false

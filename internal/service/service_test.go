@@ -77,3 +77,10 @@ func TestLaunchdRunningRequiresActiveProcess(t *testing.T) {
 		}
 	}
 }
+
+func TestLaunchdTargetForUserUsesOneStableServiceIdentity(t *testing.T) {
+	path, domain := launchdTargetForUser("/Users/alice", "502")
+	if path != "/Users/alice/Library/LaunchAgents/com.barrikade.lens.plist" || domain != "gui/502" {
+		t.Fatalf("unexpected launchd target path=%q domain=%q", path, domain)
+	}
+}
