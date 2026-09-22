@@ -57,7 +57,7 @@ const kindIcons: Record<string, LucideIcon> = {
 
 export function EvidenceGraphPage({ api, revision, initialSystemId = "" }: { api: API; revision: number; initialSystemId?: string }) {
   const [systems, setSystems] = useState<SystemItem[]>([]);
-  const [selectedSystem, setSelectedSystem] = useState("");
+  const [selectedSystem, setSelectedSystem] = useState(initialSystemId);
   const [detail, setDetail] = useState<SystemDetail>();
   const [systemSearch, setSystemSearch] = useState("");
   const [loadingSystems, setLoadingSystems] = useState(true);
@@ -72,7 +72,7 @@ export function EvidenceGraphPage({ api, revision, initialSystemId = "" }: { api
     setLoadingSystems(true);
     setSystemError("");
     const timer = window.setTimeout(() => {
-      api.systems({ limit: 100, sort: "name", freshness: "fresh", search: systemSearch.trim() }).then((result) => {
+      api.systems({ limit: 100, sort: "name", freshness: initialSystemId ? "all" : "fresh", search: systemSearch.trim() }).then((result) => {
         if (!active) return;
         setSystems(result.items);
         setMoreSystems(Boolean(result.next_cursor));
@@ -81,6 +81,10 @@ export function EvidenceGraphPage({ api, revision, initialSystemId = "" }: { api
     }, systemSearch ? 220 : 0);
     return () => { active = false; window.clearTimeout(timer); };
   }, [api, revision, systemSearch, initialSystemId]);
+
+  useEffect(() => {
+    if (initialSystemId) setSelectedSystem(initialSystemId);
+  }, [initialSystemId]);
 
   useEffect(() => {
     if (!selectedSystem) { setDetail(undefined); return; }
@@ -97,18 +101,19 @@ export function EvidenceGraphPage({ api, revision, initialSystemId = "" }: { api
 		captureAnalytics({ name: "evidence_graph_viewed", properties: { system_kind: detail.system_type, confidence: detail.confidence } });
 	}, [detail]);
 
-  const visibleSystems = systems.filter((system) => {
+  const availableSystems = detail && !systems.some((system) => system.id === detail.id) ? [detail, ...systems] : systems;
+  const visibleSystems = availableSystems.filter((system) => {
     const query = systemSearch.trim().toLowerCase();
     return !query || `${system.name} ${system.product_id ?? ""} ${system.system_type}`.toLowerCase().includes(query);
   });
 
-  if (loadingSystems && !systems.length && !systemSearch) return <GraphState icon={LoaderCircle} title="Loading AI tools and agents" detail="Lens is preparing the connection map." spinning />;
-  if (systemError && !systems.length) return <GraphState icon={AlertCircle} title="Lens could not load this map" detail={systemError} />;
-  if (!systems.length && !systemSearch && !loadingSystems) return <GraphState icon={Network} title="No AI tools or agents found" detail="This map becomes available after Lens finds an autonomous agent, AI agent tool, or AI model runtime." />;
+  if (loadingSystems && !systems.length && !systemSearch && !initialSystemId) return <GraphState icon={LoaderCircle} title="Loading AI tools and agents" detail="Lens is preparing the connection map." spinning />;
+  if (systemError && !systems.length && !initialSystemId) return <GraphState icon={AlertCircle} title="Lens could not load this map" detail={systemError} />;
+  if (!systems.length && !systemSearch && !loadingSystems && !initialSystemId) return <GraphState icon={Network} title="No AI tools or agents found" detail="This map becomes available after Lens finds an autonomous agent, AI agent tool, or AI model runtime." />;
 
   return <div className="evidence-map-layout">
     <aside className="panel graph-system-panel">
-      <div className="graph-panel-heading"><div><span>AI INVENTORY</span><h2>Choose a tool or agent</h2><p>Search your organization’s AI inventory.</p></div><b>{loadingSystems ? "…" : `${systems.length}${moreSystems ? "+" : ""}`}</b></div>
+      <div className="graph-panel-heading"><div><span>AI INVENTORY</span><h2>Choose a tool or agent</h2><p>Search your organization’s AI inventory.</p></div><b>{loadingSystems ? "…" : `${availableSystems.length}${moreSystems ? "+" : ""}`}</b></div>
       <label className="graph-system-search"><Search size={14} /><input value={systemSearch} onChange={(event) => setSystemSearch(event.target.value)} placeholder="Find an AI tool or agent" aria-label="Find an AI tool or agent" /></label>
       <div className="graph-system-list">
         {visibleSystems.map((system) => <button className={selectedSystem === system.id ? "active" : ""} key={system.id} onClick={() => { captureAnalytics({ name: "lens_interaction", properties: { surface: "evidence", interaction: "open", control: "system" } }); setSelectedSystem(system.id); }} aria-pressed={selectedSystem === system.id}>
