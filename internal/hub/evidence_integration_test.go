@@ -73,6 +73,27 @@ func TestSystemsDefaultToFreshIdentityAndEvidenceIsActionable(t *testing.T) {
 		}
 		return response
 	}
+	if _, err := pool.Exec(ctx, `UPDATE sources SET latest_partial=true,latest_error_count=1 WHERE organization_id=$1 AND id=$2`, orgID, freshTarget); err != nil {
+		t.Fatal(err)
+	}
+	var listed struct {
+		Items []struct {
+			ID            string `json:"id"`
+			TargetPartial bool   `json:"target_partial"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(get("/v1/systems?freshness=all").Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	partialFound := false
+	for _, item := range listed.Items {
+		if item.ID == freshEntity {
+			partialFound = item.TargetPartial
+		}
+	}
+	if !partialFound {
+		t.Fatal("partial target scan was not visible in the systems list")
+	}
 	assertSystemIDs(t, get("/v1/systems?sort=name").Body.Bytes(), []string{freshEntity, staleEntity})
 	assertSystemIDs(t, get("/v1/systems?sort=name&freshness=stale").Body.Bytes(), []string{staleEntity})
 	assertSystemIDs(t, get("/v1/systems?sort=name&freshness=all").Body.Bytes(), []string{freshEntity, staleEntity})
@@ -83,6 +104,9 @@ func TestSystemsDefaultToFreshIdentityAndEvidenceIsActionable(t *testing.T) {
 	detail := map[string]any{}
 	if err := json.Unmarshal(get("/v1/systems/"+freshEntity).Body.Bytes(), &detail); err != nil {
 		t.Fatal(err)
+	}
+	if detail["target_partial"] != true {
+		t.Fatalf("partial target scan was not visible in system detail: %v", detail["target_partial"])
 	}
 	evidence, _ := detail["evidence"].([]any)
 	if len(evidence) != 2 {

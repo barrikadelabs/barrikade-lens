@@ -113,13 +113,13 @@ func newRoot(dependencies Dependencies) *cobra.Command {
 func newScanCommand(dependencies Dependencies, organizationID, packPath *string) *cobra.Command {
 	var scope, format, root, output string
 	var enrollmentCode, hubURL, configPath string
-	var probeURLs, allowedProbeHosts []string
+	var probeURLs, probeMCPURLs, allowedProbeHosts []string
 	command := &cobra.Command{
 		Use: "scan", Short: "Run an endpoint or repository discovery scan", Args: cobra.NoArgs,
 		RunE: func(command *cobra.Command, args []string) error {
 			if enrollmentCode != "" {
-				if strings.ToLower(scope) != "endpoint" || len(probeURLs) > 0 || output != "" {
-					return fmt.Errorf("--enroll supports endpoint discovery only and cannot be combined with --probe-url or --output")
+				if strings.ToLower(scope) != "endpoint" || len(probeURLs) > 0 || len(probeMCPURLs) > 0 || output != "" {
+					return fmt.Errorf("--enroll supports endpoint discovery only and cannot be combined with probe flags or --output")
 				}
 				if hubURL == "" {
 					hubURL = os.Getenv("BARRIKADE_LENS_HUB")
@@ -172,7 +172,16 @@ func newScanCommand(dependencies Dependencies, organizationID, packPath *string)
 				result, probeErr := probe.Handshake(command.Context(), target, probe.Config{AllowedHosts: allowedProbeHosts})
 				if probeErr != nil {
 					snapshot.Coverage.Partial = true
-					snapshot.Errors = append(snapshot.Errors, discovery.ScanError{DetectorID: "active.metadata", Code: "probe_failed", Message: probeErr.Error()})
+					snapshot.Errors = append(snapshot.Errors, discovery.ScanError{DetectorID: "active.metadata", Code: "probe_failed", Message: "The opted-in metadata endpoint could not be read"})
+					continue
+				}
+				probe.Apply(&snapshot, result)
+			}
+			for _, target := range probeMCPURLs {
+				result, probeErr := probe.MCPHandshake(command.Context(), target, probe.Config{AllowedHosts: allowedProbeHosts})
+				if probeErr != nil {
+					snapshot.Coverage.Partial = true
+					snapshot.Errors = append(snapshot.Errors, discovery.ScanError{DetectorID: "active.mcp", Code: "probe_failed", Message: "The opted-in MCP metadata endpoint could not be read"})
 					continue
 				}
 				probe.Apply(&snapshot, result)
@@ -204,6 +213,7 @@ func newScanCommand(dependencies Dependencies, organizationID, packPath *string)
 	command.Flags().StringVar(&root, "path", ".", "repository root for --scope repo")
 	command.Flags().StringVarP(&output, "output", "o", "", "write the export to a private local file")
 	command.Flags().StringSliceVar(&probeURLs, "probe-url", nil, "opt in to a metadata-only handshake against an already-running HTTP endpoint")
+	command.Flags().StringSliceVar(&probeMCPURLs, "probe-mcp-url", nil, "opt in to a bounded MCP initialize and tools/list exchange; never calls a tool")
 	command.Flags().StringSliceVar(&allowedProbeHosts, "allow-probe-host", nil, "explicit host allowlist for active metadata handshakes")
 	command.Flags().StringVar(&enrollmentCode, "enroll", "", "run one Quick Scan using this Hub enrollment code")
 	command.Flags().StringVar(&hubURL, "hub", "", "Lens Hub base URL (defaults to "+OfficialHubURL+")")

@@ -38,8 +38,29 @@ relationships as `discovered` on the snapshot's source surface.
 
 ## Metadata handshake boundary
 
-Static descriptor discovery is enabled. An active MCP metadata handshake remains
-off unless a future deployment explicitly opts in. Any such implementation must
-be bounded to protocol initialization and metadata listing, use a dedicated
-timeout and response-size limit, and must never call a tool. The current
-collector does not open a connection to an MCP server during discovery.
+Static descriptor discovery remains the default. A local scan can explicitly
+opt in to a remote Streamable HTTP MCP metadata exchange with
+`--probe-mcp-url https://server.example/mcp --allow-probe-host server.example`.
+The probe sends only `initialize`, `notifications/initialized`, and up to four
+pages of `tools/list`. It supports JSON and SSE responses, limits the entire
+exchange to five seconds, each response to 1 MiB by default (2 MiB hard
+maximum), and the result to 100 safe
+tool names. It never invokes a tool or retains server instructions, tool
+descriptions, schemas, arguments, session identifiers, or response bodies.
+Unallowlisted hosts, credential-bearing or parameterized URLs, and cloud
+metadata addresses are rejected. Probe failures produce a partial scan with a
+generic diagnostic. Stateful SSE-only servers using the older HTTP+SSE
+transport and servers requiring authentication are not yet probed.
+
+The observed server and tool IDs use the same sanitized endpoint key as static
+declarations, so live metadata enriches an existing server instead of creating
+a display-name match. The resulting `provides` edge is `observed`; it says the
+server listed the tool, not that a caller can execute it.
+
+The Evidence Graph has a bounded path query in both directions. Selecting a
+system shows downstream paths; selecting a connected resource shows which
+current paths lead to it. The API returns at most 80 paths of three hops, with
+at most 12 next edges explored per node. Every returned edge has a current,
+unexpired evidence reference from a non-revoked source, confidence, surface,
+observation state, and observation time. These paths are technical evidence,
+not an effective authorization result.

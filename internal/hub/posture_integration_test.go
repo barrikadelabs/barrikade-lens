@@ -96,6 +96,7 @@ func TestRelationshipProvenanceConvergesAcrossSurfaces(t *testing.T) {
 	}{
 		{"endpoint:" + uuid.NewString(), discovery.SourceEndpoint, discovery.ObservationDeclared},
 		{"repository:" + uuid.NewString(), discovery.SourceRepository, discovery.ObservationDiscovered},
+		{"kubernetes:" + uuid.NewString(), discovery.SourceKubernetes, discovery.ObservationObserved},
 	}
 	serverID := discovery.StableID(orgID, discovery.KindMCPServer, "mcp-endpoint:https://api.example.test/mcp")
 	destinationID := discovery.StableID(orgID, discovery.KindAPIService, "api-host:api.example.test")
@@ -122,7 +123,7 @@ func TestRelationshipProvenanceConvergesAcrossSurfaces(t *testing.T) {
 	if err := pool.QueryRow(ctx, `SELECT surfaces,observation_states FROM relationships WHERE organization_id=$1 AND id=$2`, orgID, relationshipID).Scan(&surfaces, &states); err != nil {
 		t.Fatal(err)
 	}
-	if len(surfaces) != 2 || surfaces[0] != "endpoint" || surfaces[1] != "repository" || len(states) != 2 || states[0] != "declared" || states[1] != "discovered" {
+	if len(surfaces) != 3 || surfaces[0] != "endpoint" || surfaces[1] != "kubernetes" || surfaces[2] != "repository" || len(states) != 3 || states[0] != "declared" || states[1] != "discovered" || states[2] != "observed" {
 		t.Fatalf("relationship provenance did not converge: surfaces=%v states=%v", surfaces, states)
 	}
 }

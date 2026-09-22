@@ -76,5 +76,8 @@ Before enabling the feature in production, retain results for clean install,
 first full scan, RBAC negative tests, a missed-event/full-reconciliation test,
 Hub outage recovery, restart with the same cluster ID, credential revocation,
 upgrade, uninstall, and a representative scale run. `go test ./...` includes the
-contract, privacy, topology, and shipped-RBAC regressions; cluster lifecycle
-evidence must be captured against the target Kubernetes versions.
+contract, privacy, topology, shipped-RBAC, retry, and periodic reconciliation
+regressions. CI also installs, upgrades, and uninstalls the Helm chart on kind
+and checks effective read-only permissions. These tests do not substitute for a
+full end-to-end run against the target cluster and Hub. Record that run before
+enabling `LENS_KUBERNETES_CONNECTOR_ENABLED` in production.

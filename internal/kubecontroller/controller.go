@@ -28,6 +28,7 @@ import (
 	"github.com/barrikadelabs/barrikade-lens/internal/detector"
 	"github.com/barrikadelabs/barrikade-lens/internal/hubclient"
 	scanner "github.com/barrikadelabs/barrikade-lens/internal/scanner/kubernetes"
+	"github.com/barrikadelabs/barrikade-lens/pkg/discovery"
 )
 
 type Controller struct {
@@ -42,6 +43,8 @@ type Controller struct {
 	CacheSyncTimeout time.Duration
 	Logger           *slog.Logger
 	HubClient        *hubclient.Client
+	UploadSnapshot   func(context.Context, *lensconfig.Config, discovery.Snapshot) error
+	RetryBaseDelay   time.Duration
 }
 
 func (c *Controller) Run(ctx context.Context) error {
@@ -56,6 +59,9 @@ func (c *Controller) Run(ctx context.Context) error {
 	}
 	if c.CacheSyncTimeout == 0 {
 		c.CacheSyncTimeout = 30 * time.Second
+	}
+	if c.RetryBaseDelay <= 0 {
+		c.RetryBaseDelay = time.Second
 	}
 	cfg, err := lensconfig.Load(c.ConfigPath)
 	if err != nil {
@@ -141,10 +147,18 @@ func (c *Controller) Run(ctx context.Context) error {
 			return err
 		}
 		for attempt := 0; attempt < 5; attempt++ {
-			if _, err = c.HubClient.Upload(ctx, c.ConfigPath, &cfg, snapshot); err == nil {
+			if c.UploadSnapshot != nil {
+				err = c.UploadSnapshot(ctx, &cfg, snapshot)
+			} else {
+				_, err = c.HubClient.Upload(ctx, c.ConfigPath, &cfg, snapshot)
+			}
+			if err == nil {
 				return nil
 			}
-			timer := time.NewTimer(time.Duration(1<<attempt) * time.Second)
+			if attempt == 4 {
+				break
+			}
+			timer := time.NewTimer(time.Duration(1<<attempt) * c.RetryBaseDelay)
 			select {
 			case <-ctx.Done():
 				timer.Stop()

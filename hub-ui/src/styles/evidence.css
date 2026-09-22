@@ -109,6 +109,15 @@
 .graph-inspector-facts { display: grid; padding: 8px 0; grid-template-columns: 1fr 1fr; }
 .graph-inspector-facts > div { display: grid; min-width: 0; padding: 6px 4px; gap: 3px; }
 .graph-inspector-facts b { overflow: hidden; color: var(--text-2); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.graph-topology-paths { display: grid; margin: 10px 0; gap: 7px; }
+.graph-topology-paths > span { color: var(--text-4); font: 700 7px var(--mono); letter-spacing: .055em; }
+.graph-path-direction { display: flex; gap: 4px; }
+.graph-path-direction button { flex: 1; padding: 6px 4px; border: 1px solid var(--line); border-radius: 5px; color: var(--text-4); background: transparent; font-size: 8px; cursor: pointer; }
+.graph-path-direction button.active { border-color: rgba(255,107,0,.42); color: var(--text-1); background: var(--orange-soft); }
+.graph-topology-paths p { margin: 3px 0; color: var(--text-4); font-size: 8px; line-height: 1.5; }
+.graph-path { display: grid; padding: 8px; gap: 5px; border: 1px solid rgba(119,169,189,.18); border-radius: 5px; background: rgba(119,169,189,.04); }
+.graph-path b { color: var(--text-2); font-size: 8px; line-height: 1.4; overflow-wrap: anywhere; }
+.graph-path small { color: var(--text-4); font: 7px/1.45 var(--mono); overflow-wrap: anywhere; }
 .graph-relationship-summary { margin: 11px 0 3px; padding: 10px; border-left: 2px solid rgba(255,107,0,.52); background: rgba(255,107,0,.045); }
 .graph-relationship-summary > span, .graph-supporting-evidence > span { color: var(--text-4); font: 700 7px var(--mono); letter-spacing: .055em; }
 .graph-relationship-summary p { margin: 5px 0 0; color: var(--text-2); font-size: 9px; line-height: 1.5; }

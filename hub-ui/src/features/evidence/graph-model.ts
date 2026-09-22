@@ -4,6 +4,7 @@ import type { Confidence, Connection, Evidence, SystemDetail } from "../../api";
 export type GraphNodeData = {
   role: "root" | "entity" | "evidence" | "cluster";
   kind: string;
+  entityID?: string;
   name: string;
   detail: string;
   confidence: Confidence;
@@ -45,7 +46,7 @@ function buildClusteredGraph(detail: SystemDetail, connected: ConnectedGraphEnti
   const ROOT_Y = 310;
   const nodes: LensNode[] = [{
     id: detail.id, type: "lens", position: { x: ROOT_X, y: ROOT_Y }, zIndex: 8,
-    data: { role: "root", kind: detail.kind, name: detail.name, detail: `${pretty(detail.system_type)} · ${pretty(detail.state)}`, confidence: detail.confidence, supportingEvidence: evidenceForSubject(detail.evidence, detail.id), system: detail },
+    data: { role: "root", entityID: detail.id, kind: detail.kind, name: detail.name, detail: `${pretty(detail.system_type)} · ${pretty(detail.state)}`, confidence: detail.confidence, supportingEvidence: evidenceForSubject(detail.evidence, detail.id), system: detail },
   }];
   const edges: Edge[] = [];
   const entityNodeByID = new Map<string, string>();
@@ -73,7 +74,7 @@ function buildClusteredGraph(detail: SystemDetail, connected: ConnectedGraphEnti
       const entityPosition = { x: 10 + column * 198, y: 38 + row * 62 };
       nodes.push({
         id: nodeID, type: "lens", parentId: clusterID, extent: "parent", position: entityPosition, zIndex: 3,
-        data: { role: "entity", kind: item.entity.kind, name: item.entity.name, detail: relationshipCardLabel(item.connections, item.entity.kind), confidence: strongest, connections: item.connections, supportingEvidence: evidenceForSubject(detail.evidence, item.entity.id), contextName: detail.name },
+        data: { role: "entity", entityID: item.entity.id, kind: item.entity.kind, name: item.entity.name, detail: relationshipCardLabel(item.connections, item.entity.kind), confidence: strongest, connections: item.connections, supportingEvidence: evidenceForSubject(detail.evidence, item.entity.id), contextName: detail.name },
       });
       if (!entityNodeByID.has(item.entity.id)) {
         entityNodeByID.set(item.entity.id, nodeID);

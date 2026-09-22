@@ -37,6 +37,7 @@ Active handshakes are off by default. An explicitly allowed metadata-only probe 
 
 ```sh
 barrikade-lens scan --probe-url http://127.0.0.1:11434/v1/models --allow-probe-host 127.0.0.1
+barrikade-lens scan --probe-mcp-url https://mcp.example.com/mcp --allow-probe-host mcp.example.com
 ```
 
 Probes reject credential-bearing URLs and metadata targets, use strict limits, and never invoke a tool.

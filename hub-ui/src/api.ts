@@ -1,4 +1,4 @@
-import type { Activation, AuthConfig, Change, ConnectionStatus, DeviceFleetPage, Environment, EnvironmentKind, EnvironmentScan, ExposureFinding, FleetDevice, GitHubDiscoveryStatus, Notification, Overview, PageResult, ProductItem, ScanStatus, Session, SetupSession, SystemDetail, SystemItem, Target } from "./api-types";
+import type { Activation, AuthConfig, Change, ConnectionStatus, DeviceFleetPage, Environment, EnvironmentKind, EnvironmentScan, ExposureFinding, FleetDevice, GitHubDiscoveryStatus, Notification, Overview, PageResult, ProductItem, ScanStatus, Session, SetupSession, SystemDetail, SystemItem, Target, TopologyPaths } from "./api-types";
 export type * from "./api-types";
 
 export async function authConfig() {
@@ -134,6 +134,10 @@ export class API {
 
   system(id: string) {
     return this.request<SystemDetail>(`/v1/systems/${encodeURIComponent(id)}`);
+  }
+
+  topologyPaths(entityID: string, direction: "downstream" | "upstream") {
+    return this.request<TopologyPaths>(queryPath("/v1/topology/paths", { entity_id: entityID, direction }));
   }
 
   targets(filters: Record<string, string | number | undefined> = {}) {
