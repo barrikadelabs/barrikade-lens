@@ -38,6 +38,8 @@ button.system-row:hover, button.inventory-row:hover, button.target-row:hover { c
 .state-pill i, .confidence-pill i, .freshness i { width: 5px; height: 5px; border-radius: 50%; background: var(--text-4); }
 .state-pill.running, .confidence-pill.confirmed, .freshness.fresh { border-color: rgba(57,223,118,.18); color: var(--green); background: var(--green-soft); }
 .state-pill.running i, .confidence-pill.confirmed i, .freshness.fresh i { background: var(--green); }
+.state-pill.running.stale { border-color: rgba(255,181,70,.2); color: var(--amber); background: rgba(255,181,70,.08); }
+.state-pill.running.stale i { background: var(--amber); }
 .state-pill.deployed, .state-pill.defined, .confidence-pill.likely { border-color: rgba(90,184,247,.2); color: var(--blue); background: var(--blue-soft); }
 .state-pill.deployed i, .state-pill.defined i, .confidence-pill.likely i { background: var(--blue); }
 .state-pill.configured, .state-pill.installed { border-color: rgba(169,128,255,.2); color: var(--purple); background: var(--purple-soft); }

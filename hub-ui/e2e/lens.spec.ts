@@ -59,6 +59,27 @@ test("CISO overview makes an unassessed workspace actionable without navigation 
   await expect(page.getByRole("button", { name: "24h" })).toHaveClass(/active/);
 });
 
+test("overview counts older installations and findings without calling them running now", async ({ page }) => {
+  await authenticateDevelopment(page);
+  await page.route("**/v1/overview?*", async (route) => route.fulfill({ json: {
+    window: "7d", generated_at: new Date().toISOString(), coverage: [],
+    footprint: { system_types: {}, states: {}, surfaces: {} }, attention: {}, changes: [],
+    data_quality: { confidence: {}, confidence_note: "", coverage_note: "" },
+    exposure_summary: { total: 2, counts: { critical: 0, high: 0, medium: 0, low: 2 }, top_findings: [] },
+    executive_summary: {
+      coverage_state: "stale", systems: { known: 2, fresh: 0, stale: 2, fresh_by_type: {}, stale_by_type: { agent_tool: 1, model_runtime: 1 } },
+      findings: { fresh: 0, stale: 2, fresh_by_severity: {}, stale_by_severity: { low: 2 } },
+      effective_ownership: { owned: 0, unowned: 2, unassigned_high_priority_findings: 0 }, top_findings: [],
+    },
+  } }));
+  await page.goto("/overview");
+  await expect(page.getByRole("button", { name: "Open 2 findings" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "1 Agent-capable tools" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "1 Model runtimes" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "0 Running now" })).toBeVisible();
+  await expect(page.getByText("No recent status observations.")).toBeVisible();
+});
+
 test("environment-first onboarding is gated, keyboard accessible, responsive, and retryable", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await authenticateDevelopment(page, { connectors: { endpoint: true, aws: false, azure: false, gcp: false, github: false, kubernetes: false } });
@@ -194,7 +215,7 @@ test("a routed stale installation still opens How Lens knows", async ({ page }) 
   await authenticateDevelopment(page);
   const system = {
     id: "system-stale", kind: "runtime", name: "Older AI tool", attributes: {}, target_id: "target-1", target_name: "Laptop",
-    target_freshness: "stale", target_partial: true, surface: "endpoint", system_type: "agent_tool", state: "installed", network_scope: "none",
+    target_freshness: "stale", target_partial: true, surface: "endpoint", system_type: "agent_tool", state: "running", network_scope: "none",
     attributed: false, confidence: "possible", first_seen_at: new Date().toISOString(), last_seen_at: new Date().toISOString(),
     connections: [], evidence: [],
   };
@@ -210,6 +231,7 @@ test("a routed stale installation still opens How Lens knows", async ({ page }) 
 
   await page.goto("/systems/system-stale/evidence");
   await expect(page.getByRole("heading", { name: "Older AI tool" })).toBeVisible();
+  await expect(page.getByText("Running when last checked").first()).toBeVisible();
   await expect(page.getByRole("button", { name: /Older AI tool/ })).toBeVisible();
   await expect(page.getByText("No AI tools or agents found")).toHaveCount(0);
   await expect(page.getByText("Partial scan", { exact: true })).toBeVisible();
@@ -264,14 +286,16 @@ test("finding route, filters, reload, and accessible dialog state are durable", 
     severity: "high", title: "Public agent endpoint", explanation: "A listener is reachable beyond the endpoint.",
     recommended_next_step: "Confirm the intended network boundary.", path: [{ entity_id: "system-1", name: "Production agent", kind: "agent", basis: "observed" }],
     evidence_bases: ["observed"], first_seen_at: new Date().toISOString(), last_seen_at: new Date().toISOString(),
-    evidence_last_seen_at: new Date().toISOString(), evidence_freshness: "stale", effective_ownership: { owned: false },
+    evidence_last_seen_at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(), evidence_freshness: "stale", effective_ownership: { owned: false },
   };
   await page.route(/\/v1\/exposures(?:\/[^?]+)?(?:\?.*)?$/, async (route) => {
     const url = new URL(route.request().url());
-    await route.fulfill({ json: url.pathname.endsWith("/finding-1") ? finding : { items: [finding], limit: 50 } });
+    await route.fulfill({ json: url.pathname.endsWith("/finding-1") ? finding : { items: url.searchParams.get("freshness") === "fresh" ? [] : [finding], limit: 50 } });
   });
   await page.goto("/findings?freshness=stale");
   const row = page.getByRole("button", { name: /Public agent endpoint/ });
+  await expect(row).toContainText("Not reporting recently");
+  await expect(row).toContainText("last observed");
   await row.click();
   await expect(page).toHaveURL(/\/findings\/finding-1\?freshness=stale$/);
   const dialog = page.getByRole("dialog", { name: "Finding details" });
@@ -282,4 +306,9 @@ test("finding route, filters, reload, and accessible dialog state are durable", 
   await row.click();
   await page.reload();
   await expect(page.getByRole("dialog", { name: "Finding details" })).toContainText("Confirm the intended network boundary");
+  await page.keyboard.press("Escape");
+  await page.getByLabel("Last report").selectOption("fresh");
+  await expect(page.getByText("No findings match")).toBeVisible();
+  await page.getByLabel("Last report").selectOption("all");
+  await expect(page.getByRole("button", { name: /Public agent endpoint/ })).toBeVisible();
 });

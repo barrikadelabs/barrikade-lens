@@ -25,10 +25,12 @@ export function OverviewPage({ api, revision, go }: { api: API; revision: number
   if (overview.loading || products.loading) return <Loading />;
   if (overview.error || products.error || !overview.data) return <Failure error={overview.error || products.error} retry={() => { overview.reload(); products.reload(); }} />;
   const data = overview.data;
-  const systems = data.footprint.system_types;
+  const executiveSystems = data.executive_summary?.systems;
+  const systems = executiveSystems ? Object.fromEntries(Array.from(new Set([...Object.keys(executiveSystems.fresh_by_type), ...Object.keys(executiveSystems.stale_by_type)])).map((type) => [type, (executiveSystems.fresh_by_type[type] ?? 0) + (executiveSystems.stale_by_type[type] ?? 0)])) : data.footprint.system_types;
   const states = data.footprint.states;
   const totalSystems = sum(Object.values(systems));
   const runningCount = states.running ?? 0;
+  const findingCount = data.executive_summary ? data.executive_summary.findings.fresh + data.executive_summary.findings.stale : data.exposure_summary?.total ?? 0;
   const reportingTargets = sum(data.coverage.map((item) => item.reporting));
   const reportingLabel = `${reportingTargets} reporting ${reportingTargets === 1 ? "location" : "locations"}`;
   const attention = [
@@ -48,7 +50,7 @@ export function OverviewPage({ api, revision, go }: { api: API; revision: number
     {data.executive_summary?.coverage_state === "ready" && data.executive_summary.systems.known === 0 && <section className="panel successful-empty"><CheckCircle2 size={18} /><div><h2>No AI tools or agents found</h2><p>Lens checked the connected device {data.executive_summary.last_successful_evidence_at ? relative(data.executive_summary.last_successful_evidence_at) : "recently"}. Open Coverage to see what Lens checked and confirm that the device is still reporting.</p></div></section>}
     {data.executive_summary && data.executive_summary.coverage_state !== "ready" && <section className={`coverage-limitation ${data.executive_summary.coverage_state}`} role="status"><AlertCircle size={16} /><span><b>This view may be incomplete.</b> Lens includes older results and shows when they were last updated. The latest successful scan {data.executive_summary.last_successful_evidence_at ? `arrived ${relative(data.executive_summary.last_successful_evidence_at)}` : "has not arrived yet"}.</span></section>}
     <section className="exposure-hero">
-      <div className="exposure-copy"><span>AI tools and agents found</span><h2><strong>{(data.executive_summary?.systems.known ?? totalSystems).toLocaleString()}</strong> across your organization</h2><p>{data.executive_summary ? `${data.executive_summary.systems.fresh} up to date · ${data.executive_summary.systems.stale} based on locations that are no longer reporting.` : `Results come from ${reportingLabel}. ${runningCount} are running now.`}</p><div className="enrollment-scope">{data.coverage.map((item) => <span key={item.target_type}><b>{pretty(item.target_type)}</b> {item.reporting ? `${item.reporting} reporting${item.stale ? ` · ${item.stale} not reporting recently` : ""}` : "Not connected"}</span>)}</div>{data.exposure_summary && <button className="overview-story-link" onClick={() => go("Findings")}>Open findings <ArrowRight size={14} /></button>}</div>
+      <div className="exposure-copy"><span>AI tools and agents found</span><h2><strong>{(data.executive_summary?.systems.known ?? totalSystems).toLocaleString()}</strong> across your organization</h2><p>{data.executive_summary ? `${data.executive_summary.systems.fresh} up to date · ${data.executive_summary.systems.stale} based on locations that are no longer reporting.` : `Results come from ${reportingLabel}. ${runningCount} are running now.`}</p><div className="enrollment-scope">{data.coverage.map((item) => <span key={item.target_type}><b>{pretty(item.target_type)}</b> {item.reporting ? `${item.reporting} reporting${item.stale ? ` · ${item.stale} not reporting recently` : ""}` : "Not connected"}</span>)}</div>{data.exposure_summary && <button className="overview-story-link" onClick={() => go("Findings")}>Open {findingCount} findings <ArrowRight size={14} /></button>}</div>
       <div className="exposure-facts">
         <ExecutiveFact value={runningCount} label="Running now" tone="active" onClick={() => location.assign("/inventory?state=running&confidence=confirmed&freshness=fresh")} />
         <ExecutiveFact value={data.executive_summary?.effective_ownership.unowned ?? data.attention.unattributed_systems ?? 0} label="Missing an owner" tone="attention" onClick={() => location.assign("/inventory?owner_status=unowned")} />
@@ -74,7 +76,7 @@ export function OverviewPage({ api, revision, go }: { api: API; revision: number
     </div>
     <div className="executive-secondary">
       <section className="panel change-panel"><PanelHeading title="Recent changes" detail={`Important changes from the last ${window}; routine updates are grouped together`} action={<button className="text-button" onClick={() => go("Changes")}>View history <ArrowRight size={13} /></button>} /><ChangeList items={changes} /></section>
-      <section className="panel evidence-posture"><PanelHeading title="How reliable is this view?" detail="See how current the results are and how strongly Lens could confirm them" action={<button className="text-button" onClick={() => go("Connections")}>View coverage <ArrowRight size={13} /></button>} /><StateDistribution values={states} total={totalSystems} /><ConfidenceSummary data={data.data_quality.confidence} /></section>
+      <section className="panel evidence-posture"><PanelHeading title="How reliable is this view?" detail="See how current the results are and how strongly Lens could confirm them" action={<button className="text-button" onClick={() => go("Connections")}>View coverage <ArrowRight size={13} /></button>} />{sum(Object.values(states)) ? <StateDistribution values={states} total={sum(Object.values(states))} /> : <p>No recent status observations.</p>}<ConfidenceSummary data={data.data_quality.confidence} /></section>
     </div>
 		{selectedProduct && <ProductDrawer item={selectedProduct} onClose={() => setSelectedProduct(undefined)} />}
   </div>;

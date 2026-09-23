@@ -193,7 +193,7 @@ func TestRemediationClerkMembershipUpsertsOrganization(t *testing.T) {
 }
 
 func TestRemediationDisconnectedCollectorJWTIsRejected(t *testing.T) {
-	server, _ := remediationServer(t)
+	server, org := remediationServer(t)
 	id, code := remediationSetup(t, server, "endpoint")
 	state, err := identity.LoadOrCreate(filepath.Join(t.TempDir(), "identity.json"), "https://lens.test")
 	if err != nil {
@@ -209,12 +209,66 @@ func TestRemediationDisconnectedCollectorJWTIsRejected(t *testing.T) {
 	if disconnected := remediationCall(server, http.MethodDelete, "/v1/environments/"+id, ""); disconnected.Code != http.StatusOK {
 		t.Fatal(disconnected.Code)
 	}
+	var pending int
+	if err := server.config.Pool.QueryRow(t.Context(), `SELECT count(*) FROM exposure_evaluation_jobs WHERE organization_id=$1 AND status='pending'`, org).Scan(&pending); err != nil || pending != 1 {
+		t.Fatalf("disconnect did not queue finding reconciliation: pending=%d err=%v", pending, err)
+	}
 	request := httptest.NewRequest(http.MethodGet, "/v1/session", nil)
 	request.Header.Set("Authorization", "Bearer "+tokens.AccessToken)
 	result := httptest.NewRecorder()
 	server.Handler().ServeHTTP(result, request)
 	if result.Code != http.StatusUnauthorized {
 		t.Fatalf("revoked collector JWT returned %d", result.Code)
+	}
+}
+
+func TestRemediationSourceAndDeviceRevocationQueueExposureEvaluation(t *testing.T) {
+	server, org := remediationServer(t)
+	for _, route := range []string{"/v1/admin/sources/", "/v1/device-fleet/"} {
+		source := "revoke-" + uuid.NewString()
+		if err := insertTestSource(t.Context(), server.config.Pool, org, source, "endpoint", "Revocation fixture"); err != nil {
+			t.Fatal(err)
+		}
+		root := discovery.StableID(org, discovery.KindAgent, source+":agent")
+		snapshot := discovery.NewSnapshot(org, source, discovery.SourceEndpoint, discovery.Collector{ID: "revoke-fixture", Name: "Revocation fixture", Version: "1", Mode: "managed"})
+		snapshot.Sequence = 1
+		snapshot.Entities = []discovery.Entity{{ID: root, Kind: discovery.KindAgent, CanonicalKey: source + ":agent", Name: "Revoked agent", Attributes: map[string]any{"configured": true, "product_id": "revoked-agent", "product_category": "autonomous_agent", "source_surface": "endpoint"}, Confidence: discovery.ConfidenceConfirmed}}
+		if err := applyTestSnapshot(t.Context(), server.config.Pool, snapshot); err != nil {
+			t.Fatal(err)
+		}
+		tx, err := server.config.Pool.Begin(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := recomputeOrganizationExposures(t.Context(), tx, org); err != nil {
+			_ = tx.Rollback(t.Context())
+			t.Fatal(err)
+		}
+		if err := tx.Commit(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		var current int
+		if err := server.config.Pool.QueryRow(t.Context(), `SELECT count(*) FROM exposure_findings WHERE organization_id=$1 AND root_entity_id=$2 AND current=true`, org, root).Scan(&current); err != nil || current != 1 {
+			t.Fatalf("pre-revocation finding count=%d err=%v", current, err)
+		}
+		if response := remediationCall(server, http.MethodDelete, route+source, ""); response.Code != http.StatusNoContent {
+			t.Fatalf("%s returned %d: %s", route, response.Code, response.Body.String())
+		}
+		var pending int
+		if err := server.config.Pool.QueryRow(t.Context(), `SELECT count(*) FROM exposure_evaluation_jobs WHERE organization_id=$1 AND status='pending'`, org).Scan(&pending); err != nil || pending != 1 {
+			t.Fatalf("%s did not queue finding reconciliation: pending=%d err=%v", route, pending, err)
+		}
+		if _, err := server.config.Pool.Exec(t.Context(), `UPDATE exposure_evaluation_jobs SET updated_at='1970-01-01' WHERE organization_id=$1`, org); err != nil {
+			t.Fatal(err)
+		}
+		if err := (ExposureWorker{Pool: server.config.Pool}).runOne(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		if err := server.config.Pool.QueryRow(t.Context(), `SELECT count(*) FROM exposure_findings WHERE organization_id=$1 AND root_entity_id=$2 AND current=true`, org, root).Scan(&current); err != nil || current != 0 {
+			var entityCurrent, postureCurrent bool
+			_ = server.config.Pool.QueryRow(t.Context(), `SELECT e.current,p.current FROM entities e JOIN entity_posture p ON p.organization_id=e.organization_id AND p.entity_id=e.id WHERE e.organization_id=$1 AND e.id=$2`, org, root).Scan(&entityCurrent, &postureCurrent)
+			t.Fatalf("%s left finding actionable after revocation: current=%d entity=%v posture=%v err=%v", route, current, entityCurrent, postureCurrent, err)
+		}
 	}
 }
 

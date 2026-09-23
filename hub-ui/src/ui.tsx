@@ -7,7 +7,7 @@ import {
 import type { Connection } from "./api";
 import { captureAnalytics } from "./analytics";
 import barrikadeLogoMark from "./assets/barrikade-logo-mark.svg";
-import { confidenceLabel, freshnessLabel, stateLabel, systemTypeLabel } from "./copy";
+import { confidenceLabel, freshnessLabel, observedStateLabel, systemTypeLabel } from "./copy";
 
 const kindIcons: Record<string, LucideIcon> = {
   endpoint: Monitor, repository: GitBranch, cluster: Container, workload: Container, agent: Bot,
@@ -35,7 +35,7 @@ export function Identity({ kind, name, detail }: { kind: string; name: string; d
 }
 
 export function TypePill({ value }: { value: string }) { return <span className={`type-pill ${value}`}>{systemTypeLabel(value)}</span>; }
-export function StatePill({ state }: { state: string }) { return <span className={`state-pill ${state}`}><i />{stateLabel(state)}</span>; }
+export function StatePill({ state, freshness }: { state: string; freshness?: string }) { return <span className={`state-pill ${state}${freshness === "stale" ? " stale" : ""}`}><i />{observedStateLabel(state, freshness)}</span>; }
 export function ConfidencePill({ value }: { value: string }) { return <span className={`confidence-pill ${value}`}><i />{confidenceLabel(value)}</span>; }
 export function Freshness({ value, partial }: { value: string; partial?: boolean }) { return <span className={`freshness ${value}`}><i />{freshnessLabel(value)}{partial && <small>Some data is missing</small>}</span>; }
 export function Fact({ label, value }: { label: string; value: string }) { return <div><span>{label}</span><b>{value}</b></div>; }

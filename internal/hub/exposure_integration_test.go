@@ -1,6 +1,7 @@
 package hub
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,6 +11,129 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
+
+func TestExposureStaleEvidenceRemainsActionableUntilResolved(t *testing.T) {
+	ctx, pool := integrationPool(t)
+	org := "exposure-stale-" + uuid.NewString()
+	source := "source-" + uuid.NewString()
+	if _, err := pool.Exec(ctx, `INSERT INTO organizations(id,name) VALUES($1,'Stale exposure test')`, org); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(ctx, `DELETE FROM organizations WHERE id=$1`, org) })
+	if err := insertTestSource(ctx, pool, org, source, "endpoint", "Stale endpoint"); err != nil {
+		t.Fatal(err)
+	}
+	root := discovery.StableID(org, discovery.KindAgent, "stale-root")
+	connector := discovery.StableID(org, discovery.KindMCPServer, "stale-connector")
+	makeSnapshot := func(sequence uint64, present bool) discovery.Snapshot {
+		snapshot := discovery.NewSnapshot(org, source, discovery.SourceEndpoint, discovery.Collector{ID: "stale-fixture", Name: "Stale fixture", Version: "1", Mode: "managed"})
+		snapshot.Sequence = sequence
+		if present {
+			snapshot.Entities = []discovery.Entity{
+				{ID: root, Kind: discovery.KindAgent, CanonicalKey: "stale-root", Name: "Stale agent", Attributes: map[string]any{"running_at_scan": true, "product_id": "stale-agent", "product_category": "autonomous_agent", "source_surface": "endpoint"}, Confidence: discovery.ConfidenceConfirmed},
+				{ID: connector, Kind: discovery.KindMCPServer, CanonicalKey: "stale-connector", Name: "External MCP", Attributes: map[string]any{"configured": true, "host": "api.example.test", "credential_present": true}, Confidence: discovery.ConfidenceConfirmed},
+			}
+			snapshot.Relationships = []discovery.Relationship{{ID: discovery.RelationshipID(org, discovery.RelationshipConnectsTo, root, connector), Kind: discovery.RelationshipConnectsTo, From: root, To: connector, Confidence: discovery.ConfidenceConfirmed}}
+		}
+		return snapshot
+	}
+	if err := applyTestSnapshot(ctx, pool, makeSnapshot(1, true)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE discovery_targets SET last_seen_at=now()-interval '2 hours' WHERE organization_id=$1 AND id=$2`, org, source); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE entity_posture SET last_seen_at=now()-interval '2 hours' WHERE organization_id=$1 AND entity_id=$2`, org, root); err != nil {
+		t.Fatal(err)
+	}
+	recompute := func() {
+		t.Helper()
+		tx, err := pool.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer tx.Rollback(ctx)
+		if err := recomputeOrganizationExposures(ctx, tx, org); err != nil {
+			t.Fatal(err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	server, err := NewServer(ctx, Config{Pool: pool, JWTSecret: []byte("0123456789012345678901234567890123456789"), DevAdminToken: "stale-admin", DefaultOrganizationID: org, ExposureEnabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	call := func(method, path, body string) *httptest.ResponseRecorder {
+		t.Helper()
+		request := httptest.NewRequest(method, path, strings.NewReader(body))
+		request.Header.Set("Authorization", "Bearer stale-admin")
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		server.Handler().ServeHTTP(response, request)
+		if response.Code != http.StatusOK {
+			t.Fatalf("%s %s returned %d: %s", method, path, response.Code, response.Body.String())
+		}
+		return response
+	}
+	count := func(path string) int {
+		t.Helper()
+		var result struct {
+			Items []json.RawMessage `json:"items"`
+		}
+		if err := json.Unmarshal(call(http.MethodGet, path, "").Body.Bytes(), &result); err != nil {
+			t.Fatal(err)
+		}
+		return len(result.Items)
+	}
+	recompute()
+	if got := count("/v1/exposures?freshness=stale"); got != 2 {
+		t.Fatalf("stale findings=%d, want ownership and credential findings", got)
+	}
+	if got := count("/v1/exposures?freshness=fresh"); got != 0 {
+		t.Fatalf("fresh findings=%d, want 0", got)
+	}
+	var products struct {
+		Items []struct {
+			RunningCount int `json:"running_count"`
+			StaleCount   int `json:"stale_count"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(call(http.MethodGet, "/v1/products", "").Body.Bytes(), &products); err != nil {
+		t.Fatal(err)
+	}
+	if len(products.Items) != 1 || products.Items[0].RunningCount != 0 || products.Items[0].StaleCount != 1 {
+		t.Fatalf("stale running installation counted as recently running: %+v", products.Items)
+	}
+	var overview struct {
+		Executive struct {
+			Findings struct{ Fresh, Stale int } `json:"findings"`
+		} `json:"executive_summary"`
+	}
+	if err := json.Unmarshal(call(http.MethodGet, "/v1/overview?window=7d", "").Body.Bytes(), &overview); err != nil {
+		t.Fatal(err)
+	}
+	if overview.Executive.Findings.Fresh != 0 || overview.Executive.Findings.Stale != 2 {
+		t.Fatalf("overview findings disagree with list: %+v", overview.Executive.Findings)
+	}
+	call(http.MethodPut, "/v1/entities/"+root+"/context", `{"owner_name":"Platform Security","owner_type":"team","data_categories":[]}`)
+	if got := count("/v1/exposures?freshness=stale"); got != 1 {
+		t.Fatalf("owner assignment left %d stale findings, want credential finding only", got)
+	}
+	for sequence := uint64(2); sequence <= 4; sequence++ {
+		if err := applyTestSnapshot(ctx, pool, makeSnapshot(sequence, false)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	recompute()
+	if got := count("/v1/exposures?freshness=all"); got != 0 {
+		t.Fatalf("full-scan removal left %d actionable findings", got)
+	}
+	var resolved int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM exposure_finding_history WHERE organization_id=$1 AND state='resolved'`, org).Scan(&resolved); err != nil || resolved < 2 {
+		t.Fatalf("resolved history count=%d error=%v", resolved, err)
+	}
+}
 
 func TestExposureVerticalSliceAndContextRBAC(t *testing.T) {
 	ctx, pool := integrationPool(t)

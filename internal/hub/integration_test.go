@@ -323,6 +323,10 @@ func TestRemovingGitHubRepositoryRevokesItsDiscoverySource(t *testing.T) {
 	if mappings != 0 || removals != 1 {
 		t.Fatalf("expected mapping deletion and one removal change; mappings=%d removals=%d", mappings, removals)
 	}
+	var queued int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM exposure_evaluation_jobs WHERE organization_id=$1 AND status='pending'`, org).Scan(&queued); err != nil || queued != 1 {
+		t.Fatalf("repository removal did not queue finding reconciliation: pending=%d err=%v", queued, err)
+	}
 }
 
 func TestHubQueriesAreOrganizationScopedAndCollectorsCannotReadInventory(t *testing.T) {

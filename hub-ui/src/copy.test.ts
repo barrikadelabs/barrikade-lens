@@ -4,7 +4,7 @@ import {
   changeSummaryLabel, changeSummaryLabels, changeValueLabel, confidenceLabel,
   confidenceLabels, connectionStatusLabel, connectionStatusLabels,
   freshnessLabel, freshnessLabels, locationTypeLabel, locationTypeLabels, plainLabel,
-  stateLabel, stateLabels, systemTypeLabel, systemTypeLabels,
+  observedStateLabel, stateLabel, stateLabels, systemTypeLabel, systemTypeLabels,
 } from "./copy";
 
 describe("plain-language labels", () => {
@@ -23,6 +23,12 @@ describe("plain-language labels", () => {
     expect(changeValueLabel("attributes.installation_methods", ["executable_path", "ide_extension_manifest"])).toBe("Installed command, Editor extension details");
     expect(changeValueLabel("attributes.running_at_scan", true)).toBe("Running");
     expect(changeValueLabel("current", false)).toBe("Not included");
+  });
+
+  it("describes overdue running evidence without implying live activity", () => {
+    expect(observedStateLabel("running", "stale")).toBe("Running when last checked");
+    expect(observedStateLabel("running", "fresh")).toBe("Running now");
+    expect(changeSummaryLabel("Attribution evidence removed")).toBe("Attribution evidence no longer observed");
   });
 
   it("turns unknown values into readable fallback labels", () => {

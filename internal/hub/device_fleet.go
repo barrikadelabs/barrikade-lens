@@ -414,6 +414,9 @@ func (s *Server) revokeFleetDevice(w http.ResponseWriter, r *http.Request) {
 		_, err = tx.Exec(r.Context(), `UPDATE discovery_targets SET current=false,revoked_at=now(),revoked_by=$3 WHERE organization_id=$1 AND id=$2`, principal.OrganizationID, r.PathValue("id"), principal.Subject)
 	}
 	if err == nil {
+		err = enqueueExposureEvaluation(r.Context(), tx, principal.OrganizationID)
+	}
+	if err == nil {
 		_, err = tx.Exec(r.Context(), `INSERT INTO workspace_audit_events(id,organization_id,actor_id,event_type,target_type,target_id,metadata) VALUES($1,$2,$3,'device.revoked','discovery_target',$4,$5)`, uuid.New(), principal.OrganizationID, principal.Subject, r.PathValue("id"), jsonBytes(map[string]any{"source_count": len(sourceIDs), "evidence_retained": true}))
 	}
 	if err != nil || tx.Commit(r.Context()) != nil {

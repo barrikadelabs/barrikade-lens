@@ -82,13 +82,13 @@ export function SystemsPage({ api, revision }: { api: API; revision: number }) {
       <section className="product-inventory-summary">
         <div><span>Tools and agents</span><b>{products.length}</b><small>unique across the organization</small></div>
         <div><span>Installations</span><b>{installationCount}</b><small>across connected devices</small></div>
-        <div><span>Running now</span><b className="good">{runningCount}</b><small>confirmed as active</small></div>
+        <div><span>Running in recent reports</span><b className="good">{runningCount}</b><small>older results excluded</small></div>
         <div><span>Devices reporting</span><b className="good">{reportingEndpoints || "—"}</b><small>{staleCount ? `${staleCount} installations may be out of date` : "all results are up to date"}</small></div>
       </section>
       <FilterBar search={productSearch} setSearch={setProductSearch}>
         <Select label="Type" value={productType} onChange={setProductType} options={{ "": "All tools and agents", autonomous_agent: "Autonomous agents", agent_tool: "AI agent tools", model_runtime: "AI model runtimes" }} />
         <Select label="Devices" value={productReach} onChange={setProductReach} options={{ "": "Any number of devices", broad: "Multiple devices", single: "One device" }} />
-        <Select label="Activity" value={productActivity} onChange={setProductActivity} options={{ "": "Any activity", running: "Running somewhere", quiet: "Not running" }} />
+        <Select label="Activity" value={productActivity} onChange={setProductActivity} options={{ "": "Any activity", running: "Running in recent reports", quiet: "Not recently running" }} />
       </FilterBar>
       <section className="panel data-panel product-inventory-panel"><div className="table-summary"><span><b>{productItems.length}</b> AI tools and agents</span><span>Open one to see where Lens found it and which device accounts were active</span></div>
         <div className="table-scroll"><div className="product-inventory-row table-head"><span>Tool or agent</span><span>Found on</span><span>Activity</span><span>Observed accounts</span><span>Confidence</span><span>Last seen</span><span /></div>
@@ -100,7 +100,7 @@ export function SystemsPage({ api, revision }: { api: API; revision: number }) {
             return <button className="product-inventory-row" key={item.id} onClick={() => setSelectedProduct(item)}>
               <Identity kind={item.system_type === "model_runtime" ? "model_server" : "agent"} name={item.name} detail={pretty(item.system_type ?? item.product_category ?? "discovered product")} />
               <span className="product-reach"><b>{targets} of {reportingEndpoints || Math.max(targets, 1)}</b><small>connected devices</small><i><em style={{ width: `${Math.min(100, (targets / Math.max(reportingEndpoints, targets, 1)) * 100)}%` }} /></i></span>
-              <span className="stacked"><b className={item.running_count ? "good" : ""}>{item.running_count ? `${item.running_count} running` : "Not running"}</b><small>{item.installation_count} {item.installation_count === 1 ? "installation" : "installations"}</small></span>
+              <span className="stacked"><b className={item.running_count ? "good" : ""}>{item.running_count ? `${item.running_count} recently running` : item.instances.some((instance) => instance.state === "running" && instance.target_freshness === "stale") ? "Running when last checked" : "Not observed running"}</b><small>{item.installation_count} {item.installation_count === 1 ? "installation" : "installations"}</small></span>
               <span className="stacked"><b>{item.observed_user_count}</b><small>observed {item.observed_user_count === 1 ? "account" : "accounts"}</small></span>
               <ConfidencePill value={confidence} /><span className="observed">{relative(item.last_seen_at)}</span><ChevronRight size={15} />
             </button>;
@@ -112,7 +112,7 @@ export function SystemsPage({ api, revision }: { api: API; revision: number }) {
     </> : <>
       <FilterBar search={filters.search ?? ""} setSearch={(value) => update("search", value)}>
         <Select label="Type" value={filters.system_type} onChange={(value) => update("system_type", value)} options={{ "": "All tools and agents", autonomous_agent: "Autonomous agents", agent_tool: "AI agent tools", model_runtime: "AI model runtimes" }} />
-        <Select label="Status" value={filters.state} onChange={(value) => update("state", value)} options={{ "": "Any status", running: "Running now", deployed: "Deployed", defined: "Found in code", configured: "Set up", installed: "Installed", residual: "Leftover files", cached: "Downloaded" }} />
+        <Select label="Status" value={filters.state} onChange={(value) => update("state", value)} options={{ "": "Any status", running: "Running when checked", deployed: "Deployed", defined: "Found in code", configured: "Set up", installed: "Installed", residual: "Leftover files", cached: "Downloaded" }} />
         <Select label="Confidence" value={filters.confidence} onChange={(value) => update("confidence", value)} options={{ "": "Any confidence", confirmed: "Confirmed", likely: "Likely", possible: "Possible" }} />
         <Select label="Ownership" value={filters.owner_status} onChange={(value) => update("owner_status", value)} options={{ "": "Any owner", owned: "Owned", unowned: "No owner assigned" }} />
         <Select label="Network access" value={filters.network_scope} onChange={(value) => update("network_scope", value)} options={{ "": "Any network access", external: "Public internet", network: "Local network", loopback: "This device only", none: "No network access", unknown: "Unknown" }} />
@@ -122,7 +122,7 @@ export function SystemsPage({ api, revision }: { api: API; revision: number }) {
         <div className="system-table table-scroll"><div className="system-row table-head"><span>Tool or agent</span><span>Type</span><span>Status</span><span>Found on</span><span>Owner</span><span>Confidence</span><span /></div>
           {items.map((item) => <button className="system-row" key={item.id} onClick={() => navigate(`/systems/${encodeURIComponent(item.id)}?${searchParams.toString()}`)}>
             <Identity kind={item.kind} name={item.name} detail={item.product_id ?? item.id} />
-            <TypePill value={item.system_type} /><StatePill state={item.state} /><span className="stacked"><b>{item.target_name ?? "Location unresolved"}</b><small>{locationTypeLabel(item.surface)}{item.target_freshness ? ` · ${freshnessLabel(item.target_freshness)}` : ""}{item.target_partial ? " · Partial scan" : ""}</small></span>
+            <TypePill value={item.system_type} /><StatePill state={item.state} freshness={item.target_freshness} /><span className="stacked"><b>{item.target_name ?? "Location unresolved"}</b><small>{locationTypeLabel(item.surface)}{item.target_freshness ? ` · ${freshnessLabel(item.target_freshness)}` : ""}{item.target_partial ? " · Partial scan" : ""} · last seen {relative(item.last_seen_at)}</small></span>
             <span className={item.effective_ownership?.owned ? "fact good" : "fact quiet"}>{item.effective_ownership?.owner_name || (item.effective_ownership?.owned ? "Owner assigned" : "No owner assigned")}</span><ConfidencePill value={item.confidence} /><ChevronRight size={15} />
           </button>)}
           {!loading && !items.length && <Empty icon={Bot} title="No installations match" detail="Try a broader filter. Related software and downloaded files are excluded from this view." />}
@@ -148,10 +148,10 @@ function SystemDrawer({ api, id, onClose }: { api: API; id: string; onClose: () 
 function SystemDetailView({ item }: { item: SystemDetail }) {
   const navigate = useNavigate();
   const groups = groupConnections(item.connections);
-  return <><div className="drawer-title"><Identity kind={item.kind} name={item.name} detail={item.product_id ?? item.id} /><div><TypePill value={item.system_type} /><StatePill state={item.state} /><ConfidencePill value={item.confidence} /></div></div>
-    <div className="fact-grid"><Fact label="Found on" value={item.target_name ?? "Location unresolved"} /><Fact label="Last report" value={pretty(item.target_freshness ?? "unknown")} /><Fact label="Scan coverage" value={item.target_partial ? "Partial — check Coverage" : "No partial scan reported"} /><Fact label="Network scope" value={pretty(item.network_scope)} /><Fact label="Assigned owner" value={item.effective_ownership?.owner_name || (item.effective_ownership?.owned ? "Confirmed in supporting details" : "Not assigned")} /><Fact label="First found" value={relative(item.first_seen_at)} /><Fact label="Last seen" value={relative(item.last_seen_at)} /></div>
+  return <><div className="drawer-title"><Identity kind={item.kind} name={item.name} detail={item.product_id ?? item.id} /><div><TypePill value={item.system_type} /><StatePill state={item.state} freshness={item.target_freshness} /><ConfidencePill value={item.confidence} /></div></div>
+    <div className="fact-grid"><Fact label="Found on" value={item.target_name ?? "Location unresolved"} /><Fact label="Last report" value={freshnessLabel(item.target_freshness ?? "unknown")} /><Fact label="Scan coverage" value={item.target_partial ? "Partial — check Coverage" : "No partial scan reported"} /><Fact label="Observed service reachability" value={item.network_scope === "none" ? "No listener observed" : pretty(item.network_scope)} /><Fact label="Assigned owner" value={item.effective_ownership?.owner_name || (item.effective_ownership?.owned ? "Confirmed in supporting details" : "Not assigned")} /><Fact label="First found" value={relative(item.first_seen_at)} /><Fact label="Last seen" value={relative(item.last_seen_at)} /></div>
     <button className="button subtle" onClick={() => navigate(`/systems/${encodeURIComponent(item.id)}/evidence`)}><Network size={14} /> See how Lens knows</button>
-    <section className="drawer-section"><h3>Connected items <span>{item.connections.length}</span></h3>{Object.entries(groups).map(([group, values]) => <div className="connection-group" key={group}><p>{pretty(group)}</p>{values.map((connection) => <ConnectionRow item={connection} key={connection.relationship_id} />)}</div>)}</section>
+    <section className="drawer-section"><h3>Connected items <span>{item.connections.length}</span></h3>{item.connections.some((connection) => connection.entity.kind === "mcp_server" && connection.relationship_kind === "connects_to") && <p>Configured MCP destinations do not prove network traffic or credential use. Review the supporting evidence for each connection.</p>}{Object.entries(groups).map(([group, values]) => <div className="connection-group" key={group}><p>{pretty(group)}</p>{values.map((connection) => <ConnectionRow item={connection} key={connection.relationship_id} />)}</div>)}</section>
     <EvidenceSection items={item.evidence} />
   </>;
 }
