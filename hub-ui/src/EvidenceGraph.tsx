@@ -9,7 +9,7 @@ import {
   Network, PlugZap, Search, Server, TerminalSquare, UserRound, Workflow,
   type LucideIcon,
 } from "lucide-react";
-import { API, type SystemDetail, type SystemItem } from "./api";
+import { API, type SystemDetail, type SystemItem, type TopologyPaths } from "./api";
 import { captureAnalytics } from "./analytics";
 import { stateLabel, systemTypeLabel } from "./copy";
 import { buildGraph, countRelations, evidenceNodeDetail, evidenceNodeName, pretty, prioritizedEvidenceFacts, relative, relationshipCardLabel, relationshipExplanation, safeClass, type GraphNodeData, type LensNode } from "./features/evidence/graph-model";
@@ -124,23 +124,28 @@ export function EvidenceGraphPage({ api, revision, initialSystemId = "" }: { api
       </div>
     </aside>
     <section className="panel graph-workspace">
-      {loadingGraph ? <GraphState icon={LoaderCircle} title="Building the connection map" detail="Lens is loading connected items and supporting details." spinning /> : graphError ? <GraphState icon={AlertCircle} title="Lens could not map this item" detail={graphError} /> : detail ? <SystemEvidenceMap detail={detail} /> : null}
+      {loadingGraph ? <GraphState icon={LoaderCircle} title="Building the connection map" detail="Lens is loading connected items and supporting details." spinning /> : graphError ? <GraphState icon={AlertCircle} title="Lens could not map this item" detail={graphError} /> : detail ? <SystemEvidenceMap api={api} detail={detail} /> : null}
     </section>
   </div>;
 }
 
-function SystemEvidenceMap({ detail }: { detail: SystemDetail }) {
+function SystemEvidenceMap({ api, detail }: { api: API; detail: SystemDetail }) {
   const relationCounts = useMemo(() => countRelations(detail.connections), [detail.connections]);
   const [hiddenKinds, setHiddenKinds] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState("");
   const [showEvidence, setShowEvidence] = useState(false);
   const [selectedNode, setSelectedNode] = useState(detail.id);
+  const [pathDirection, setPathDirection] = useState<"downstream" | "upstream">("downstream");
+  const [topology, setTopology] = useState<TopologyPaths>();
+  const [topologyError, setTopologyError] = useState("");
+  const [loadingTopology, setLoadingTopology] = useState(false);
 
   useEffect(() => {
     setHiddenKinds(new Set());
     setQuery("");
     setShowEvidence(false);
     setSelectedNode(detail.id);
+    setPathDirection("downstream");
   }, [detail.id]);
 
   const model = useMemo(() => buildGraph(detail, hiddenKinds, query, showEvidence), [detail, hiddenKinds, query, showEvidence]);
@@ -148,6 +153,16 @@ function SystemEvidenceMap({ detail }: { detail: SystemDetail }) {
     if (!model.nodes.some((node) => node.id === selectedNode)) setSelectedNode(detail.id);
   }, [detail.id, model.nodes, selectedNode]);
   const selection = model.nodes.find((node) => node.id === selectedNode)?.data ?? model.nodes[0].data;
+  const selectedEntityID = selection.entityID;
+  useEffect(() => {
+    if (!selectedEntityID) { setTopology(undefined); return; }
+    let active = true;
+    setLoadingTopology(true);
+    setTopologyError("");
+    setTopology(undefined);
+    api.topologyPaths(selectedEntityID, pathDirection).then((result) => active && setTopology(result)).catch((reason) => active && setTopologyError(String(reason))).finally(() => active && setLoadingTopology(false));
+    return () => { active = false; };
+  }, [api, selectedEntityID, pathDirection, detail.id]);
   const graphKey = `${detail.id}:${[...hiddenKinds].sort().join(",")}:${query}:${showEvidence}`;
 
   const toggleKind = (kind: string) => setHiddenKinds((current) => {
@@ -158,7 +173,7 @@ function SystemEvidenceMap({ detail }: { detail: SystemDetail }) {
 
   return <div className="system-evidence-map">
     <header className="graph-titlebar">
-      <div><span>SELECTED TOOL OR AGENT</span><h2>{detail.name}</h2><p>{systemTypeLabel(detail.system_type)} · {stateLabel(detail.state)} · {detail.target_name ?? "Location unresolved"}</p></div>
+      <div><span>SELECTED TOOL OR AGENT</span><h2>{detail.name}</h2><p>{systemTypeLabel(detail.system_type)} · {stateLabel(detail.state)} · {detail.target_name ?? "Location unresolved"}{detail.target_partial ? " · Partial scan" : ""}</p></div>
       <div className="graph-title-facts"><GraphFact label="Connected items" value={String(detail.connections.length)} /><GraphFact label="Supporting details" value={String(detail.evidence.length)} /><GraphFact label="Network" value={pretty(detail.network_scope)} /></div>
     </header>
     <div className="graph-toolbar">
@@ -184,8 +199,8 @@ function SystemEvidenceMap({ detail }: { detail: SystemDetail }) {
           nodesDraggable={false}
           nodesConnectable={false}
           zoomOnDoubleClick={false}
-          onNodeClick={(_, node) => { if (node.data.role !== "cluster") { captureAnalytics({ name: "lens_interaction", properties: { surface: "evidence", interaction: "open", control: "evidence" } }); setSelectedNode(node.id); } }}
-          onPaneClick={() => setSelectedNode(detail.id)}
+          onNodeClick={(_, node) => { if (node.data.role !== "cluster") { captureAnalytics({ name: "lens_interaction", properties: { surface: "evidence", interaction: "open", control: "evidence" } }); setPathDirection(node.data.entityID === detail.id ? "downstream" : "upstream"); setSelectedNode(node.id); } }}
+          onPaneClick={() => { setSelectedNode(detail.id); setPathDirection("downstream"); }}
           proOptions={{ hideAttribution: true }}
           aria-label={`Evidence graph for ${detail.name}`}
         >
@@ -195,7 +210,7 @@ function SystemEvidenceMap({ detail }: { detail: SystemDetail }) {
         <div className="graph-legend"><span><ArrowDownLeft size={12} /> Connects in</span><span><ArrowUpRight size={12} /> Connects out</span><span><i className="legend-line dashed" /> Supporting detail → item</span></div>
         {(model.hiddenConnections > 0 || showEvidence && detail.evidence.length > model.visibleEvidence) && <div className="graph-truncation">Showing the closest connections · {model.hiddenConnections > 0 ? `${model.hiddenConnections} connections hidden` : ""}{model.hiddenConnections > 0 && showEvidence && detail.evidence.length > model.visibleEvidence ? " · " : ""}{showEvidence && detail.evidence.length > model.visibleEvidence ? `${detail.evidence.length - model.visibleEvidence} supporting details hidden` : ""}</div>}
       </div>
-      <GraphInspector data={selection} />
+      <GraphInspector data={selection} topology={topology} topologyError={topologyError} loadingTopology={loadingTopology} pathDirection={pathDirection} onPathDirection={setPathDirection} />
     </div>
   </div>;
 }
@@ -224,10 +239,10 @@ function GraphClusterCard({ data }: NodeProps<LensNode>) {
   </section>;
 }
 
-function GraphInspector({ data }: { data: GraphNodeData }) {
+function GraphInspector({ data, topology, topologyError, loadingTopology, pathDirection, onPathDirection }: { data: GraphNodeData; topology?: TopologyPaths; topologyError: string; loadingTopology: boolean; pathDirection: "downstream" | "upstream"; onPathDirection: (direction: "downstream" | "upstream") => void }) {
   const facts: Array<[string, string]> = [];
   if (data.role === "root" && data.system) {
-    facts.push(["System type", pretty(data.system.system_type)], ["State", pretty(data.system.state)], ["Target", data.system.target_name ?? "Unresolved"], ["Surface", pretty(data.system.surface)], ["Network", pretty(data.system.network_scope)], ["Attribution", data.system.attributed ? "Established" : "Not established"]);
+    facts.push(["System type", pretty(data.system.system_type)], ["State", pretty(data.system.state)], ["Target", data.system.target_name ?? "Unresolved"], ["Coverage", data.system.target_partial ? "Partial scan" : "No partial scan reported"], ["Surface", pretty(data.system.surface)], ["Network", pretty(data.system.network_scope)], ["Attribution", data.system.attributed ? "Established" : "Not established"]);
   } else if (data.role === "evidence" && data.evidence) {
     facts.push(
       ["Exact resource", data.evidence.subject?.name ?? "Not resolved"],
@@ -261,6 +276,18 @@ function GraphInspector({ data }: { data: GraphNodeData }) {
     <div className="graph-inspector-title"><KindIcon kind={data.kind} /><span><small>{data.role === "root" ? "AI TOOL OR AGENT" : data.role === "evidence" ? "SUPPORTING DETAIL" : "CONNECTED ITEM"}</small><b>{data.name}</b></span></div>
     {relationshipContext && <div className="graph-relationship-summary"><span>WHY THIS IS LINKED</span><p>{relationshipContext}</p></div>}
     <div className="graph-inspector-facts">{facts.slice(0, 8).map(([label, value], index) => <div key={`${label}:${index}`}><span>{label}</span><b>{value}</b></div>)}</div>
+    {data.entityID && <section className="graph-topology-paths" aria-label="Evidence-backed reachability paths">
+      <span>FOLLOW THE EVIDENCE</span>
+      <div className="graph-path-direction"><button className={pathDirection === "downstream" ? "active" : ""} onClick={() => onPathDirection("downstream")} aria-pressed={pathDirection === "downstream"}>Downstream paths</button><button className={pathDirection === "upstream" ? "active" : ""} onClick={() => onPathDirection("upstream")} aria-pressed={pathDirection === "upstream"}>What leads here?</button></div>
+      {loadingTopology ? <p>Tracing current relationships…</p> : topologyError ? <p>{topologyError}</p> : !topology?.paths.length ? <p>No current evidence-backed paths in this direction.</p> : <>
+        {topology.paths.slice().sort((left, right) => right.edges.length - left.edges.length).slice(0, 8).map((path) => <div className="graph-path" key={path.edges.map((edge) => edge.id).join(":")}>
+          <b>{path.nodes.map((node) => node.name).join(pathDirection === "downstream" ? " → " : " ← ")}</b>
+          <small>{path.edges.map((edge) => `${pretty(edge.kind)} · ${pretty(edge.confidence)} · ${edge.observation_states.map(pretty).join("/")} · ${pretty(edge.evidence.method)}`).join("  /  ")}</small>
+        </div>)}
+        {topology.paths.length > 8 && <p>Showing 8 of {topology.paths.length} bounded paths.</p>}
+        <p>These are evidence-backed links, not proof of effective access.</p>
+      </>}
+    </section>}
     {supportingEvidence.length ? <div className="graph-supporting-evidence"><span>SUPPORTING DETAILS</span>{supportingEvidence.slice(0, 4).map((finding) => <div key={`${finding.source_id}:${finding.id}`}><b>{evidenceNodeName(finding)}</b><small>{evidenceNodeDetail(finding)}</small></div>)}{supportingEvidence.length > 4 && <small>+{supportingEvidence.length - 4} more details</small>}</div> : null}
     {evidence?.summary && <p className="graph-evidence-summary">{evidence.summary}</p>}
     {location && <div className="graph-locator"><span>WHERE LENS FOUND IT</span><code title={location}>{location}</code></div>}

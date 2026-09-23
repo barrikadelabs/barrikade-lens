@@ -65,6 +65,7 @@ export type SystemItem = {
   target_id?: string;
   target_name?: string;
   target_freshness?: "fresh" | "stale" | "never" | "unknown";
+  target_partial?: boolean;
   surface: string;
   system_type: SystemType;
   product_id?: string;
@@ -129,6 +130,13 @@ export type Connection = {
 };
 
 export type SystemDetail = SystemItem & { connections: Connection[]; evidence: Evidence[] };
+
+export type TopologyPath = {
+  nodes: Array<{ id: string; kind: string; name: string }>;
+  edges: Array<{ id: string; kind: string; confidence: Confidence; surfaces: string[]; observation_states: string[]; observed_at: string; evidence: { evidence_id: string; source_id: string; method: string; observed_at: string } }>;
+};
+
+export type TopologyPaths = { entity_id: string; direction: "downstream" | "upstream"; paths: TopologyPath[]; limit: number; max_hops: number };
 
 export type ProductInstallation = {
   id: string;

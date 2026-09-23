@@ -231,4 +231,11 @@ jobs:
           principal='system:serviceaccount:lens-system:discovery-lens-k8s'
           test "$(kubectl auth can-i get configmaps --all-namespaces --as="$principal")" = yes
           test "$(kubectl auth can-i get secrets --all-namespaces --as="$principal")" = no
+          test "$(kubectl auth can-i list secrets --all-namespaces --as="$principal")" = no
           test "$(kubectl auth can-i create pods/exec --all-namespaces --as="$principal")" = no
+          test "$(kubectl auth can-i update deployments --all-namespaces --as="$principal")" = no
+          helm upgrade discovery deploy/helm/lens-k8s --namespace lens-system --set persistence.enabled=false
+          helm uninstall discovery --namespace lens-system
+          test -z "$(kubectl get clusterrole discovery-lens-k8s --ignore-not-found -o name)"
+          test -z "$(kubectl get clusterrolebinding discovery-lens-k8s --ignore-not-found -o name)"
+          test "$(kubectl auth can-i get configmaps --all-namespaces --as="$principal")" = no

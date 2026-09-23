@@ -225,6 +225,7 @@ func (s *Server) routes() {
 	authenticated.HandleFunc("GET /v1/products", s.listProducts)
 	authenticated.HandleFunc("GET /v1/systems", s.listSystems)
 	authenticated.HandleFunc("GET /v1/systems/{id}", s.getSystem)
+	authenticated.HandleFunc("GET /v1/topology/paths", s.topologyPaths)
 	authenticated.HandleFunc("GET /v1/targets", s.listTargets)
 	authenticated.HandleFunc("GET /v1/targets/{id}", s.getTarget)
 	authenticated.HandleFunc("GET /v1/device-fleet", s.listDeviceFleet)

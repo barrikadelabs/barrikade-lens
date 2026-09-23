@@ -1,6 +1,9 @@
 # Endpoint beta operations
 
-The endpoint beta is an open-signup release for CISOs who need a useful first result without a deployment project. Endpoint collection is the only enabled connector. The four primary product sections are Overview, Findings, Inventory, and Connections.
+The endpoint beta is an open-signup release for CISOs who need a useful first
+result without a deployment project. Endpoint collection is the only enabled
+connector. The four primary product sections are Overview, Findings, AI
+inventory, and Coverage.
 
 ## Clerk tenant
 

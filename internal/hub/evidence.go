@@ -25,22 +25,15 @@ type evidenceSubject struct {
 }
 
 func (s *Server) evidenceForEntity(ctx context.Context, organizationID, entityID, entityName string, attributes map[string]any, limit int) []map[string]any {
-	rows, err := s.db(ctx).Query(ctx, `WITH observations AS (
-		SELECT eo.evidence_id,eo.source_id,eo.detector_id,eo.detector_version,eo.method,eo.family,eo.specificity,
-			eo.locator,eo.content_hash,eo.entity_ids,max(eo.observed_at) observed_at,count(*) observations,
-			row_number() OVER (PARTITION BY eo.source_id,eo.detector_id,eo.method,eo.family,COALESCE(eo.locator,'') ORDER BY max(eo.observed_at) DESC,eo.evidence_id DESC) version_rank
-		FROM evidence_observations eo
-		WHERE eo.organization_id=$1 AND eo.entity_ids @> ARRAY[$2]::text[]
-		GROUP BY eo.evidence_id,eo.source_id,eo.detector_id,eo.detector_version,eo.method,eo.family,eo.specificity,eo.locator,eo.content_hash,eo.entity_ids
-	)
+	rows, err := s.db(ctx).Query(ctx, `
 	SELECT o.evidence_id,o.source_id,o.detector_id,o.detector_version,o.method,o.family,o.specificity,o.locator,o.content_hash,o.observed_at,o.observations,
 		COALESCE(s.name,''),COALESCE(s.source_type,''),COALESCE(s.target_id,''),COALESCE(t.name,''),COALESCE(t.target_type,''),t.last_seen_at,
 		COALESCE((SELECT jsonb_agg(jsonb_build_object('id',subject.id,'kind',subject.kind,'name',subject.name,'confidence',subject.confidence,'current',subject.current,'attributes',subject.attributes) ORDER BY subject.kind,subject.name,subject.id)
 			FROM (SELECT e.id,e.kind,e.name,e.confidence,e.current,e.attributes FROM entities e WHERE e.organization_id=$1 AND e.id=ANY(o.entity_ids) ORDER BY e.kind,e.name,e.id LIMIT 25) subject),'[]'::jsonb)
-	FROM observations o
+	FROM current_evidence_observations o
 	LEFT JOIN sources s ON s.organization_id=$1 AND s.id=o.source_id
 	LEFT JOIN discovery_targets t ON t.organization_id=$1 AND t.id=s.target_id
-	WHERE o.version_rank=1
+	WHERE o.organization_id=$1 AND o.entity_ids @> ARRAY[$2]::text[] AND o.expires_at>=now()
 	ORDER BY o.observed_at DESC,o.evidence_id DESC LIMIT $3`, organizationID, entityID, limit)
 	if err != nil {
 		return []map[string]any{}

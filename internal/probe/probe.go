@@ -27,6 +27,7 @@ type Result struct {
 	Host        string
 	ContentHash string
 	Attributes  map[string]any
+	Tools       []string
 }
 
 func Handshake(ctx context.Context, raw string, config Config) (Result, error) {
@@ -112,16 +113,86 @@ func Handshake(ctx context.Context, raw string, config Config) (Result, error) {
 }
 
 func Apply(snapshot *discovery.Snapshot, result Result) {
-	evidenceID := discovery.EvidenceID(snapshot.SourceID, "active.metadata", "api_document", result.Endpoint, result.ContentHash)
-	id := discovery.StableID(snapshot.OrganizationID, result.Kind, "active:"+result.Endpoint)
-	for _, entity := range snapshot.Entities {
-		if entity.ID == id {
-			return
+	method, family := "api_document", "active_handshake"
+	if result.Kind == discovery.KindMCPServer {
+		method, family = "mcp_metadata", "mcp_capability"
+	}
+	evidenceID := discovery.EvidenceID(snapshot.SourceID, "active.metadata", method, result.Endpoint, result.ContentHash)
+	canonical := "active:" + result.Endpoint
+	if result.Kind == discovery.KindMCPServer {
+		canonical = "mcp-endpoint:" + result.Endpoint
+	}
+	id := discovery.StableID(snapshot.OrganizationID, result.Kind, canonical)
+	evidenceFound := false
+	for _, item := range snapshot.Evidence {
+		if item.ID == evidenceID {
+			evidenceFound = true
+			break
 		}
 	}
-	snapshot.Evidence = append(snapshot.Evidence, discovery.Evidence{ID: evidenceID, DetectorID: "active.metadata", DetectorVersion: "1", Method: "api_document", Family: "active_handshake", Specificity: "high", Locator: result.Endpoint, ContentHash: result.ContentHash, ObservedAt: snapshot.ObservedAt})
-	snapshot.Entities = append(snapshot.Entities, discovery.Entity{ID: id, Kind: result.Kind, CanonicalKey: "active:" + result.Endpoint, Name: result.Name, Attributes: result.Attributes, Confidence: discovery.ConfidenceConfirmed, EvidenceRefs: []string{evidenceID}, Provenance: []string{"active-metadata-handshake"}})
+	if !evidenceFound {
+		snapshot.Evidence = append(snapshot.Evidence, discovery.Evidence{ID: evidenceID, DetectorID: "active.metadata", DetectorVersion: "1", Method: method, Family: family, Specificity: "high", Locator: result.Endpoint, ContentHash: result.ContentHash, ObservedAt: snapshot.ObservedAt})
+	}
+	found := false
+	for index := range snapshot.Entities {
+		if snapshot.Entities[index].ID == id {
+			snapshot.Entities[index].EvidenceRefs = appendUnique(snapshot.Entities[index].EvidenceRefs, evidenceID)
+			snapshot.Entities[index].Confidence = discovery.ConfidenceConfirmed
+			if snapshot.Entities[index].Attributes == nil {
+				snapshot.Entities[index].Attributes = map[string]any{}
+			}
+			for key, value := range result.Attributes {
+				snapshot.Entities[index].Attributes[key] = value
+			}
+			found = true
+			break
+		}
+	}
+	if !found {
+		snapshot.Entities = append(snapshot.Entities, discovery.Entity{ID: id, Kind: result.Kind, CanonicalKey: canonical, Name: result.Name, Attributes: result.Attributes, Confidence: discovery.ConfidenceConfirmed, EvidenceRefs: []string{evidenceID}, Provenance: []string{"active-metadata-handshake"}})
+	}
+	if result.Kind == discovery.KindMCPServer {
+		for _, name := range result.Tools {
+			toolCanonical := canonical + ":tool:" + strings.ToLower(name)
+			toolID := discovery.StableID(snapshot.OrganizationID, discovery.KindTool, toolCanonical)
+			toolFound := false
+			for index := range snapshot.Entities {
+				if snapshot.Entities[index].ID == toolID {
+					snapshot.Entities[index].EvidenceRefs = appendUnique(snapshot.Entities[index].EvidenceRefs, evidenceID)
+					snapshot.Entities[index].Confidence = discovery.ConfidenceConfirmed
+					toolFound = true
+					break
+				}
+			}
+			if !toolFound {
+				snapshot.Entities = append(snapshot.Entities, discovery.Entity{ID: toolID, Kind: discovery.KindTool, CanonicalKey: toolCanonical, Name: name, Attributes: map[string]any{"capability_state": "observed", "source_surface": string(snapshot.SourceType)}, Confidence: discovery.ConfidenceConfirmed, EvidenceRefs: []string{evidenceID}})
+			}
+			relationID := discovery.RelationshipID(snapshot.OrganizationID, discovery.RelationshipProvides, id, toolID)
+			relationFound := false
+			for index := range snapshot.Relationships {
+				if snapshot.Relationships[index].ID == relationID {
+					snapshot.Relationships[index].EvidenceRefs = appendUnique(snapshot.Relationships[index].EvidenceRefs, evidenceID)
+					snapshot.Relationships[index].Confidence = discovery.ConfidenceConfirmed
+					snapshot.Relationships[index].ObservationState = discovery.ObservationObserved
+					relationFound = true
+					break
+				}
+			}
+			if !relationFound {
+				snapshot.Relationships = append(snapshot.Relationships, discovery.Relationship{ID: relationID, Kind: discovery.RelationshipProvides, From: id, To: toolID, Attributes: map[string]any{"capability_state": "observed"}, Confidence: discovery.ConfidenceConfirmed, EvidenceRefs: []string{evidenceID}, Surface: snapshot.SourceType, ObservedAt: snapshot.ObservedAt, ObservationState: discovery.ObservationObserved})
+			}
+		}
+	}
 	snapshot.Normalize()
+}
+
+func appendUnique(values []string, value string) []string {
+	for _, current := range values {
+		if current == value {
+			return values
+		}
+	}
+	return append(values, value)
 }
 
 func clientFor(ctx context.Context, target *url.URL, timeout time.Duration) (*http.Client, error) {

@@ -493,7 +493,8 @@ func (s *Server) listSystems(w http.ResponseWriter, r *http.Request) {
 	}
 	query := `SELECT e.id,e.kind,e.name,e.attributes,p.target_id,p.surface,p.system_type,p.product_id,p.product_category,p.discovery_state,p.network_scope,p.attributed,p.confidence,p.first_seen_at,p.last_seen_at,t.name,t.target_type,t.last_seen_at,
 		COALESCE(x.critical,0),COALESCE(x.high,0),COALESCE(x.medium,0),COALESCE(x.low,0),c.owner_name,c.owner_type,
-		(p.attributed OR NULLIF(btrim(COALESCE(c.owner_name,'')),'') IS NOT NULL)
+		(p.attributed OR NULLIF(btrim(COALESCE(c.owner_name,'')),'') IS NOT NULL),
+		EXISTS(SELECT 1 FROM sources src WHERE src.organization_id=p.organization_id AND src.target_id=p.target_id AND src.revoked_at IS NULL AND src.latest_partial)
 		FROM entity_posture p JOIN entities e ON e.organization_id=p.organization_id AND e.id=p.entity_id
 		LEFT JOIN discovery_targets t ON t.organization_id=p.organization_id AND t.id=p.target_id
 		LEFT JOIN LATERAL (
@@ -588,10 +589,10 @@ func (s *Server) listSystems(w http.ResponseWriter, r *http.Request) {
 		var attributes []byte
 		var targetID, systemType, productID, productCategory, targetName, targetType, ownerName, ownerType *string
 		var targetLastSeen *time.Time
-		var attributed, effectivelyOwned bool
+		var attributed, effectivelyOwned, targetPartial bool
 		var critical, high, medium, low int
 		var firstSeen, lastSeen time.Time
-		if err := rows.Scan(&id, &kind, &name, &attributes, &targetID, &surface, &systemType, &productID, &productCategory, &discoveryState, &networkScope, &attributed, &confidence, &firstSeen, &lastSeen, &targetName, &targetType, &targetLastSeen, &critical, &high, &medium, &low, &ownerName, &ownerType, &effectivelyOwned); err != nil {
+		if err := rows.Scan(&id, &kind, &name, &attributes, &targetID, &surface, &systemType, &productID, &productCategory, &discoveryState, &networkScope, &attributed, &confidence, &firstSeen, &lastSeen, &targetName, &targetType, &targetLastSeen, &critical, &high, &medium, &low, &ownerName, &ownerType, &effectivelyOwned, &targetPartial); err != nil {
 			writeError(w, 500, "database_error", "Could not read systems")
 			return
 		}
@@ -605,7 +606,7 @@ func (s *Server) listSystems(w http.ResponseWriter, r *http.Request) {
 		} else if ownerName != nil && strings.TrimSpace(*ownerName) != "" {
 			ownershipSource = "operator"
 		}
-		item := map[string]any{"id": id, "kind": kind, "name": name, "attributes": jsonObject(attributes), "target_id": targetID, "target_name": targetName, "target_freshness": targetFreshness, "surface": surface, "system_type": systemType, "product_id": productID, "product_category": productCategory, "state": discoveryState, "network_scope": networkScope, "attributed": attributed, "effective_ownership": map[string]any{"owned": effectivelyOwned, "basis": ownershipSource, "owner_name": ownerName, "owner_type": ownerType}, "confidence": confidence, "first_seen_at": firstSeen, "last_seen_at": lastSeen}
+		item := map[string]any{"id": id, "kind": kind, "name": name, "attributes": jsonObject(attributes), "target_id": targetID, "target_name": targetName, "target_freshness": targetFreshness, "target_partial": targetPartial, "surface": surface, "system_type": systemType, "product_id": productID, "product_category": productCategory, "state": discoveryState, "network_scope": networkScope, "attributed": attributed, "effective_ownership": map[string]any{"owned": effectivelyOwned, "basis": ownershipSource, "owner_name": ownerName, "owner_type": ownerType}, "confidence": confidence, "first_seen_at": firstSeen, "last_seen_at": lastSeen}
 		if s.config.ExposureEnabled {
 			counts := map[string]int{"critical": critical, "high": high, "medium": medium, "low": low}
 			item["exposure_summary"] = map[string]any{"counts": counts, "total": critical + high + medium + low}
@@ -630,16 +631,17 @@ func (s *Server) getSystem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := r.PathValue("id")
-	row := s.db(r.Context()).QueryRow(r.Context(), `SELECT e.id,e.kind,e.name,e.attributes,p.target_id,p.surface,p.system_type,p.product_id,p.product_category,p.discovery_state,p.network_scope,p.attributed,p.confidence,p.first_seen_at,p.last_seen_at,t.name,t.target_type,t.last_seen_at
+	row := s.db(r.Context()).QueryRow(r.Context(), `SELECT e.id,e.kind,e.name,e.attributes,p.target_id,p.surface,p.system_type,p.product_id,p.product_category,p.discovery_state,p.network_scope,p.attributed,p.confidence,p.first_seen_at,p.last_seen_at,t.name,t.target_type,t.last_seen_at,
+		EXISTS(SELECT 1 FROM sources src WHERE src.organization_id=p.organization_id AND src.target_id=p.target_id AND src.revoked_at IS NULL AND src.latest_partial)
 		FROM entity_posture p JOIN entities e ON e.organization_id=p.organization_id AND e.id=p.entity_id LEFT JOIN discovery_targets t ON t.organization_id=p.organization_id AND t.id=p.target_id
 		WHERE p.organization_id=$1 AND p.entity_id=$2 AND p.system_role='system'`, principal.OrganizationID, id)
 	var entityID, kind, name, surface, state, network, confidence string
 	var attributes []byte
 	var targetID, systemType, productID, productCategory, targetName, targetType *string
 	var targetLastSeen *time.Time
-	var attributed bool
+	var attributed, targetPartial bool
 	var firstSeen, lastSeen time.Time
-	err = row.Scan(&entityID, &kind, &name, &attributes, &targetID, &surface, &systemType, &productID, &productCategory, &state, &network, &attributed, &confidence, &firstSeen, &lastSeen, &targetName, &targetType, &targetLastSeen)
+	err = row.Scan(&entityID, &kind, &name, &attributes, &targetID, &surface, &systemType, &productID, &productCategory, &state, &network, &attributed, &confidence, &firstSeen, &lastSeen, &targetName, &targetType, &targetLastSeen, &targetPartial)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, 404, "not_found", "System not found")
 		return
@@ -652,7 +654,7 @@ func (s *Server) getSystem(w http.ResponseWriter, r *http.Request) {
 	if targetType != nil {
 		targetFreshness = freshnessState(*targetType, targetLastSeen, time.Now().UTC())
 	}
-	result := map[string]any{"id": entityID, "kind": kind, "name": name, "attributes": jsonObject(attributes), "target_id": targetID, "target_name": targetName, "target_freshness": targetFreshness, "surface": surface, "system_type": systemType, "product_id": productID, "product_category": productCategory, "state": state, "network_scope": network, "attributed": attributed, "confidence": confidence, "first_seen_at": firstSeen, "last_seen_at": lastSeen}
+	result := map[string]any{"id": entityID, "kind": kind, "name": name, "attributes": jsonObject(attributes), "target_id": targetID, "target_name": targetName, "target_freshness": targetFreshness, "target_partial": targetPartial, "surface": surface, "system_type": systemType, "product_id": productID, "product_category": productCategory, "state": state, "network_scope": network, "attributed": attributed, "confidence": confidence, "first_seen_at": firstSeen, "last_seen_at": lastSeen}
 	contextValue, _ := loadEntityContext(r.Context(), s.db(r.Context()), principal.OrganizationID, id)
 	ownershipSource := "none"
 	if attributed {

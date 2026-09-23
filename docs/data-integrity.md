@@ -1,6 +1,9 @@
 # Data integrity and executive posture
 
-Lens JSON is the canonical evidence graph. The Hub's Overview, Systems, Coverage, and Changes views are indexed projections built from that graph; they are not a second source of truth and they do not assign risk or recommend action.
+Lens JSON is the canonical evidence graph. The Hub's Overview, AI inventory,
+Coverage, and Changes views are indexed projections built from that graph; they
+are not a second source of truth and they do not assign risk or recommend
+action.
 
 ## Identity
 
@@ -28,7 +31,12 @@ Source-specific facts remain on source relationships where appropriate. Examples
 
 Root-system counts include explicit autonomous agents, agent-capable tools, and model runtimes. Supporting development runtimes, host applications, cached models, and technical artifacts remain available in Technical inventory but do not inflate the executive footprint.
 
-Overview, Systems, Evidence graph, and the default Technical inventory view use currently reporting targets. Stale target observations are retained rather than merged by hostname or silently deleted; an explicit Reporting filter and Coverage diagnostics expose them. This prevents a replaced endpoint identity from doubling the apparent active inventory while preserving the identity record for investigation.
+Overview, AI inventory, How Lens knows, and the default technical inventory view
+use currently reporting targets. Stale target observations are retained rather
+than merged by hostname or silently deleted; an explicit Reporting filter and
+Coverage diagnostics expose them. This prevents a replaced endpoint identity
+from doubling the apparent active inventory while preserving the identity
+record for investigation.
 
 The strongest factual state is selected in this order: running, deployed, defined, configured, installed, residual, cached, observed. A root system's network scope also incorporates directly connected service bindings: loopback, endpoint network binding, explicitly external Kubernetes service/ingress, none, or unknown.
 

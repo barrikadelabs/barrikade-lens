@@ -194,17 +194,28 @@ test("a routed stale installation still opens How Lens knows", async ({ page }) 
   await authenticateDevelopment(page);
   const system = {
     id: "system-stale", kind: "runtime", name: "Older AI tool", attributes: {}, target_id: "target-1", target_name: "Laptop",
-    target_freshness: "stale", surface: "endpoint", system_type: "agent_tool", state: "installed", network_scope: "none",
+    target_freshness: "stale", target_partial: true, surface: "endpoint", system_type: "agent_tool", state: "installed", network_scope: "none",
     attributed: false, confidence: "possible", first_seen_at: new Date().toISOString(), last_seen_at: new Date().toISOString(),
     connections: [], evidence: [],
   };
   await page.route("**/v1/systems/system-stale", async (route) => route.fulfill({ json: system }));
   await page.route("**/v1/systems?*", async (route) => route.fulfill({ json: { items: [], limit: 100 } }));
+  await page.route("**/v1/topology/paths?*", async (route) => {
+    const direction = new URL(route.request().url()).searchParams.get("direction");
+    return route.fulfill({ json: { entity_id: "system-stale", direction, limit: 80, max_hops: 3, paths: direction === "downstream" ? [{
+      nodes: [{ id: "system-stale", kind: "runtime", name: "Older AI tool" }, { id: "mcp-1", kind: "mcp_server", name: "CRM MCP" }],
+      edges: [{ id: "edge-1", kind: "connects_to", confidence: "confirmed", surfaces: ["endpoint"], observation_states: ["declared"], observed_at: new Date().toISOString(), evidence: { evidence_id: "evidence-1", source_id: "source-1", method: "config_shape", observed_at: new Date().toISOString() } }],
+    }] : [] } });
+  });
 
   await page.goto("/systems/system-stale/evidence");
   await expect(page.getByRole("heading", { name: "Older AI tool" })).toBeVisible();
   await expect(page.getByRole("button", { name: /Older AI tool/ })).toBeVisible();
   await expect(page.getByText("No AI tools or agents found")).toHaveCount(0);
+  await expect(page.getByText("Partial scan", { exact: true })).toBeVisible();
+  await expect(page.getByText("Older AI tool → CRM MCP")).toBeVisible();
+  await page.getByRole("button", { name: "What leads here?" }).click();
+  await expect(page.getByText("No current evidence-backed paths in this direction.")).toBeVisible();
 });
 
 test("long installation labels stay inside their inventory columns", async ({ page }) => {

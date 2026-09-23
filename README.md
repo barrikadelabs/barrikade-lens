@@ -1,8 +1,11 @@
-# Barrikade Lens v2
+# Barrikade Lens
 
 Barrikade Lens is the open-source discovery and exposure plane for autonomous agents. It finds agents, runtimes, frameworks, MCP servers, skills, models, APIs, repositories, endpoints, and deployments, then explains every finding with sanitized evidence and confidence.
 
 Lens discovers and assesses exposure. It does not verify effective authorization, invoke tools, change credentials, remediate, enforce policy, register, approve, block, or assign a composite risk score.
+
+Use the [documentation index](docs/README.md) to find deployment, operations,
+architecture, privacy, and extension guides.
 
 ## Run a local scan
 
@@ -37,6 +40,7 @@ Active handshakes are off by default. An explicitly allowed metadata-only probe 
 
 ```sh
 barrikade-lens scan --probe-url http://127.0.0.1:11434/v1/models --allow-probe-host 127.0.0.1
+barrikade-lens scan --probe-mcp-url https://mcp.example.com/mcp --allow-probe-host mcp.example.com
 ```
 
 Probes reject credential-bearing URLs and metadata targets, use strict limits, and never invoke a tool.
@@ -55,9 +59,12 @@ Open `http://localhost:8080` and use the quickstart token `lens-local-admin`. Th
 
 The Barrikade Azure pilot is available at [lens.barrikade.ai](https://lens.barrikade.ai) and deployed through the CI-gated [Azure deployment workflow](docs/azure-deployment.md).
 
-For the Barrikade pilot, the compose stack opens the `org_local` tenant used by the managed collector. The [live-device customer-story demo](docs/demo-live-device.md) shows how to present one real finding and its evidence without loading sample inventory or implying that Lens makes approval decisions.
+The compose stack opens the development-only `org_local` tenant used by its
+managed collector.
 
-From **Connections**, choose **Employee devices**, then choose a one-shot Quick Scan or Continuous Monitoring. Quick Scan uploads once and exits without administrator access or a background service:
+From **Coverage**, choose **Employee devices**, then choose a one-shot Quick
+Scan or Continuous Monitoring. Quick Scan uploads once and exits without
+administrator access or a background service:
 
 ```bash
 npx --yes barrikade-lens scan --enroll ABCDE-FGHIJ
@@ -73,7 +80,13 @@ npx --yes barrikade-lens@2.0.6 enroll ABCDE-FGHIJ --hub https://lens.barrikade.a
 
 The command exchanges the single-use code, stores a revocable installation credential privately, installs a stable background collector, and starts reporting. The installation credential does not expire on a timer; Lens uses it only to obtain short-lived access tokens, and disconnecting or removing the device revokes it immediately. Run installation with administrator privileges for system-wide macOS or Windows coverage. Node.js 18 or newer is required only for the npm launcher; managed fleets use signed native pkg, MSI, deb, or rpm packages with no Node.js prerequisite. A CISO can instead create a revocable 24-hour IT handoff. The recipient selects a platform before Lens generates a 15-minute command, and enrollment permanently closes the handoff.
 
-The endpoint beta keeps **Overview**, **Findings**, **Inventory**, and **Connections** in primary navigation. Overview separates known systems from currently reporting systems, retains stale findings with their age, and links every executive metric to its exact filtered destination. AWS, Azure, GCP, GitHub, and Kubernetes connectors remain disabled until their deployment gates pass. See the [endpoint beta operations guide](docs/endpoint-beta-operations.md) for Clerk settings, flags, edge controls, acceptance tests, and rollout order.
+The endpoint beta keeps **Overview**, **Findings**, **AI inventory**, and
+**Coverage** in primary navigation. Overview separates known systems from
+currently reporting systems, retains stale findings with their age, and links
+every executive metric to its exact filtered destination. AWS, Azure, GCP,
+GitHub, and Kubernetes connectors remain disabled until their deployment gates
+pass. See the [endpoint beta operations guide](docs/endpoint-beta-operations.md)
+for Clerk settings, flags, edge controls, acceptance tests, and rollout order.
 
 Managed endpoint discovery performs an initial full scan, watches only known agent/configuration/skill roots, debounces relevant filesystem changes, reconciles processes and listeners every 15 minutes, and runs a jittered daily full scan. It does not install runtime hooks or capture prompts, tool calls, or commands.
 
@@ -123,7 +136,11 @@ flowchart LR
 
 Lens accepts useful organizational identity—hostnames, OS users, repository/workload names, relative repository paths, and sanitized endpoint hosts—but rejects private content. Absolute paths become organization-salted hashes. URLs lose userinfo, query strings, and fragments. Configuration bodies, prompts, environment values, credentials, secret values, and full command arguments are forbidden by validation and property tests.
 
-Read [privacy and evidence](docs/privacy.md), [managed analytics](docs/posthog-analytics.md), [privacy operations](docs/privacy-operations.md), [data integrity and executive posture](docs/data-integrity.md), [architecture](docs/architecture.md), [Kubernetes discovery operations](docs/kubernetes-discovery.md), and the [threat model](docs/threat-model.md) before extending a detector.
+Read [privacy and evidence](docs/privacy.md), [data integrity and executive
+posture](docs/data-integrity.md), [architecture](docs/architecture.md), and the
+[threat model](docs/threat-model.md) before extending a detector. The
+[documentation index](docs/README.md) lists the deployment, operations, and
+managed-service guides.
 
 Detector contributors should also read [detector packs and detection-quality rules](docs/detector-packs.md). Lens favors validated open formats and independent evidence over filename or product-name guesses: agent instructions are not agents, framework imports do not manufacture agents, supporting runtimes stay separate, and malformed descriptors are excluded from inventory.
 
@@ -150,7 +167,10 @@ npm ci --ignore-scripts
 npm run install:local
 ```
 
-This stages the binary for the current OS and architecture, creates the local npm executable, and links `barrikade-lens` into npm's global bin directory. Afterward, both `npx barrikade-lens` and `barrikade-lens` run the checkout. Registry users do not need this step after the v2 platform packages and launcher are published.
+This stages the binary for the current OS and architecture, creates the local
+npm executable, and links `barrikade-lens` into npm's global bin directory.
+Afterward, both `npx barrikade-lens` and `barrikade-lens` run the checkout.
+Registry users do not need this source-checkout step.
 
 Weekly and manually triggered scale CI enforces a two-second inventory-query gate at one million current entities and benchmarks the core graph investigation paths; see the [scale testing runbook](docs/scale-testing.md). Signed artifact requirements and release secrets are described in [release integrity](docs/releasing.md).
 
