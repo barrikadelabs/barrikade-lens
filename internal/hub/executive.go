@@ -429,7 +429,7 @@ func (s *Server) listProducts(w http.ResponseWriter, r *http.Request) {
 		} else {
 			product.StaleCount++
 		}
-		if state == "running" {
+		if state == "running" && (freshness == "fresh" || targetType == nil) {
 			product.RunningCount++
 		}
 		product.InstallationCount++

@@ -72,7 +72,7 @@ export const changeCategoryLabels: Record<string, string> = {
 
 export const changeSummaryLabels: Record<string, string> = {
   "Attribution evidence added": "Owner information added",
-  "Attribution evidence removed": "Owner information removed",
+  "Attribution evidence removed": "Attribution evidence no longer observed",
   "Capability connection added": "Connection added",
   "Capability connection removed": "Connection removed",
   "Deployment link added": "Installation link added",
@@ -111,6 +111,9 @@ export function plainLabel(value: string): string {
 
 export function systemTypeLabel(value: string): string { return systemTypeLabels[value] ?? plainLabel(value); }
 export function stateLabel(value: string): string { return stateLabels[value] ?? plainLabel(value); }
+export function observedStateLabel(value: string, freshness?: string): string {
+  return value === "running" && freshness === "stale" ? "Running when last checked" : stateLabel(value);
+}
 export function confidenceLabel(value: string): string { return confidenceLabels[value] ?? plainLabel(value); }
 export function freshnessLabel(value: string): string { return freshnessLabels[value] ?? plainLabel(value); }
 export function locationTypeLabel(value: string): string { return locationTypeLabels[value] ?? plainLabel(value); }

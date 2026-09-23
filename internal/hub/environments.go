@@ -767,6 +767,9 @@ func (s *Server) disconnectEnvironment(w http.ResponseWriter, r *http.Request) {
 	if err == nil && targetID != nil {
 		_, err = tx.Exec(r.Context(), `UPDATE discovery_targets SET current=false WHERE organization_id=$1 AND id=$2`, principal.OrganizationID, *targetID)
 	}
+	if err == nil && sourceID != nil {
+		err = enqueueExposureEvaluation(r.Context(), tx, principal.OrganizationID)
+	}
 	if err == nil {
 		_, err = tx.Exec(r.Context(), `INSERT INTO workspace_audit_events(id,organization_id,actor_id,event_type,target_type,target_id,metadata) VALUES($1,$2,$3,'environment.disconnected','environment',$4,$5)`, uuid.New(), principal.OrganizationID, principal.Subject, environmentID.String(), jsonBytes(map[string]any{"provider": provider}))
 	}

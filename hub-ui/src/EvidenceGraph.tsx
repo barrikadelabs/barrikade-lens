@@ -11,7 +11,7 @@ import {
 } from "lucide-react";
 import { API, type SystemDetail, type SystemItem, type TopologyPaths } from "./api";
 import { captureAnalytics } from "./analytics";
-import { stateLabel, systemTypeLabel } from "./copy";
+import { observedStateLabel, systemTypeLabel } from "./copy";
 import { buildGraph, countRelations, evidenceNodeDetail, evidenceNodeName, pretty, prioritizedEvidenceFacts, relative, relationshipCardLabel, relationshipExplanation, safeClass, type GraphNodeData, type LensNode } from "./features/evidence/graph-model";
 
 const nodeTypes = { lens: LensNodeCard, cluster: GraphClusterCard };
@@ -117,7 +117,7 @@ export function EvidenceGraphPage({ api, revision, initialSystemId = "" }: { api
       <label className="graph-system-search"><Search size={14} /><input value={systemSearch} onChange={(event) => setSystemSearch(event.target.value)} placeholder="Find an AI tool or agent" aria-label="Find an AI tool or agent" /></label>
       <div className="graph-system-list">
         {visibleSystems.map((system) => <button className={selectedSystem === system.id ? "active" : ""} key={system.id} onClick={() => { captureAnalytics({ name: "lens_interaction", properties: { surface: "evidence", interaction: "open", control: "system" } }); setSelectedSystem(system.id); }} aria-pressed={selectedSystem === system.id}>
-          <KindIcon kind={system.kind} /><span><b>{system.name}</b><small>{systemTypeLabel(system.system_type)} · {stateLabel(system.state)}</small></span><i className={`confidence-dot ${system.confidence}`} title={`${pretty(system.confidence)} confidence`} />
+          <KindIcon kind={system.kind} /><span><b>{system.name}</b><small>{systemTypeLabel(system.system_type)} · {observedStateLabel(system.state, system.target_freshness)}</small></span><i className={`confidence-dot ${system.confidence}`} title={`${pretty(system.confidence)} confidence`} />
         </button>)}
         {!visibleSystems.length && !loadingSystems && <p className="graph-list-empty">No systems match “{systemSearch}”.</p>}
         {systemError && <p className="graph-list-empty">{systemError}</p>}
@@ -173,8 +173,8 @@ function SystemEvidenceMap({ api, detail }: { api: API; detail: SystemDetail }) 
 
   return <div className="system-evidence-map">
     <header className="graph-titlebar">
-      <div><span>SELECTED TOOL OR AGENT</span><h2>{detail.name}</h2><p>{systemTypeLabel(detail.system_type)} · {stateLabel(detail.state)} · {detail.target_name ?? "Location unresolved"}{detail.target_partial ? " · Partial scan" : ""}</p></div>
-      <div className="graph-title-facts"><GraphFact label="Connected items" value={String(detail.connections.length)} /><GraphFact label="Supporting details" value={String(detail.evidence.length)} /><GraphFact label="Network" value={pretty(detail.network_scope)} /></div>
+      <div><span>SELECTED TOOL OR AGENT</span><h2>{detail.name}</h2><p>{systemTypeLabel(detail.system_type)} · {observedStateLabel(detail.state, detail.target_freshness)} · {detail.target_name ?? "Location unresolved"}{detail.target_partial ? " · Partial scan" : ""}</p></div>
+      <div className="graph-title-facts"><GraphFact label="Connected items" value={String(detail.connections.length)} /><GraphFact label="Supporting details" value={String(detail.evidence.length)} /><GraphFact label="Observed service reachability" value={detail.network_scope === "none" ? "No listener observed" : pretty(detail.network_scope)} /></div>
     </header>
     <div className="graph-toolbar">
       <label><Search size={14} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter connected items" aria-label="Filter connected items" /></label>

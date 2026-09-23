@@ -676,7 +676,12 @@ func removeGitHubSource(ctx context.Context, tx pgx.Tx, item githubRepositorySou
 	if _, err = tx.Exec(ctx, `UPDATE sources SET revoked_at=now() WHERE organization_id=$1 AND id=$2`, item.organizationID, item.sourceID); err != nil {
 		return err
 	}
-	_, _ = tx.Exec(ctx, `UPDATE discovery_targets SET current=false WHERE organization_id=$1 AND id=(SELECT target_id FROM sources WHERE organization_id=$1 AND id=$2)`, item.organizationID, item.sourceID)
+	if _, err = tx.Exec(ctx, `UPDATE discovery_targets SET current=false WHERE organization_id=$1 AND id=(SELECT target_id FROM sources WHERE organization_id=$1 AND id=$2)`, item.organizationID, item.sourceID); err != nil {
+		return err
+	}
+	if err = enqueueExposureEvaluation(ctx, tx, item.organizationID); err != nil {
+		return err
+	}
 	_, err = tx.Exec(ctx, `DELETE FROM github_repositories WHERE organization_id=$1 AND source_id=$2`, item.organizationID, item.sourceID)
 	return err
 }

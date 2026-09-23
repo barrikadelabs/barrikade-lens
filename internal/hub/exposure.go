@@ -124,7 +124,7 @@ func enqueueExposureEvaluation(ctx context.Context, tx pgx.Tx, orgID string) err
 }
 
 func recomputeOrganizationExposures(ctx context.Context, tx pgx.Tx, orgID string) error {
-	rows, err := tx.Query(ctx, `SELECT e.id,e.name,e.attributes,p.discovery_state FROM entity_posture p JOIN entities e ON e.organization_id=p.organization_id AND e.id=p.entity_id WHERE p.organization_id=$1 AND p.current=true AND p.system_role='system' AND e.current=true AND (`+freshPostureTargetSQL("p")+`)`, orgID)
+	rows, err := tx.Query(ctx, `SELECT e.id,e.name,e.attributes,p.discovery_state FROM entity_posture p JOIN entities e ON e.organization_id=p.organization_id AND e.id=p.entity_id WHERE p.organization_id=$1 AND p.current=true AND p.system_role='system' AND e.current=true`, orgID)
 	if err != nil {
 		return err
 	}

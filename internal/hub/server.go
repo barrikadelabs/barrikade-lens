@@ -930,6 +930,10 @@ func (s *Server) revokeSource(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	_, _ = tx.Exec(r.Context(), `UPDATE discovery_targets t SET current=EXISTS(SELECT 1 FROM sources s WHERE s.organization_id=t.organization_id AND s.target_id=t.id AND s.revoked_at IS NULL) WHERE organization_id=$1 AND id=(SELECT target_id FROM sources WHERE organization_id=$1 AND id=$2)`, principal.OrganizationID, r.PathValue("id"))
+	if err := enqueueExposureEvaluation(r.Context(), tx, principal.OrganizationID); err != nil {
+		writeError(w, 500, "database_error", "Could not reconcile findings")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, 500, "database_error", "Could not revoke source")
 		return
