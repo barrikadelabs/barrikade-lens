@@ -1,3 +1,4 @@
+import { useNavigate } from "react-router-dom";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Background, BackgroundVariant, BaseEdge, Controls, Handle, Position, ReactFlow,
@@ -11,13 +12,13 @@ import {
 } from "lucide-react";
 import { API, type SystemDetail, type SystemItem, type TopologyPaths } from "./api";
 import { captureAnalytics } from "./analytics";
-import { observedStateLabel, systemTypeLabel } from "./copy";
+import { freshnessLabel, observedStateLabel, systemTypeLabel } from "./copy";
 import { buildGraph, countRelations, evidenceNodeDetail, evidenceNodeName, pretty, prioritizedEvidenceFacts, relative, relationshipCardLabel, relationshipExplanation, safeClass, type GraphNodeData, type LensNode } from "./features/evidence/graph-model";
 
 const nodeTypes = { lens: LensNodeCard, cluster: GraphClusterCard };
 
 function FlowingEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition,
-  markerEnd, style, label, labelStyle, labelBgStyle, labelBgPadding, labelBgBorderRadius }: EdgeProps) {
+  markerEnd, style, data, label, labelStyle, labelBgStyle, labelBgPadding, labelBgBorderRadius }: EdgeProps) {
   const dx = targetX - sourceX;
   const dy = targetY - sourceY;
   const dist = Math.sqrt(dx * dx + dy * dy);
@@ -35,7 +36,10 @@ function FlowingEdge({ id, sourceX, sourceY, targetX, targetY, sourcePosition, t
   else if (targetPosition === Position.Top)    cp2y -= offset;
   else                                          cp2y += offset;
 
-  const path = `M${sourceX},${sourceY} C${cp1x},${cp1y} ${cp2x},${cp2y} ${targetX},${targetY}`;
+  const waypoints = data?.waypoints as Array<{ x: number; y: number }> | undefined;
+  const path = waypoints
+    ? `M${sourceX},${sourceY} ${waypoints.map((point) => `L${point.x},${point.y}`).join(" ")} L${targetX},${targetY}`
+    : `M${sourceX},${sourceY} C${cp1x},${cp1y} ${cp2x},${cp2y} ${targetX},${targetY}`;
   const lx = 0.125 * sourceX + 0.375 * cp1x + 0.375 * cp2x + 0.125 * targetX;
   const ly = 0.125 * sourceY + 0.375 * cp1y + 0.375 * cp2y + 0.125 * targetY;
   return (
@@ -56,6 +60,7 @@ const kindIcons: Record<string, LucideIcon> = {
 };
 
 export function EvidenceGraphPage({ api, revision, initialSystemId = "" }: { api: API; revision: number; initialSystemId?: string }) {
+  const navigate = useNavigate();
   const [systems, setSystems] = useState<SystemItem[]>([]);
   const [selectedSystem, setSelectedSystem] = useState(initialSystemId);
   const [detail, setDetail] = useState<SystemDetail>();
@@ -116,8 +121,8 @@ export function EvidenceGraphPage({ api, revision, initialSystemId = "" }: { api
       <div className="graph-panel-heading"><div><span>AI INVENTORY</span><h2>Choose a tool or agent</h2><p>Search your organization’s AI inventory.</p></div><b>{loadingSystems ? "…" : `${availableSystems.length}${moreSystems ? "+" : ""}`}</b></div>
       <label className="graph-system-search"><Search size={14} /><input value={systemSearch} onChange={(event) => setSystemSearch(event.target.value)} placeholder="Find an AI tool or agent" aria-label="Find an AI tool or agent" /></label>
       <div className="graph-system-list">
-        {visibleSystems.map((system) => <button className={selectedSystem === system.id ? "active" : ""} key={system.id} onClick={() => { captureAnalytics({ name: "lens_interaction", properties: { surface: "evidence", interaction: "open", control: "system" } }); setSelectedSystem(system.id); }} aria-pressed={selectedSystem === system.id}>
-          <KindIcon kind={system.kind} /><span><b>{system.name}</b><small>{systemTypeLabel(system.system_type)} · {observedStateLabel(system.state, system.target_freshness)}</small></span><i className={`confidence-dot ${system.confidence}`} title={`${pretty(system.confidence)} confidence`} />
+        {visibleSystems.map((system) => <button className={selectedSystem === system.id ? "active" : ""} key={system.id} onClick={() => { captureAnalytics({ name: "lens_interaction", properties: { surface: "evidence", interaction: "open", control: "system" } }); setSelectedSystem(system.id); navigate(`/systems/${encodeURIComponent(system.id)}/evidence`); }} aria-pressed={selectedSystem === system.id}>
+          <KindIcon kind={system.kind} /><span><b>{system.name}</b><small>{systemTypeLabel(system.system_type)} · {observedStateLabel(system.state, system.target_freshness)}</small><small title={system.target_name}>{system.target_name ?? "Location unresolved"}</small></span><i className={`confidence-dot ${system.confidence}`} title={`${pretty(system.confidence)} confidence`} />
         </button>)}
         {!visibleSystems.length && !loadingSystems && <p className="graph-list-empty">No systems match “{systemSearch}”.</p>}
         {systemError && <p className="graph-list-empty">{systemError}</p>}
@@ -135,6 +140,7 @@ function SystemEvidenceMap({ api, detail }: { api: API; detail: SystemDetail }) 
   const [query, setQuery] = useState("");
   const [showEvidence, setShowEvidence] = useState(false);
   const [selectedNode, setSelectedNode] = useState(detail.id);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
   const [pathDirection, setPathDirection] = useState<"downstream" | "upstream">("downstream");
   const [topology, setTopology] = useState<TopologyPaths>();
   const [topologyError, setTopologyError] = useState("");
@@ -182,14 +188,15 @@ function SystemEvidenceMap({ api, detail }: { api: API; detail: SystemDetail }) 
         {Object.entries(relationCounts).map(([kind, count]) => <button className={hiddenKinds.has(kind) ? "muted" : "active"} onClick={() => { captureAnalytics({ name: "lens_interaction", properties: { surface: "evidence", interaction: "filter_changed" } }); toggleKind(kind); }} key={kind} aria-pressed={!hiddenKinds.has(kind)}><i className={`edge-swatch relation-${safeClass(kind)}`} />{pretty(kind)} <b>{count}</b></button>)}
         <button className={showEvidence ? "active evidence-toggle" : "muted evidence-toggle"} onClick={() => { captureAnalytics({ name: "lens_interaction", properties: { surface: "evidence", interaction: "filter_changed", control: "evidence" } }); setShowEvidence((value) => !value); }} aria-pressed={showEvidence}><i className="edge-swatch evidence" />{showEvidence ? "Hide supporting details" : "Show supporting details"} <b>{detail.evidence.length}</b></button>
       </div>
+      <button className="button subtle graph-inspector-toggle" onClick={() => setInspectorOpen((open) => !open)} aria-expanded={inspectorOpen}>{inspectorOpen ? "Hide details" : "Show details"}</button>
     </div>
-    <div className="graph-stage">
+    <div className={`graph-stage ${inspectorOpen ? "" : "inspector-closed"}`}>
       <div className={`graph-canvas ${model.layout}`}>
         {model.layout === "clustered" && <div className="graph-layout-note"><Network size={11} /> Grouped by resource type</div>}
         <ReactFlow
           key={graphKey}
-          nodes={model.nodes}
-          edges={model.edges}
+          nodes={model.nodes.map((node) => ({ ...node, selected: node.id === selectedNode }))}
+          edges={model.edges.map((edge) => ({ ...edge, style: { ...edge.style, opacity: selectedNode === detail.id || edge.source === selectedNode || edge.target === selectedNode ? edge.style?.opacity : 0.12 } }))}
           nodeTypes={nodeTypes}
           edgeTypes={edgeTypes}
           fitView
@@ -199,7 +206,7 @@ function SystemEvidenceMap({ api, detail }: { api: API; detail: SystemDetail }) 
           nodesDraggable={false}
           nodesConnectable={false}
           zoomOnDoubleClick={false}
-          onNodeClick={(_, node) => { if (node.data.role !== "cluster") { captureAnalytics({ name: "lens_interaction", properties: { surface: "evidence", interaction: "open", control: "evidence" } }); setPathDirection(node.data.entityID === detail.id ? "downstream" : "upstream"); setSelectedNode(node.id); } }}
+          onNodeClick={(_, node) => { if (node.data.role !== "cluster") { captureAnalytics({ name: "lens_interaction", properties: { surface: "evidence", interaction: "open", control: "evidence" } }); setPathDirection(node.data.entityID === detail.id ? "downstream" : "upstream"); setSelectedNode(node.id); setInspectorOpen(true); } }}
           onPaneClick={() => { setSelectedNode(detail.id); setPathDirection("downstream"); }}
           proOptions={{ hideAttribution: true }}
           aria-label={`Evidence graph for ${detail.name}`}
@@ -207,10 +214,12 @@ function SystemEvidenceMap({ api, detail }: { api: API; detail: SystemDetail }) 
           <Background variant={BackgroundVariant.Dots} gap={22} size={1} color="rgba(255,255,255,.11)" />
           <Controls showInteractive={false} position="bottom-left" />
         </ReactFlow>
-        <div className="graph-legend"><span><ArrowDownLeft size={12} /> Connects in</span><span><ArrowUpRight size={12} /> Connects out</span><span><i className="legend-line dashed" /> Supporting detail → item</span></div>
-        {(model.hiddenConnections > 0 || showEvidence && detail.evidence.length > model.visibleEvidence) && <div className="graph-truncation">Showing the closest connections · {model.hiddenConnections > 0 ? `${model.hiddenConnections} connections hidden` : ""}{model.hiddenConnections > 0 && showEvidence && detail.evidence.length > model.visibleEvidence ? " · " : ""}{showEvidence && detail.evidence.length > model.visibleEvidence ? `${detail.evidence.length - model.visibleEvidence} supporting details hidden` : ""}</div>}
       </div>
-      <GraphInspector data={selection} topology={topology} topologyError={topologyError} loadingTopology={loadingTopology} pathDirection={pathDirection} onPathDirection={setPathDirection} />
+      {inspectorOpen && <GraphInspector data={selection} topology={topology} topologyError={topologyError} loadingTopology={loadingTopology} pathDirection={pathDirection} onPathDirection={setPathDirection} />}
+    </div>
+    <div className="graph-footer">
+      <div className="graph-legend"><span><ArrowDownLeft size={12} /> Connects in</span><span><ArrowUpRight size={12} /> Connects out</span><span><i className="legend-line dashed" /> Supporting detail → item</span></div>
+        {(model.hiddenConnections > 0 || showEvidence && detail.evidence.length > model.visibleEvidence) && <div className="graph-truncation">Showing the closest connections · {model.hiddenConnections > 0 ? `${model.hiddenConnections} connections hidden` : ""}{model.hiddenConnections > 0 && showEvidence && detail.evidence.length > model.visibleEvidence ? " · " : ""}{showEvidence && detail.evidence.length > model.visibleEvidence ? `${detail.evidence.length - model.visibleEvidence} supporting details hidden` : ""}</div>}
     </div>
   </div>;
 }
@@ -227,7 +236,7 @@ function LensNodeCard({ data, selected }: NodeProps<LensNode>) {
     <Handle type="target" position={Position.Bottom} id="bottom-target" isConnectable={false} />
     <Handle type="source" position={Position.Bottom} id="bottom-source" isConnectable={false} />
     <span className="graph-node-icon"><Icon size={data.role === "root" ? 19 : 16} /></span>
-    <span className="graph-node-copy"><b>{data.name}</b><small>{data.detail}</small></span>
+    <span className="graph-node-copy"><b title={data.name}>{data.name}</b><small title={data.detail}>{data.detail}</small></span>
     <i className={`confidence-dot ${data.confidence}`} title={`${pretty(data.confidence)} confidence`} />
   </article>;
 }
@@ -242,7 +251,7 @@ function GraphClusterCard({ data }: NodeProps<LensNode>) {
 function GraphInspector({ data, topology, topologyError, loadingTopology, pathDirection, onPathDirection }: { data: GraphNodeData; topology?: TopologyPaths; topologyError: string; loadingTopology: boolean; pathDirection: "downstream" | "upstream"; onPathDirection: (direction: "downstream" | "upstream") => void }) {
   const facts: Array<[string, string]> = [];
   if (data.role === "root" && data.system) {
-    facts.push(["System type", pretty(data.system.system_type)], ["State", pretty(data.system.state)], ["Target", data.system.target_name ?? "Unresolved"], ["Coverage", data.system.target_partial ? "Partial scan" : "No partial scan reported"], ["Surface", pretty(data.system.surface)], ["Network", pretty(data.system.network_scope)], ["Attribution", data.system.attributed ? "Established" : "Not established"]);
+    facts.push(["System type", pretty(data.system.system_type)], ["State", observedStateLabel(data.system.state, data.system.target_freshness)], ["Last report", freshnessLabel(data.system.target_freshness ?? "unknown")], ["Last seen", relative(data.system.last_seen_at)], ["Target", data.system.target_name ?? "Unresolved"], ["Coverage", data.system.target_partial ? "Partial scan" : "No partial scan reported"], ["Surface", pretty(data.system.surface)], ["Network", pretty(data.system.network_scope)], ["Attribution", data.system.attributed ? "Established" : "Not established"]);
   } else if (data.role === "evidence" && data.evidence) {
     facts.push(
       ["Exact resource", data.evidence.subject?.name ?? "Not resolved"],
@@ -275,20 +284,21 @@ function GraphInspector({ data, topology, topologyError, loadingTopology, pathDi
   return <aside className="graph-inspector">
     <div className="graph-inspector-title"><KindIcon kind={data.kind} /><span><small>{data.role === "root" ? "AI TOOL OR AGENT" : data.role === "evidence" ? "SUPPORTING DETAIL" : "CONNECTED ITEM"}</small><b>{data.name}</b></span></div>
     {relationshipContext && <div className="graph-relationship-summary"><span>WHY THIS IS LINKED</span><p>{relationshipContext}</p></div>}
-    <div className="graph-inspector-facts">{facts.slice(0, 8).map(([label, value], index) => <div key={`${label}:${index}`}><span>{label}</span><b>{value}</b></div>)}</div>
+    <div className="graph-inspector-facts">{facts.map(([label, value], index) => <div key={`${label}:${index}`}><span>{label}</span><b>{value}</b></div>)}</div>
     {data.entityID && <section className="graph-topology-paths" aria-label="Evidence-backed reachability paths">
       <span>FOLLOW THE EVIDENCE</span>
       <div className="graph-path-direction"><button className={pathDirection === "downstream" ? "active" : ""} onClick={() => onPathDirection("downstream")} aria-pressed={pathDirection === "downstream"}>Downstream paths</button><button className={pathDirection === "upstream" ? "active" : ""} onClick={() => onPathDirection("upstream")} aria-pressed={pathDirection === "upstream"}>What leads here?</button></div>
       {loadingTopology ? <p>Tracing current relationships…</p> : topologyError ? <p>{topologyError}</p> : !topology?.paths.length ? <p>No current evidence-backed paths in this direction.</p> : <>
         {topology.paths.slice().sort((left, right) => right.edges.length - left.edges.length).slice(0, 8).map((path) => <div className="graph-path" key={path.edges.map((edge) => edge.id).join(":")}>
           <b>{path.nodes.map((node) => node.name).join(pathDirection === "downstream" ? " → " : " ← ")}</b>
-          <small>{path.edges.map((edge) => `${pretty(edge.kind)} · ${pretty(edge.confidence)} · ${edge.observation_states.map(pretty).join("/")} · ${pretty(edge.evidence.method)}`).join("  /  ")}</small>
+          <small>{path.edges.map((edge) => `${pretty(edge.kind)} · ${pretty(edge.confidence)} · ${edge.observation_states.map(pretty).join("/")} · ${pretty(edge.evidence.method)} · ${relative(edge.observed_at)}`).join("  /  ")}</small>
         </div>)}
         {topology.paths.length > 8 && <p>Showing 8 of {topology.paths.length} bounded paths.</p>}
         <p>These are evidence-backed links, not proof of effective access.</p>
       </>}
     </section>}
     {supportingEvidence.length ? <div className="graph-supporting-evidence"><span>SUPPORTING DETAILS</span>{supportingEvidence.slice(0, 4).map((finding) => <div key={`${finding.source_id}:${finding.id}`}><b>{evidenceNodeName(finding)}</b><small>{evidenceNodeDetail(finding)}</small></div>)}{supportingEvidence.length > 4 && <small>+{supportingEvidence.length - 4} more details</small>}</div> : null}
+    {data.evidenceGroup && data.evidenceGroup.length > 1 && <details className="graph-report-history"><summary>{data.evidenceGroup.length} reports of this resource</summary>{data.evidenceGroup.map((report) => <div key={`${report.source_id}:${report.id}`}><b>{new Date(report.observed_at).toLocaleString()}</b><small>{report.source_name ?? report.source_id} · {evidenceNodeDetail(report)}</small><p>{report.summary ?? report.why_it_matched}</p></div>)}</details>}
     {evidence?.summary && <p className="graph-evidence-summary">{evidence.summary}</p>}
     {location && <div className="graph-locator"><span>WHERE LENS FOUND IT</span><code title={location}>{location}</code></div>}
     {visibleMatchedFacts.length ? <div className="graph-inspector-matched"><span>DISCOVERED DETAILS</span><div>{visibleMatchedFacts.map((fact) => <b key={fact.label}>{fact.label}: {fact.value}</b>)}</div>{matchedFacts.length > visibleMatchedFacts.length && <small>+{matchedFacts.length - visibleMatchedFacts.length} more in system details</small>}</div> : null}

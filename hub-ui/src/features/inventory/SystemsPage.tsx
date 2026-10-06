@@ -59,7 +59,7 @@ export function SystemsPage({ api, revision }: { api: API; revision: number }) {
     setSearchParams(next, { replace: true });
   };
   const products = productInventory.data?.items ?? [];
-  const reportingEndpoints = overview.data?.coverage.find((item) => item.target_type === "endpoint")?.reporting ?? 0;
+  const connectedEndpoints = overview.data?.coverage.find((item) => item.target_type === "endpoint")?.reporting ?? 0;
   const productItems = products.filter((item) => {
     const endpointCount = new Set(item.instances.map((instance) => instance.target_id).filter(Boolean)).size;
     return (!productSearch || item.name.toLowerCase().includes(productSearch.toLowerCase()))
@@ -67,6 +67,8 @@ export function SystemsPage({ api, revision }: { api: API; revision: number }) {
       && (!productReach || (productReach === "broad" ? endpointCount > 1 : endpointCount <= 1))
       && (!productActivity || (productActivity === "running" ? item.running_count > 0 : item.running_count === 0));
   });
+  const productsKnown = !productInventory.loading && !productInventory.error && Boolean(productInventory.data);
+  const coverageKnown = !overview.loading && !overview.error && Boolean(overview.data);
   const installationCount = products.reduce((total, item) => total + item.installation_count, 0);
   const runningCount = products.reduce((total, item) => total + item.running_count, 0);
   const staleCount = products.reduce((total, item) => total + item.stale_count, 0);
@@ -80,10 +82,10 @@ export function SystemsPage({ api, revision }: { api: API; revision: number }) {
     </section>
     {inventoryView === "products" ? <>
       <section className="product-inventory-summary">
-        <div><span>Tools and agents</span><b>{products.length}</b><small>unique across the organization</small></div>
-        <div><span>Installations</span><b>{installationCount}</b><small>across connected devices</small></div>
-        <div><span>Running in recent reports</span><b className="good">{runningCount}</b><small>older results excluded</small></div>
-        <div><span>Devices reporting</span><b className="good">{reportingEndpoints || "—"}</b><small>{staleCount ? `${staleCount} installations may be out of date` : "all results are up to date"}</small></div>
+        <div><span>Tools and agents</span><b>{productsKnown ? products.length : "—"}</b><small>unique across the organization</small></div>
+        <div><span>Installations</span><b>{productsKnown ? installationCount : "—"}</b><small>across connected devices</small></div>
+        <div><span>Running in recent reports</span><b className="good">{productsKnown ? runningCount : "—"}</b><small>older results excluded</small></div>
+        <div><span>Connected devices</span><b>{coverageKnown ? connectedEndpoints : "—"}</b><small>{!productsKnown ? "Results not loaded" : staleCount ? `${staleCount} installations may be out of date` : installationCount ? "All results are up to date" : "No results yet"}</small></div>
       </section>
       <FilterBar search={productSearch} setSearch={setProductSearch}>
         <Select label="Type" value={productType} onChange={setProductType} options={{ "": "All tools and agents", autonomous_agent: "Autonomous agents", agent_tool: "AI agent tools", model_runtime: "AI model runtimes" }} />
@@ -99,13 +101,13 @@ export function SystemsPage({ api, revision }: { api: API; revision: number }) {
             const confidence: "confirmed" | "likely" | "possible" = confirmed ? "confirmed" : likely ? "likely" : "possible";
             return <button className="product-inventory-row" key={item.id} onClick={() => setSelectedProduct(item)}>
               <Identity kind={item.system_type === "model_runtime" ? "model_server" : "agent"} name={item.name} detail={pretty(item.system_type ?? item.product_category ?? "discovered product")} />
-              <span className="product-reach"><b>{targets} of {reportingEndpoints || Math.max(targets, 1)}</b><small>connected devices</small><i><em style={{ width: `${Math.min(100, (targets / Math.max(reportingEndpoints, targets, 1)) * 100)}%` }} /></i></span>
+              <span className="product-reach"><b>{targets} of {coverageKnown ? connectedEndpoints : "—"}</b><small>connected devices</small><i><em style={{ width: `${Math.min(100, (targets / Math.max(connectedEndpoints, targets, 1)) * 100)}%` }} /></i></span>
               <span className="stacked"><b className={item.running_count ? "good" : ""}>{item.running_count ? `${item.running_count} recently running` : item.instances.some((instance) => instance.state === "running" && instance.target_freshness === "stale") ? "Running when last checked" : "Not observed running"}</b><small>{item.installation_count} {item.installation_count === 1 ? "installation" : "installations"}</small></span>
               <span className="stacked"><b>{item.observed_user_count}</b><small>observed {item.observed_user_count === 1 ? "account" : "accounts"}</small></span>
               <ConfidencePill value={confidence} /><span className="observed">{relative(item.last_seen_at)}</span><ChevronRight size={15} />
             </button>;
           })}
-          {!productInventory.loading && !productItems.length && <Empty icon={PackageSearch} title="No AI tools or agents match" detail="Try a broader search or filter. You can still review every location under Installations." />}
+          {productsKnown && !productItems.length && <Empty icon={PackageSearch} title="No AI tools or agents match" detail="Try a broader search or filter. You can still review every location under Installations." />}
         </div>
         {productInventory.error && <InlineError text={productInventory.error} />}{productInventory.loading && <InlineLoading />}
       </section>

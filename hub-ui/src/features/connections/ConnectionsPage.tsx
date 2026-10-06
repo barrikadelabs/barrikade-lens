@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { ArrowRight, CheckCircle2, ChevronDown, ChevronRight, CircleDot, Cloud, Container, Copy, GitBranch, Monitor, Plus, RefreshCw, ShieldCheck, SlidersHorizontal, Timer, X } from "lucide-react";
 import { API, authConfig, type Environment, type EnvironmentKind, type EnvironmentScan, type GitHubDiscoveryStatus, type Overview, type SetupSession } from "../../api";
@@ -12,14 +12,16 @@ import { analyticsConnectionType, defaultEnvironmentName, environmentCatalog, ty
 type EndpointMode = "quick_scan" | "continuous";
 
 export function ConnectionsPage({ api, revision, onResults, startWizard = false }: { api: API; revision: number; onResults: () => void; startWizard?: boolean }) {
-  return <div className="page-stack"><EnvironmentsPage api={api} revision={revision} onResults={onResults} startWizard={startWizard} /><CoveragePage api={api} revision={revision} /></div>;
+  return <EnvironmentsPage api={api} revision={revision} onResults={onResults} startWizard={startWizard}><CoveragePage api={api} revision={revision} /></EnvironmentsPage>;
 }
 
-function EnvironmentsPage({ api, revision, onResults, startWizard = false }: { api: API; revision: number; onResults: () => void; startWizard?: boolean }) {
+function EnvironmentsPage({ api, revision, onResults, startWizard = false, children }: { api: API; revision: number; onResults: () => void; startWizard?: boolean; children?: ReactNode }) {
   const navigate = useNavigate();
   const { environmentId } = useParams();
   const environments = useRemote(() => api.environments(), [api, revision]);
   const session = useRemote(() => api.session(), [api]);
+  const [showSetups, setShowSetups] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
   const [wizard, setWizard] = useState(startWizard);
   const [kind, setKind] = useState<EnvironmentKind>();
   const [deploymentMethod, setDeploymentMethod] = useState<DeploymentMethod>();
@@ -178,13 +180,19 @@ function EnvironmentsPage({ api, revision, onResults, startWizard = false }: { a
   if (environments.loading || session.loading) return <Loading />;
   if (environments.error || session.error || !environments.data) return <Failure error={environments.error || session.error} retry={() => { environments.reload(); session.reload(); }} />;
   const activeConnections = environments.data.items.filter((item) => item.connection_status === "connected").length;
+  const setups = environments.data.items.filter((item) => !["connected", "disconnected"].includes(item.connection_status));
+  const history = environments.data.items.filter((item) => item.connection_status === "disconnected");
+  const card = (environment: Environment) => <EnvironmentActivationCard key={environment.id} api={api} environment={environment} revision={revision} canManage={canManage} onResume={() => navigate(`/connections/${environment.id}`)} onUpgrade={() => upgrade(environment)} onScan={() => runScan(environment)} onDisconnect={() => disconnect(environment)} />;
   return <div className="page-stack environments-page">
     <section className="panel environment-summary"><div><p className="eyebrow">CONNECTIONS</p><h2>{activeConnections} active {activeConnections === 1 ? "connection" : "connections"}</h2><p>Add or review the devices, repositories, cloud accounts, and clusters you want Lens to check. Lens never changes them.</p></div>{canManage && <button className="button primary" onClick={() => navigate("/connections/new")}><Plus size={16} /> Add a connection</button>}</section>
     {error && !wizard && <InlineError text={error} />}
-    <section className="environment-list">
-      {environments.data.items.map((environment) => <EnvironmentActivationCard key={environment.id} api={api} environment={environment} revision={revision} canManage={canManage} onResume={() => navigate(`/connections/${environment.id}`)} onUpgrade={() => upgrade(environment)} onScan={() => runScan(environment)} onDisconnect={() => disconnect(environment)} />)}
+    {children}
+    <section className="environment-list" aria-label="Active connections">
+      {environments.data.items.filter((environment) => environment.connection_status === "connected").map(card)}
       {!environments.data.items.length && <div className="empty-state-actions"><Empty icon={ShieldCheck} title="Connect your first location" detail={canManage ? "Start with a device, code repository, cloud account, or cluster." : "Ask a workspace owner or admin to add a connection."} />{canManage && <button className="button primary" onClick={() => navigate("/connections/new")}>Add a connection</button>}</div>}
     </section>
+    {setups.length > 0 && <section className="connection-disclosure"><button className="button subtle" aria-expanded={showSetups} onClick={() => setShowSetups((value) => !value)}>{showSetups ? <ChevronDown size={14} /> : <ChevronRight size={14} />} Unfinished setups ({setups.length})</button>{showSetups && <div className="environment-list">{setups.map(card)}</div>}</section>}
+    {history.length > 0 && <section className="connection-disclosure"><button className="button subtle" aria-expanded={showHistory} onClick={() => setShowHistory((value) => !value)}>{showHistory ? <ChevronDown size={14} /> : <ChevronRight size={14} />} Disconnected history ({history.length})</button>{showHistory && <div className="environment-list">{history.map(card)}</div>}</section>}
     {scan && <section className={`panel scan-progress ${scan.status}`}><div><span className="scan-spinner"><RefreshCw size={18} /></span><div><p className="eyebrow">SCAN STATUS</p><h2>{connectionStatusLabel(scan.phase || scan.status)}</h2><p>{scan.status === "complete" ? "The scan is complete and your results are ready." : scan.status === "partial" ? "Your results are ready, but Lens could not check every location." : scan.safe_error?.message || "Lens is checking this location. Results already found will remain available if one check fails."}</p></div></div>{["complete", "partial"].includes(scan.status) && <button className="button primary" onClick={viewResults}>View results <ArrowRight size={15} /></button>}</section>}
     {wizard && canManage && <div className="modal-overlay environment-wizard-overlay" onMouseDown={(event) => { if (event.target === event.currentTarget) reset(); }}><section className="environment-wizard" role="dialog" aria-modal="true" aria-label="Add a connection"><button className="drawer-close" aria-label="Close connection setup" onClick={reset}><X size={18} /></button><header><p className="eyebrow">ADD A CONNECTION</p><h2>{setup ? "Finish connecting this location" : kind === "endpoint" && !endpointMode ? "Choose how this device reports" : kind === "endpoint" && endpointMode === "continuous" && !deploymentMethod ? "How do you want to install Lens?" : kind ? `Connect ${selected?.title}` : "Choose what to connect"}</h2><p>{setup ? "This read-only setup expires shortly." : kind === "endpoint" && !endpointMode ? "Get results once now, or keep this device’s inventory up to date automatically." : kind === "endpoint" ? "Choose the platform for this device." : "Select a device, repository, cloud account, or cluster for Lens to check."}</p></header>
       {!kind && <ScanSourceChooser connectors={connectors} onCategorySelected={(sourceCategory) => captureAnalytics({ name: "source_category_selected", properties: { source_category: sourceCategory } })} onSelect={(source) => { setKind(source.kind); setName(defaultEnvironmentName(source.kind)); captureAnalytics({ name: "connection_type_selected", properties: { connection_type: analyticsConnectionType(source.kind) } }); }} />}
@@ -222,7 +230,7 @@ function EnvironmentActivationCard({ api, environment, revision, canManage, onRe
   const catalog = environmentCatalog.find((item) => item.kind === environment.kind);
   const Icon = catalog?.icon ?? Cloud;
   const fallback = environment.connection_status === "setup_pending" ? "awaiting_install" : environment.last_result_status === "failed" ? "failed" : environment.last_result_status === "partial" ? "partial" : environment.last_result_at ? "ready" : environment.source_id ? "processing" : environment.connection_status;
-  const phase = remote.data?.phase ?? fallback;
+  const phase = environment.connection_status === "disconnected" ? "disconnected" : remote.data?.phase ?? fallback;
   const lastResult = remote.data?.last_result_at ?? environment.last_result_at;
   useEffect(() => {
     if (!environment.source_id || !["connected", "processing"].includes(phase)) return;
@@ -233,7 +241,7 @@ function EnvironmentActivationCard({ api, environment, revision, canManage, onRe
   const summary = remote.data?.summary;
   const quickSummary = quick && lastResult && summary ? `Quick Scan found ${summary.assets_found} items across ${summary.systems_found} AI tools and agents${remote.data?.evidence_expires_at ? ` · results expire ${new Date(remote.data.evidence_expires_at).toLocaleString()}` : ""}` : "";
   const github = environment.kind === "github_repository";
-  const message = remote.data?.safe_error?.message || environment.last_error_message || quickSummary || (phase === "awaiting_install" ? github ? "GitHub approval is not finished" : "Installation is not finished" : phase === "connected" ? github ? "Repository connected; waiting for the first results" : "Lens scanner connected; waiting for the first results" : phase === "processing" ? "Lens is preparing the first results; you can leave this page" : phase === "stale" ? `Earlier results remain available, but this ${github ? "repository" : "device"} last reported ${relative(remote.data?.last_seen_at || lastResult || "")}` : lastResult ? `Last result ${relative(lastResult)}${phase === "partial" ? " · some data is missing" : ""}` : `Waiting for this ${github ? "repository" : "device"} to report`);
+  const message = phase === "disconnected" ? "This connection is disconnected. Earlier results remain available." : remote.data?.safe_error?.message || environment.last_error_message || quickSummary || (phase === "awaiting_install" ? github ? "GitHub approval is not finished" : "Installation is not finished" : phase === "connected" ? github ? "Repository connected; waiting for the first results" : "Lens scanner connected; waiting for the first results" : phase === "processing" ? "Lens is preparing the first results; you can leave this page" : phase === "stale" ? `Earlier results remain available, but this ${github ? "repository" : "device"} last reported ${relative(remote.data?.last_seen_at || lastResult || "")}` : lastResult ? `Last result ${relative(lastResult)}${phase === "partial" ? " · some data is missing" : ""}` : `Waiting for this ${github ? "repository" : "device"} to report`);
   return <article className="environment-card"><span className="environment-icon"><Icon size={20} /></span><div className="environment-card-copy"><span><b>{environment.display_name}</b><small>{catalog?.title ?? pretty(environment.kind)}{quick ? " · Quick Scan" : ""}{environment.external_id ? ` · ${environment.external_id}` : ""}</small></span><p>{message}</p></div><span className={`connection-status ${phase}`}><i />{connectionStatusLabel(phase)}</span><div className="environment-actions">{canManage && ((environment.kind === "endpoint" && phase === "awaiting_install") || (github && ["setup_pending", "verifying", "auth_error"].includes(environment.connection_status))) && <button className="button subtle" onClick={onResume}>Resume setup</button>}{canManage && remote.data?.can_enable_continuous_monitoring && <button className="button subtle" onClick={onUpgrade}>Keep results up to date</button>}{canManage && environment.connection_status === "connected" && ["aws", "azure", "gcp"].includes(environment.provider || "") && <button className="button subtle" onClick={onScan}><RefreshCw size={14} /> Scan now</button>}{canManage && phase !== "disconnected" && <button className="button quiet" onClick={onDisconnect}>Disconnect</button>}</div></article>;
 }
 
@@ -284,7 +292,7 @@ function CoverageBaseline({ api, coverage, onSaved }: { api: API; coverage: Over
 function CoverageCard({ item, onClick, active }: { item: Overview["coverage"][number]; onClick?: () => void; active?: boolean }) {
   const Icon = item.target_type === "endpoint" ? Monitor : item.target_type === "repository" ? GitBranch : item.target_type === "cloud" ? Cloud : Container;
   const label = ({ endpoint: "Endpoints", repository: "Repositories", kubernetes: "Kubernetes", cloud: "Cloud environments" } as Record<string, string>)[item.target_type] ?? pretty(item.target_type);
-  const status = item.reporting === 0 ? item.collectors ? "Not reporting recently" : "Not connected" : [item.fresh ? `${item.fresh} up to date` : "", item.stale ? `${item.stale} not reporting recently` : "", item.partial ? `${item.partial} missing some data` : ""].filter(Boolean).join(" · ");
-  const body = <><span className="coverage-icon"><Icon size={19} /></span><div><p>{label}</p><strong>{item.reporting}</strong><span>{item.population_configured ? `of ${item.expected_count} expected` : "locations reporting"}</span></div><div className={item.stale || item.partial ? "coverage-card-status needs-review" : item.reporting ? "coverage-card-status reporting" : "coverage-card-status quiet"}><b>{status}</b><small>{item.population_configured ? "Coverage goal set" : "Expected total not set"}</small></div></>;
+  const status = item.reporting === 0 ? item.collectors ? "Not reporting recently" : "Not connected" : [`${item.fresh} up to date`, item.stale ? `${item.stale} not reporting recently` : "", item.partial ? `${item.partial} missing some data` : ""].filter(Boolean).join(" · ");
+  const body = <><span className="coverage-icon"><Icon size={19} /></span><div><p>{label}</p><strong>{item.reporting}</strong><span>{item.population_configured ? `of ${item.expected_count} expected` : "connected locations"}</span></div><div className={item.stale || item.partial ? "coverage-card-status needs-review" : item.reporting ? "coverage-card-status reporting" : "coverage-card-status quiet"}><b>{status}</b><small>{item.population_configured ? "Coverage goal set" : "Expected total not set"}</small></div></>;
   return onClick ? <button className={active ? "coverage-card active" : "coverage-card"} onClick={onClick}>{body}</button> : <div className="coverage-card">{body}</div>;
 }
