@@ -61,14 +61,14 @@
 .graph-stage .react-flow__controls { overflow: hidden; border: 1px solid var(--line); border-radius: 7px; background: #151617; box-shadow: none; }
 .graph-stage .react-flow__controls-button { width: 28px; height: 28px; border-bottom-color: var(--line-soft); color: var(--text-3); background: #151617; fill: currentColor; }
 .graph-stage .react-flow__controls-button:hover { color: var(--orange); background: #1d1e1f; }
-.lens-graph-node { display: grid; width: 224px; min-height: 58px; padding: 9px 10px; grid-template-columns: 33px minmax(0,1fr) 8px; gap: 8px; align-items: center; border: 1px solid rgba(255,255,255,.11); border-radius: 10px; color: var(--text-2); background: rgba(18,20,22,.91); backdrop-filter: blur(14px); box-shadow: 0 7px 20px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.04); transition: border-color .18s ease,box-shadow .18s ease,transform .12s ease; }
+.lens-graph-node { display: grid; width: 100%; height: 100%; min-height: 0; padding: 9px 10px; grid-template-columns: 33px minmax(0,1fr) 8px; gap: 8px; align-items: center; border: 1px solid rgba(255,255,255,.11); border-radius: 10px; color: var(--text-2); background: rgba(18,20,22,.91); backdrop-filter: blur(14px); box-shadow: 0 7px 20px rgba(0,0,0,.28), inset 0 1px 0 rgba(255,255,255,.04); transition: border-color .18s ease,box-shadow .18s ease,transform .12s ease; }
 .lens-graph-node:hover { transform: translateY(-1px); }
 .lens-graph-node:hover, .lens-graph-node.selected { border-color: rgba(255,107,0,.5); box-shadow: 0 0 0 2px rgba(255,107,0,.09), 0 14px 36px rgba(0,0,0,.44), inset 0 1px 0 rgba(255,255,255,.05); }
-.lens-graph-node.root { width: 270px; min-height: 68px; border-color: rgba(255,107,0,.42); background: linear-gradient(135deg, rgba(60,34,16,.96), rgba(22,20,18,.96)); backdrop-filter: blur(18px); animation: root-glow 2.8s ease-in-out infinite; }
+.lens-graph-node.root {  border-color: rgba(255,107,0,.42); background: linear-gradient(135deg, rgba(60,34,16,.96), rgba(22,20,18,.96)); backdrop-filter: blur(18px); animation: root-glow 2.8s ease-in-out infinite; }
 .lens-graph-node.root:hover, .lens-graph-node.root.selected { animation: none; border-color: rgba(255,107,0,.7); box-shadow: 0 0 0 3px rgba(255,107,0,.12), 0 0 32px rgba(255,107,0,.15), 0 14px 36px rgba(0,0,0,.44); }
-.lens-graph-node.evidence { width: 224px; min-height: 56px; border-color: rgba(90,158,196,.3); background: linear-gradient(135deg, rgba(12,24,36,.94), rgba(16,22,30,.94)); backdrop-filter: blur(12px); box-shadow: 0 5px 17px rgba(0,0,0,.28), inset 0 1px 0 rgba(90,158,196,.08); }
+.lens-graph-node.evidence {  border-color: rgba(90,158,196,.3); background: linear-gradient(135deg, rgba(12,24,36,.94), rgba(16,22,30,.94)); backdrop-filter: blur(12px); box-shadow: 0 5px 17px rgba(0,0,0,.28), inset 0 1px 0 rgba(90,158,196,.08); }
 .lens-graph-node.evidence:hover, .lens-graph-node.evidence.selected { border-color: rgba(90,158,196,.6); box-shadow: 0 0 0 2px rgba(90,158,196,.1), 0 10px 28px rgba(0,0,0,.4); }
-.graph-canvas.clustered .lens-graph-node.entity { width: 188px; min-height: 54px; padding: 7px 8px; grid-template-columns: 29px minmax(0,1fr) 7px; gap: 7px; border-radius: 8px; }
+.graph-canvas.clustered .lens-graph-node.entity {  padding: 7px 8px; grid-template-columns: 29px minmax(0,1fr) 7px; gap: 7px; border-radius: 8px; }
 .graph-canvas.clustered .lens-graph-node.entity .graph-node-icon { width: 28px; height: 28px; border-radius: 6px; }
 .graph-canvas.clustered .lens-graph-node.entity b { font-size: 10px; }
 .graph-canvas.clustered .lens-graph-node.entity small { font-size: 7px; }
@@ -147,3 +147,12 @@
 .graph-state svg.spinning { animation: spin 1.1s linear infinite; }
 .graph-state b { color: var(--text-2); font-size: 13px; }
 .graph-state p { max-width: 430px; margin: 0; font-size: 10px; line-height: 1.5; }
+
+.graph-stage.inspector-closed { grid-template-columns: minmax(0,1fr); }
+.graph-inspector-toggle { justify-self: start; }
+.graph-footer { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; padding: 10px 14px; border-top: 1px solid var(--line-soft); }
+.graph-footer .graph-legend, .graph-footer .graph-truncation { position: static; transform: none; max-width: 100%; width: auto; font-size: 9px; }
+.graph-report-history { margin: 10px 0; font-size: 10px; color: var(--text-3); }
+.graph-report-history summary { cursor: pointer; }
+.graph-report-history > div { display: grid; gap: 5px; padding: 10px 0; border-bottom: 1px solid var(--line-soft); overflow-wrap: anywhere; }
+.graph-report-history p { margin: 0; }

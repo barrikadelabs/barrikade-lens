@@ -1,3 +1,4 @@
+import { denseGraph } from "../src/features/evidence/__fixtures__/dense-graph";
 import { expect, test, type Page } from "@playwright/test";
 
 async function authenticateDevelopment(page: Page, options: { role?: "owner" | "admin" | "viewer"; connectors?: Record<string, boolean> } = {}) {
@@ -234,6 +235,7 @@ test("a routed stale installation still opens How Lens knows", async ({ page }) 
   await expect(page.getByText("Running when last checked").first()).toBeVisible();
   await expect(page.getByRole("button", { name: /Older AI tool/ })).toBeVisible();
   await expect(page.getByText("No AI tools or agents found")).toHaveCount(0);
+  await page.getByRole("button", { name: "Show details", exact: true }).click();
   await expect(page.getByText("Partial scan", { exact: true })).toBeVisible();
   await expect(page.getByText("Older AI tool → CRM MCP")).toBeVisible();
   await page.getByRole("button", { name: "What leads here?" }).click();
@@ -311,4 +313,79 @@ test("finding route, filters, reload, and accessible dialog state are durable", 
   await expect(page.getByText("No findings match")).toBeVisible();
   await page.getByLabel("Last report").selectOption("all");
   await expect(page.getByRole("button", { name: /Public agent endpoint/ })).toBeVisible();
+});
+
+test("dense graph cards do not overlap and the selected installation survives reload", async ({ page }, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await authenticateDevelopment(page);
+  const systems = [denseGraph(), denseGraph("second-tool", "Finance laptop")];
+  await page.route("**/v1/systems?*", async (route) => route.fulfill({ json: { items: systems, limit: 100 } }));
+  await page.route(/\/v1\/systems\/[^?]+$/, async (route) => route.fulfill({ json: systems.find((system) => route.request().url().endsWith(system.id)) }));
+  await page.route("**/v1/topology/paths?*", async (route) => route.fulfill({ json: { paths: [] } }));
+  await page.goto("/systems/dense-tool/evidence");
+  await page.getByRole("button", { name: /Show supporting details/ }).click();
+  const cards = page.locator(".lens-graph-node");
+  await expect(cards).toHaveCount(25);
+  await expect.poll(async () => cards.evaluateAll((elements) => {
+    const boxes = elements.map((element) => element.getBoundingClientRect());
+    return boxes.flatMap((a, index) => boxes.slice(index + 1).filter((b) => a.left < b.right - 1 && a.right > b.left + 1 && a.top < b.bottom - 1 && a.bottom > b.top + 1)).length;
+  })).toBe(0);
+  await page.screenshot({ path: testInfo.outputPath("dense-graph.png"), fullPage: true });
+  await page.getByRole("button", { name: "Show details", exact: true }).click();
+  await expect(page.locator(".graph-inspector")).toContainText("Running when last checked");
+  await expect(page.locator(".graph-inspector")).toContainText("Not reporting recently");
+  await page.locator(".lens-graph-node.evidence").first().click();
+  await page.getByText("2 reports of this resource", { exact: true }).click();
+  await expect(page.locator(".graph-report-history")).toContainText("scanner");
+  await page.getByRole("button", { name: /AI tool.*Finance laptop/ }).click();
+  await expect(page).toHaveURL(/\/systems\/second-tool\/evidence$/);
+  await page.reload();
+  await expect(page.locator(".graph-titlebar")).toContainText("Finance laptop");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});
+
+test("coverage puts health before collapsed setup and disconnected history", async ({ page }) => {
+  await authenticateDevelopment(page);
+  await page.route("**/v1/overview?*", async (route) => route.fulfill({ json: {
+    window: "7d", generated_at: new Date().toISOString(),
+    coverage: [{ target_type: "endpoint", reporting: 3, fresh: 0, stale: 3, partial: 0, collectors: 3, population_configured: false, expected_count: null }],
+    footprint: { system_types: {}, states: {}, surfaces: {} }, attention: {}, changes: [], data_quality: { confidence: {}, confidence_note: "", coverage_note: "" },
+  } }));
+  await page.route("**/v1/targets?*", async (route) => route.fulfill({ json: { items: [] } }));
+  await page.route("**/v1/environments", async (route) => route.fulfill({ json: { items: [
+    { id: "live", display_name: "Active device", kind: "endpoint", connection_status: "connected" },
+    { id: "setup", display_name: "Unfinished device", kind: "endpoint", connection_status: "setup_pending" },
+    { id: "old", display_name: "Old device", kind: "endpoint", connection_status: "disconnected" },
+  ] } }));
+  await page.route("**/activation", async (route) => route.fulfill({ json: { phase: "stale" } }));
+  await page.goto("/connections");
+  await expect(page.locator(".coverage-card")).toContainText("connected locations");
+  await expect(page.locator(".coverage-card")).toContainText("0 up to date");
+  await expect(page.getByText("Unfinished device", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Old device", { exact: true })).toHaveCount(0);
+  const health = await page.locator(".coverage-cards").boundingBox();
+  const active = await page.getByText("Active device", { exact: true }).boundingBox();
+  expect(health!.y).toBeLessThan(active!.y);
+  await page.getByRole("button", { name: "Disconnected history (1)" }).click();
+  await expect(page.getByText("This connection is disconnected. Earlier results remain available.")).toBeVisible();
+  await page.getByRole("button", { name: "Unfinished setups (1)" }).click();
+  await expect(page.getByText("Unfinished device", { exact: true })).toBeVisible();
+});
+
+test("mobile installations retain freshness and last seen", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await authenticateDevelopment(page);
+  await page.route("**/v1/products", async (route) => route.fulfill({ json: { items: [{
+    id: "tool", name: "AI tool", system_type: "agent_tool", installation_count: 1, observed_user_count: 1, fresh_count: 0, stale_count: 1, running_count: 0,
+    observed_users: ["employee"], last_seen_at: "2026-09-19T12:00:00Z", instances: [{ ...denseGraph(), observed_users: ["employee"] }],
+  }] } }));
+  await page.route("**/v1/overview?*", async (route) => route.fulfill({ json: { coverage: [{ target_type: "endpoint", reporting: 1 }] } }));
+  await page.route("**/v1/systems?*", async (route) => route.fulfill({ json: { items: [] } }));
+  await page.goto("/inventory");
+  await page.locator(".product-inventory-row").filter({ hasText: "AI tool" }).click();
+  const installations = page.locator(".product-installations");
+  await expect(installations.getByText("Not reporting recently", { exact: true })).toBeVisible();
+  await expect(installations.getByText(/Running when last checked · last seen/)).toBeVisible();
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });

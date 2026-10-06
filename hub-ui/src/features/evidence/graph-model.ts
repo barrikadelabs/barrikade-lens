@@ -1,5 +1,14 @@
 import { MarkerType, type Edge, type Node } from "@xyflow/react";
 import type { Confidence, Connection, Evidence, SystemDetail } from "../../api";
+import { observedStateLabel, systemTypeLabel } from "../../copy";
+
+export const graphCardSize = {
+  root: { width: 270, height: 76 },
+  entity: { width: 188, height: 64 },
+  evidence: { width: 224, height: 64 },
+};
+const CARD_GAP = 20;
+const GROUP_GAP = 40;
 
 export type GraphNodeData = {
   role: "root" | "entity" | "evidence" | "cluster";
@@ -10,6 +19,7 @@ export type GraphNodeData = {
   confidence: Confidence;
   connections?: Connection[];
   evidence?: Evidence;
+  evidenceGroup?: Evidence[];
   supportingEvidence?: Evidence[];
   contextName?: string;
   system?: SystemDetail;
@@ -42,22 +52,20 @@ export function buildGraph(detail: SystemDetail, hiddenKinds: Set<string>, query
 
 function buildClusteredGraph(detail: SystemDetail, connected: ConnectedGraphEntity[], hiddenConnections: number, showEvidence: boolean): GraphModel {
   const clusters = clusterConnectedEntities(connected);
-  const ROOT_X = 390;
-  const ROOT_Y = 310;
+  const layout = placeGraphClusters(clusters);
+  const ROOT_X = layout.root.x;
+  const ROOT_Y = layout.root.y;
   const nodes: LensNode[] = [{
-    id: detail.id, type: "lens", position: { x: ROOT_X, y: ROOT_Y }, zIndex: 8,
-    data: { role: "root", entityID: detail.id, kind: detail.kind, name: detail.name, detail: `${pretty(detail.system_type)} · ${pretty(detail.state)}`, confidence: detail.confidence, supportingEvidence: evidenceForSubject(detail.evidence, detail.id), system: detail },
+    id: detail.id, type: "lens", position: { x: ROOT_X, y: ROOT_Y }, style: graphCardSize.root, zIndex: 8,
+    data: { role: "root", entityID: detail.id, kind: detail.kind, name: detail.name, detail: `${systemTypeLabel(detail.system_type)} · ${observedStateLabel(detail.state, detail.target_freshness)}`, confidence: detail.confidence, supportingEvidence: evidenceForSubject(detail.evidence, detail.id), system: detail },
   }];
   const edges: Edge[] = [];
   const entityNodeByID = new Map<string, string>();
   const entityIndexByID = new Map<string, number>();
 
   clusters.forEach((cluster) => {
-    const placement = graphClusterPlacement(cluster.key, cluster.items.length);
-    const columns = cluster.items.length >= 3 ? 2 : 1;
-    const rows = Math.ceil(cluster.items.length / columns);
-    const width = columns === 2 ? 408 : 210;
-    const height = 39 + rows * 62 + 8;
+    const placement = layout.clusters.get(cluster.key)!;
+    const { columns, width, height } = placement;
     const clusterID = `cluster:${cluster.key}`;
     nodes.push({
       id: clusterID, type: "cluster", position: { x: placement.x, y: placement.y }, zIndex: 0,
@@ -71,9 +79,9 @@ function buildClusteredGraph(detail: SystemDetail, connected: ConnectedGraphEnti
       const column = index % columns;
       const row = Math.floor(index / columns);
       const strongest = strongestConnectionConfidence(item.connections);
-      const entityPosition = { x: 10 + column * 198, y: 38 + row * 62 };
+      const entityPosition = { x: 12 + column * (graphCardSize.entity.width + CARD_GAP), y: 46 + row * (graphCardSize.entity.height + CARD_GAP) };
       nodes.push({
-        id: nodeID, type: "lens", parentId: clusterID, extent: "parent", position: entityPosition, zIndex: 3,
+        id: nodeID, type: "lens", parentId: clusterID, extent: "parent", position: entityPosition, style: graphCardSize.entity, zIndex: 3,
         data: { role: "entity", entityID: item.entity.id, kind: item.entity.kind, name: item.entity.name, detail: relationshipCardLabel(item.connections, item.entity.kind), confidence: strongest, connections: item.connections, supportingEvidence: evidenceForSubject(detail.evidence, item.entity.id), contextName: detail.name },
       });
       if (!entityNodeByID.has(item.entity.id)) {
@@ -83,9 +91,21 @@ function buildClusteredGraph(detail: SystemDetail, connected: ConnectedGraphEnti
 
       const absoluteCenter = {
         x: placement.x + entityPosition.x + 94,
-        y: placement.y + entityPosition.y + 27,
+        y: placement.y + entityPosition.y + graphCardSize.entity.height / 2,
       };
-      const handles = constellationHandles(ROOT_X + 135, ROOT_Y + 34, absoluteCenter.x, absoluteCenter.y);
+      // Use the corridor between the root and each group. For the far column,
+      // enter from below the card through the row gap instead of crossing its neighbor.
+      const onRight = placement.x > ROOT_X;
+      const nearColumn = columns === 1 || column === (onRight ? 0 : columns - 1);
+      const rootSide = onRight ? "right" : "left";
+      const entitySide = nearColumn ? (onRight ? "left" : "right") : "bottom";
+      const laneX = onRight ? ROOT_X + graphCardSize.root.width + 32 : ROOT_X - 32;
+      const routeY = nearColumn ? absoluteCenter.y : absoluteCenter.y + graphCardSize.entity.height / 2 + CARD_GAP / 2;
+      const waypoints = [
+        { x: laneX, y: ROOT_Y + graphCardSize.root.height / 2 },
+        { x: laneX, y: routeY },
+        ...(!nearColumn ? [{ x: absoluteCenter.x, y: routeY }] : []),
+      ];
       const outgoingEdge = item.direction === "outgoing";
       const primary = item.connections[0];
       const color = edgeColor(primary.relationship_kind);
@@ -93,8 +113,9 @@ function buildClusteredGraph(detail: SystemDetail, connected: ConnectedGraphEnti
         id: `bundle:${item.direction}:${item.entity.id}`,
         source: outgoingEdge ? detail.id : nodeID,
         target: outgoingEdge ? nodeID : detail.id,
-        sourceHandle: outgoingEdge ? handles.rootSource : handles.entitySource,
-        targetHandle: outgoingEdge ? handles.entityTarget : handles.rootTarget,
+        sourceHandle: `${outgoingEdge ? rootSide : entitySide}-source`,
+        targetHandle: `${outgoingEdge ? entitySide : rootSide}-target`,
+        data: { waypoints: outgoingEdge ? waypoints : waypoints.slice().reverse() },
         type: "flowing",
         markerEnd: { type: MarkerType.ArrowClosed, width: 13, height: 13, color },
         style: relationshipEdgeStyle(strongest, color),
@@ -103,28 +124,63 @@ function buildClusteredGraph(detail: SystemDetail, connected: ConnectedGraphEnti
   });
 
   const evidence = showEvidence
-    ? [...detail.evidence]
+    ? groupGraphEvidence([...detail.evidence]
         .filter((fact) => !fact.subject || fact.subject.entity_id === detail.id || entityNodeByID.has(fact.subject.entity_id))
-        .sort((left, right) => evidenceOrder(left, right, detail.id, entityIndexByID))
+        .sort((left, right) => evidenceOrder(left, right, detail.id, entityIndexByID)))
         .slice(0, 8)
     : [];
-  evidence.forEach((fact, index) => {
+  const evidenceColumns = Math.min(4, evidence.length);
+  const evidenceWidth = evidenceColumns * (graphCardSize.evidence.width + CARD_GAP) - CARD_GAP;
+  evidence.forEach((group, index) => {
+    const fact = group[0];
     const column = index % 4;
     const row = Math.floor(index / 4);
     const nodeID = `evidence:${fact.source_id}:${fact.id}`;
     const targetNode = fact.subject?.entity_id === detail.id ? detail.id : entityNodeByID.get(fact.subject?.entity_id ?? "") ?? detail.id;
+    const position = { x: (layout.width - evidenceWidth) / 2 + column * (graphCardSize.evidence.width + CARD_GAP), y: layout.height + GROUP_GAP + row * (graphCardSize.evidence.height + CARD_GAP) };
     nodes.push({
-      id: nodeID, type: "lens", position: { x: 90 + column * 208, y: 760 + row * 66 }, zIndex: 2,
-      data: { role: "evidence", kind: "evidence", name: evidenceNodeName(fact), detail: evidenceNodeDetail(fact), confidence: evidenceConfidence(fact), evidence: fact, contextName: detail.name },
+      id: nodeID, type: "lens", position, style: graphCardSize.evidence, zIndex: 2,
+      data: { role: "evidence", kind: "evidence", name: evidenceNodeName(fact), detail: `${evidenceNodeDetail(fact)}${group.length > 1 ? ` · ${group.length} reports` : ""}`, confidence: evidenceConfidence(fact), evidence: fact, evidenceGroup: group, contextName: detail.name },
     });
+    const target = nodes.find((node) => node.id === targetNode)!;
+    const parent = nodes.find((node) => node.id === target.parentId);
+    const targetX = target.position.x + (parent?.position.x ?? 0);
+    const targetY = target.position.y + (parent?.position.y ?? 0);
+    const targetBottom = targetY + Number(target.style?.height);
+    const targetCenter = targetX + Number(target.style?.width) / 2;
+    const onRight = targetNode === detail.id ? column % 2 === 1 : targetX > ROOT_X;
+    const outerX = onRight ? Math.max(layout.width, (layout.width + evidenceWidth) / 2) + 32 : Math.min(0, (layout.width - evidenceWidth) / 2) - 32;
+    const rowGapY = position.y + graphCardSize.evidence.height + CARD_GAP / 2;
+    const waypoints = [
+      { x: position.x + graphCardSize.evidence.width / 2, y: rowGapY },
+      { x: outerX, y: rowGapY },
+      ...(targetNode === detail.id ? [
+        { x: outerX, y: layout.height + GROUP_GAP / 2 },
+        { x: onRight ? ROOT_X + graphCardSize.root.width + 32 : ROOT_X - 32, y: layout.height + GROUP_GAP / 2 },
+        { x: onRight ? ROOT_X + graphCardSize.root.width + 32 : ROOT_X - 32, y: targetBottom + CARD_GAP / 2 },
+      ] : [{ x: outerX, y: targetBottom + CARD_GAP / 2 }]),
+      { x: targetCenter, y: targetBottom + CARD_GAP / 2 },
+    ];
     edges.push({
       id: `supports:${nodeID}`, source: nodeID, target: targetNode,
-      sourceHandle: "top-source", targetHandle: "bottom-target", type: "flowing",
+      sourceHandle: "bottom-source", targetHandle: "bottom-target", type: "flowing",
+      data: { waypoints },
       style: { stroke: "#5a9ec4", strokeWidth: 1.35, opacity: 0.64, strokeDasharray: "7 5" },
       markerEnd: { type: MarkerType.ArrowClosed, width: 12, height: 12, color: "#5a9ec4" },
     });
   });
-  return { nodes, edges, hiddenConnections, visibleEvidence: evidence.length, layout: "clustered" };
+  return { nodes, edges, hiddenConnections, visibleEvidence: evidence.reduce((count, group) => count + group.length, 0), layout: "clustered" };
+}
+
+// Group repeated reports only when they support the same resource and locator.
+// The inspector retains each report, including its provenance and observation date.
+function groupGraphEvidence(evidence: Evidence[]) {
+  const groups = new Map<string, Evidence[]>();
+  evidence.forEach((fact) => {
+    const key = JSON.stringify([fact.subject?.entity_id, fact.target_id ?? fact.source_id, fact.detector_id, fact.detector_version, fact.method, fact.family, fact.specificity, fact.matched_facts, fact.integrity?.locator_reference ?? fact.locator ?? fact.location ?? `${fact.source_id}:${fact.id}`]);
+    groups.set(key, [...(groups.get(key) ?? []), fact]);
+  });
+  return [...groups.values()].map((group) => group.sort((a, b) => b.observed_at.localeCompare(a.observed_at)));
 }
 
 function mergeConnectedEntities(connections: Connection[]) {
@@ -170,37 +226,29 @@ function graphClusterKey(item: ConnectedGraphEntity): GraphClusterKey {
   return "other";
 }
 
-function graphClusterPlacement(key: GraphClusterKey, count: number) {
-  const twoColumns = count >= 3;
-  const placements: Record<GraphClusterKey, { x: number; y: number }> = {
-    environment: { x: 38, y: 82 },
-    models: { x: 344, y: 34 },
-    resources: { x: twoColumns ? 660 : 756, y: 72 },
-    skills: { x: twoColumns ? 640 : 738, y: 458 },
-    definitions: { x: twoColumns ? 320 : 416, y: 570 },
-    people: { x: 36, y: 490 },
-    other: { x: 52, y: 282 },
-  };
-  return placements[key];
-}
-
-function constellationHandles(rootX: number, rootY: number, entityX: number, entityY: number) {
-  const dx = entityX - rootX;
-  const dy = entityY - rootY;
-  if (Math.abs(dx) >= Math.abs(dy)) {
-    const side = dx >= 0 ? "right" : "left";
-    const inverse = dx >= 0 ? "left" : "right";
-    return {
-      rootSource: `${side}-source`, rootTarget: `${side}-target`,
-      entitySource: `${inverse}-source`, entityTarget: `${inverse}-target`,
-    };
-  }
-  const side = dy >= 0 ? "bottom" : "top";
-  const inverse = dy >= 0 ? "top" : "bottom";
-  return {
-    rootSource: `${side}-source`, rootTarget: `${side}-target`,
-    entitySource: `${inverse}-source`, entityTarget: `${inverse}-target`,
-  };
+function placeGraphClusters(clusters: GraphCluster[]) {
+  const sizes = clusters.map((cluster) => {
+    const columns = cluster.items.length >= 3 ? 2 : 1;
+    const rows = Math.ceil(cluster.items.length / columns);
+    return { key: cluster.key, columns, width: 24 + columns * graphCardSize.entity.width + (columns - 1) * CARD_GAP, height: 46 + rows * graphCardSize.entity.height + (rows - 1) * CARD_GAP + 12 };
+  });
+  const left = sizes.filter((group) => ["environment", "people", "definitions", "other"].includes(group.key));
+  const right = sizes.filter((group) => !left.includes(group));
+  const leftWidth = Math.max(0, ...left.map((group) => group.width));
+  const rightWidth = Math.max(0, ...right.map((group) => group.width));
+  const stackHeight = (groups: typeof sizes) => groups.reduce((height, group) => height + group.height, 0) + Math.max(0, groups.length - 1) * GROUP_GAP;
+  const height = Math.max(graphCardSize.root.height, stackHeight(left), stackHeight(right));
+  const rootX = leftWidth + (left.length ? 64 : 0);
+  const rightX = rootX + graphCardSize.root.width + 64;
+  const placements = new Map<GraphClusterKey, (typeof sizes)[number] & { x: number; y: number }>();
+  [left, right].forEach((groups, side) => {
+    let y = (height - stackHeight(groups)) / 2;
+    groups.forEach((group) => {
+      placements.set(group.key, { ...group, x: side === 0 ? leftWidth - group.width : rightX, y });
+      y += group.height + GROUP_GAP;
+    });
+  });
+  return { clusters: placements, root: { x: rootX, y: (height - graphCardSize.root.height) / 2 }, width: right.length ? rightX + rightWidth : rootX + graphCardSize.root.width, height };
 }
 
 function balancedConnections(connections: Connection[], limit: number) {

@@ -98,3 +98,6 @@
   .connection-status, .environment-actions { grid-column: 2; justify-self: start; }
   .environment-wizard { padding: 22px 17px; }
 }
+
+.connection-disclosure { display: grid; gap: 10px; }
+.connection-disclosure > button { justify-self: start; }

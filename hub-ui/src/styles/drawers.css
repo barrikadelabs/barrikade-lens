@@ -66,3 +66,10 @@
 .technical-attributes { margin-top: 18px; border-top: 1px solid var(--line-soft); }
 .technical-attributes > summary { padding-top: 13px; }
 .technical-attributes pre { max-height: 350px; margin-top: 8px; padding: 13px; overflow: auto; border: 1px solid var(--line-soft); border-radius: 8px; color: #b7d9ee; background: rgba(0,0,0,.22); font: 8px/1.6 var(--mono); }
+
+@media (max-width: 680px) {
+  .running-list.product-installations button { grid-template-columns: 30px minmax(0,1fr) 14px; }
+  .running-list.product-installations button > span:nth-child(3) { display: grid; grid-column: 2; grid-row: 2; }
+  .running-list.product-installations button > svg { grid-column: 3; grid-row: 1; }
+  .product-installations strong, .product-installations small { white-space: normal; overflow-wrap: anywhere; }
+}
